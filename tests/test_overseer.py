@@ -50,7 +50,7 @@ def test_agent_verdict_used_and_tools_off(tmp_path):
     v = o.judge(sig("Which db?"))
     assert (v.verdict, v.reply, v.source) == ("answer", "use sqlite", "agent")
     assert o.last_cost == 0.01
-    assert h.calls[0]["tools"] == "none" and h.calls[0]["max_turns"] == 1 and h.calls[0]["json_schema"]
+    assert h.calls[0]["tools"] == "none" and h.calls[0]["max_turns"] == 3 and h.calls[0]["json_schema"]
 
 
 def test_garbage_twice_falls_back_to_rules(tmp_path):

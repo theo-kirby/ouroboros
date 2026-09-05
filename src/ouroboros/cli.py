@@ -131,6 +131,8 @@ def load_config(args: argparse.Namespace, repo: Path) -> Config:
         cfg.git.allow_dirty = True
     if getattr(args, "overseer", None):
         cfg.overseer = args.overseer
+    if getattr(args, "memory", None):
+        cfg.memory = args.memory
     return cfg
 
 
@@ -183,7 +185,11 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"git: {exc}", file=sys.stderr)
         return 2
 
-    memory = make_memory(cfg.memory, repo, recent=cfg.handoff.recent)
+    try:
+        memory = make_memory(cfg.memory, repo, recent=cfg.handoff.recent, **cfg.hypergraph.model_dump())
+    except ValueError as exc:
+        print(f"ouroboros: {exc}", file=sys.stderr)
+        return 2
     if isinstance(memory, HandoffMemory):
         memory.ensure()
     goal_path = repo / cfg.goal
@@ -209,6 +215,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     engine = Engine(
         config=cfg, repo=repo, harness=make_harness(cfg.role("actor").harness), memory=memory,
         git=git, recorder=recorder, budget=BudgetClock(cfg.stop), goal_text=goal_text, overseer=overseer,
+        maintainer=make_harness(cfg.role("maintainer").harness),
     )
     # a re-run of the same run name continues where the last one stopped
     prior = recorder.read_jsonl(recorder.iterations)
@@ -236,7 +243,7 @@ def cmd_status(args: argparse.Namespace) -> int:
             print(f"no status for run {cfg.run!r}")
         else:
             age = int(time.time() - st.get("epoch", time.time()))
-            print(f"run {st['run']}  state={st['state']}  iteration={st['iteration']}  branch={st['branch']}")
+            print(f"run {st['run']}  state={st['state']}  iteration={st['iteration']}  branch={st['branch']}  memory={st.get('memory', '?')}")
             print(f"harness={st['harness']}  cost=${st.get('cost_usd', 0):.2f}  elapsed={st.get('elapsed_s', 0) // 60}m  updated {age}s ago")
             for k in ("last_verdict", "last_ok_tag", "why", "seconds", "stop_reason"):
                 if st.get(k) is not None:
@@ -323,6 +330,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--model")
     r.add_argument("--allow-dirty", action="store_true")
     r.add_argument("--overseer", choices=["agent", "rules"])
+    r.add_argument("--memory", choices=["auto", "hypergraph", "handoff"])
     r.add_argument("--foreground", action="store_true", help="do not wrap in tmux")
     r.set_defaults(fn=cmd_run)
 

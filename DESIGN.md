@@ -4,7 +4,7 @@
 It runs Claude Code, Codex, or Pi again and again, never blocks on a question,
 never believes "done" too early, and leaves a clean memory trail for the morning.
 
-Status: design v0. Phases 1 (walking skeleton) and 2 (agent overseer) are built and smoke-tested.
+Status: design v0. Phases 1 (walking skeleton), 2 (agent overseer), and 3 (hypergraph adapter) are built and smoke-tested.
 
 ---
 

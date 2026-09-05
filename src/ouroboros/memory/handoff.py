@@ -5,10 +5,12 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from .base import BaseMemory
+
 _NUM = re.compile(r"^(\d{4})\.md$")
 
 
-class HandoffMemory:
+class HandoffMemory(BaseMemory):
     name = "handoff"
 
     def __init__(self, root: Path, *, recent: int = 3, hypergraph_hint: bool = False) -> None:
@@ -78,12 +80,6 @@ class HandoffMemory:
 
     def verify_recorded(self, before: set[str]) -> bool:
         return bool(self.snapshot() - before)
-
-    def needs_reconcile(self) -> bool:
-        return False
-
-    def reconcile_prompt(self) -> str | None:
-        return None
 
     def last_summary(self) -> str:
         files = self.handoff_files()

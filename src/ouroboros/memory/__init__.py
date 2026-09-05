@@ -7,19 +7,25 @@ from pathlib import Path
 
 from .base import MemoryAdapter
 from .handoff import HandoffMemory
+from .hypergraph import HypergraphMemory
 
 
-def make_memory(kind: str, repo: Path, *, recent: int = 3) -> MemoryAdapter:
+def hypergraph_available(repo: Path) -> bool:
+    return (repo / ".hypergraph" / "config.yml").exists() and shutil.which("hypergraph") is not None
+
+
+def make_memory(kind: str, repo: Path, *, recent: int = 3, **hg_opts) -> MemoryAdapter:
     if kind == "auto":
-        has_hg = (repo / ".hypergraph" / "config.yml").exists() and shutil.which("hypergraph")
-        kind = "hypergraph" if has_hg else "handoff"
+        kind = "hypergraph" if hypergraph_available(repo) else "handoff"
     if kind == "handoff":
         return HandoffMemory(repo / ".ouroboros", recent=recent)
     if kind == "hypergraph":
-        # Phase 3 lands the real adapter. Until then, hypergraph repos get the
-        # handoff adapter plus a note in the prompt.
-        return HandoffMemory(repo / ".ouroboros", recent=recent, hypergraph_hint=True)
+        if not (repo / ".hypergraph" / "config.yml").exists():
+            raise ValueError("memory: hypergraph requested but .hypergraph/config.yml is missing")
+        if shutil.which("hypergraph") is None:
+            raise ValueError("memory: hypergraph requested but the `hypergraph` CLI is not on PATH (uv tool install hypergraph-protocol)")
+        return HypergraphMemory(repo, recent=recent, **hg_opts)
     raise ValueError(f"unknown memory adapter {kind!r}")
 
 
-__all__ = ["MemoryAdapter", "HandoffMemory", "make_memory"]
+__all__ = ["MemoryAdapter", "HandoffMemory", "HypergraphMemory", "make_memory", "hypergraph_available"]

@@ -61,6 +61,7 @@ class Engine:
     recorder: Recorder
     budget: BudgetClock
     overseer: Overseer = field(default_factory=RulesOverseer)
+    maintainer: Harness | None = None
     sleeper: Sleeper = time.sleep
     goal_text: str = ""
     # loop state
@@ -79,6 +80,12 @@ class Engine:
         """Run until a stop condition. Returns the stop reason. Never raises for harness trouble."""
         self.recorder.log(f"run {self.config.run}: branch={self.git.branch} harness={self.harness.name} memory={self.memory.name} mode={self.config.mode}")
         self._status("starting")
+        try:
+            self.memory.start(run=self.config.run, goal_text=self.goal_text, run_dir=self.recorder.run_dir, branch=self.git.branch)
+            if self.git.has_changes():
+                self.git.commit(f"ouroboros: start run {self.config.run}")
+        except Exception as exc:
+            self.recorder.log(f"memory start failed: {exc!r} (continuing)")
         reason: str | None = None
         while reason is None:
             try:
@@ -112,6 +119,15 @@ class Engine:
         summary = self.memory.last_summary() if recorded else (result.error or "no record")[:60]
         commit = self.git.commit(f"ouroboros #{n}: {summary}")
         self.recorder.step(iteration=n, step="commit", sha=commit[:10], changed=changed, recorded=recorded, cost=result.cost_usd)
+        self.memory.mark_iteration()
+
+        check_problem = None
+        try:
+            check_problem = self.memory.check_report()
+        except Exception as exc:
+            self.recorder.log(f"memory check raised {exc!r}")
+        if check_problem:
+            self.recorder.step(iteration=n, step="check", problem=check_problem[:300])
 
         self.no_change_streak = 0 if changed else self.no_change_streak + 1
         if result.error and result.error == self.last_error:
@@ -158,7 +174,12 @@ class Engine:
         if result.error and verdict.verdict == "continue":
             note = f"The previous iteration ended with an error: {result.error[:500]}. Recover and continue."
             verdict.reply = f"{note}\n\n{verdict.reply}".strip()
+        if check_problem:
+            verdict.reply = f"{verdict.reply}\n\nThe memory checker reports a problem. Fix it first:\n{check_problem}".strip()
         self.injected = verdict.reply or None
+
+        if verdict.verdict != "revert":
+            self._maybe_reconcile(n)
 
         self.budget.add(cost=result.cost_usd, iteration=True, done_accepted=(verdict.verdict == "done_accepted") if verdict.verdict.startswith("done") else None)
         self._status("idle", iteration=n, last_verdict=verdict.verdict)
@@ -169,6 +190,37 @@ class Engine:
         return out
 
     # ------------------------------------------------------------------
+    def _maybe_reconcile(self, n: int) -> None:
+        try:
+            due = self.memory.needs_reconcile()
+        except Exception as exc:
+            self.recorder.log(f"needs_reconcile raised {exc!r}")
+            return
+        if not due:
+            return
+        prompt = self.memory.reconcile_prompt()
+        if not prompt:
+            return
+        role = self.config.role("maintainer")
+        harness = self.maintainer or self.harness
+        self._status("reconcile", iteration=n)
+        self.recorder.log(f"[{n}] reconcile: maintainer pass ({harness.name})")
+        try:
+            result = harness.run(
+                prompt, cwd=self.repo, timeout=role.timeout_seconds, model=role.model,
+                log_path=self.recorder.transcript_path(n, "maintainer"),
+            )
+        except Exception as exc:
+            result = Result(exit_code=-1, error=f"harness raised {exc!r}")
+        sha = self.git.commit(f"ouroboros #{n}: reconcile")
+        self.budget.add(cost=result.cost_usd)
+        self.recorder.step(iteration=n, step="reconcile", exit=result.exit_code, timed_out=result.timed_out,
+                           error=(result.error or None) and result.error[:200], sha=sha[:10], cost=result.cost_usd)
+        if result.ok:
+            self.memory.mark_reconciled()
+        else:
+            self.injected = f"{self.injected or ''}\n\nThe last reconcile pass failed ({result.error or 'timeout'}). Record only; a maintainer will retry.".strip()
+
     def _call_actor(self, prompt: str, timeout: float, model: str | None) -> Result:
         """Call the harness. Retry on retriable errors with backoff, forever. One retry on other errors."""
         role = self.config.role("actor")
@@ -218,8 +270,8 @@ class Engine:
     def _status(self, state: str, **extra) -> None:
         fields = dict(
             run=self.config.run, state=state, iteration=self.iteration, branch=self.git.branch,
-            harness=self.harness.name, cost_usd=round(self.budget.cost_usd, 4), elapsed_s=int(self.budget.elapsed),
-            last_ok_tag=self.last_ok_tag,
+            harness=self.harness.name, memory=self.memory.name, cost_usd=round(self.budget.cost_usd, 4),
+            elapsed_s=int(self.budget.elapsed), last_ok_tag=self.last_ok_tag,
         )
         fields.update(extra)
         self.recorder.status(**fields)

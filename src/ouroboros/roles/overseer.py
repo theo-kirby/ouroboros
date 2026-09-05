@@ -13,6 +13,9 @@ from ..harness.base import Harness, Result
 
 VERDICTS = ("continue", "answer", "done_rejected", "done_accepted", "stuck", "revert")
 
+# Claude needs a second turn to emit structured output even with tools off; 3 leaves slack.
+OVERSEER_MAX_TURNS = 3
+
 VERDICT_SCHEMA = {
     "type": "object",
     "properties": {
@@ -201,7 +204,7 @@ class AgentOverseer:
                     prompt if attempt == 0 else prompt + "\n\nYour previous reply was not valid JSON. Return ONLY the JSON object.",
                     cwd=self.cwd, timeout=self.timeout, model=self.model,
                     log_path=self.transcript_path(s.iteration, attempt),
-                    tools="none", json_schema=VERDICT_SCHEMA, max_turns=1,
+                    tools="none", json_schema=VERDICT_SCHEMA, max_turns=OVERSEER_MAX_TURNS,
                 )
             except Exception as exc:
                 self.log(f"overseer attempt {attempt}: harness raised {exc!r}")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Protocol
 
 
@@ -24,3 +25,37 @@ class MemoryAdapter(Protocol):
 
     def last_summary(self) -> str:
         """One line for the commit message."""
+
+    # lifecycle hooks (no-ops for adapters that do not need them)
+    def start(self, *, run: str, goal_text: str, run_dir: Path, branch: str) -> None: ...
+
+    def mark_iteration(self) -> None: ...
+
+    def mark_reconciled(self) -> None: ...
+
+    def check_report(self) -> str | None:
+        """Problems the memory's own checker sees after a commit, or None."""
+
+
+class BaseMemory:
+    """No-op lifecycle defaults."""
+
+    name = "base"
+
+    def start(self, *, run: str, goal_text: str, run_dir: Path, branch: str) -> None:
+        return None
+
+    def mark_iteration(self) -> None:
+        return None
+
+    def mark_reconciled(self) -> None:
+        return None
+
+    def check_report(self) -> str | None:
+        return None
+
+    def needs_reconcile(self) -> bool:
+        return False
+
+    def reconcile_prompt(self) -> str | None:
+        return None

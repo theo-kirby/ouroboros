@@ -72,6 +72,12 @@ class HandoffConfig(BaseModel):
     recent: int = 3
 
 
+class HypergraphConfig(BaseModel):
+    reconcile_every: int = 5   # maintainer pass after this many work iterations
+    pressure: int = 3          # ...or as soon as this many record nodes are unreconciled
+    budget_units: int = 1      # dispatch budget per iteration
+
+
 class Config(BaseModel):
     run: str = "run"
     goal: str = ".ouroboros/goal.md"
@@ -84,11 +90,13 @@ class Config(BaseModel):
         default_factory=lambda: {
             "actor": RoleConfig(),
             "overseer": RoleConfig(model="haiku", timeout="3m"),
+            "maintainer": RoleConfig(timeout="20m"),
         }
     )
     git: GitConfig = Field(default_factory=GitConfig)
     stop: StopConfig = Field(default_factory=StopConfig)
     handoff: HandoffConfig = Field(default_factory=HandoffConfig)
+    hypergraph: HypergraphConfig = Field(default_factory=HypergraphConfig)
 
     @property
     def branch(self) -> str:
