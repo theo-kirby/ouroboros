@@ -9,6 +9,18 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+_ACTIVE: set[subprocess.Popen] = set()
+
+
+def kill_active() -> int:
+    """Kill every harness subprocess this process started. Used on SIGTERM/SIGHUP/Ctrl-C."""
+    n = 0
+    for proc in list(_ACTIVE):
+        _kill_group(proc)
+        n += 1
+    return n
+
+
 @dataclass
 class ProcResult:
     exit_code: int
@@ -37,15 +49,22 @@ def run_subprocess(
         env={**os.environ, **(env or {})},
     )
     timed_out = False
+    _ACTIVE.add(proc)
     try:
-        out, err = proc.communicate(input=stdin_text, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        timed_out = True
-        _kill_group(proc)
         try:
-            out, err = proc.communicate(timeout=10)
+            out, err = proc.communicate(input=stdin_text, timeout=timeout)
         except subprocess.TimeoutExpired:
-            out, err = "", "killed after timeout"
+            timed_out = True
+            _kill_group(proc)
+            try:
+                out, err = proc.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                out, err = "", "killed after timeout"
+        except BaseException:
+            _kill_group(proc)
+            raise
+    finally:
+        _ACTIVE.discard(proc)
     if log_path is not None:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         log_path.write_text(out or "")

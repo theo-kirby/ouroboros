@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 import shutil
 import subprocess
@@ -130,7 +131,8 @@ class HypergraphMemory(BaseMemory):
         return None
 
     def find_record_by_title(self, prefix: str) -> str | None:
-        for f in self.record_files():
+        """Newest record node whose title starts with `prefix`."""
+        for f in reversed(self.record_files()):
             if _title_of(f).startswith(prefix):
                 return f.stem
         return None
@@ -152,17 +154,24 @@ class HypergraphMemory(BaseMemory):
     # -- lifecycle -------------------------------------------------------
     def start(self, *, run: str, goal_text: str, run_dir: Path, branch: str) -> None:
         self.branch, self.goal_text, self.run_dir = branch, goal_text, run_dir
+        digest = hashlib.sha256(goal_text.encode()).hexdigest()[:8]
         title = f"Ouroboros run: {run}"
-        self.directive_slug = self.find_record_by_title(title)
+        versioned = f"{title} [{digest}]"
+        self.directive_slug = self.find_record_by_title(versioned)
         if self.directive_slug is None:
+            previous = self.find_record_by_title(title)  # an earlier goal version of this run, if any
+            supersedes = (
+                f"\n\nThis directive supersedes `{previous}`: the operator edited the goal and restarted the run."
+                if previous else ""
+            )
             body = (
                 "## What\n\nOperator directive: an Ouroboros loop starts on this repo. Every work node of the run "
-                f"descends from this node.\n\n## Why\n\nThe goal document, verbatim:\n\n{goal_text.strip()}\n\n"
+                f"descends from this node.{supersedes}\n\n## Why\n\nThe goal document, verbatim:\n\n{goal_text.strip()}\n\n"
                 f"## Method\n\nOuroboros iterations on branch `{branch}`: orient, one dispatched unit, record, commit; "
                 "a maintainer pass reconciles on pressure.\n\n## Result\n\nDirective recorded. Work follows as child nodes.\n"
             )
             self.directive_slug = self.new_record(
-                title=f"{title} — operator directive", body=body, parent=self.find_record_root(),
+                title=f"{versioned} — operator directive", body=body, parent=previous or self.find_record_root(),
                 none_reason="operator directive; impacts are declared by the work nodes that follow",
             )
         if self.directive_slug is None:

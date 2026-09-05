@@ -73,6 +73,19 @@ def test_start_records_directive_once(hg_repo):
     assert mem2.directive_slug == slug and len(mem2.record_files()) == n_before
 
 
+def test_edited_goal_gets_a_new_directive_with_the_old_as_parent(hg_repo):
+    mem = HypergraphMemory(hg_repo)
+    mem.start(run="t", goal_text=GOAL, run_dir=hg_repo / ".ouroboros/runs/t", branch="ouroboros/t")
+    old = mem.directive_slug
+    mem2 = HypergraphMemory(hg_repo)
+    mem2.start(run="t", goal_text=GOAL + "\nmore\n", run_dir=hg_repo / ".ouroboros/runs/t", branch="ouroboros/t")
+    new = mem2.directive_slug
+    assert new != old
+    node = (hg_repo / ".hypergraph/graph/record" / f"{new}.md").read_text()
+    assert f"- {old}" in node.partition("\n---\n")[0] and f"supersedes `{old}`" in node
+    assert mem2.check_report() is None
+
+
 def test_prompts_and_verify(hg_repo):
     mem = HypergraphMemory(hg_repo)
     mem.start(run="t", goal_text=GOAL, run_dir=hg_repo / ".ouroboros/runs/t", branch="ouroboros/t")

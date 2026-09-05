@@ -13,6 +13,7 @@ import re
 
 from .config import Config, parse_duration
 from .gitguard import GitGuard
+from .harness.backend_headless import kill_active
 from .harness.base import Harness, Result
 from .memory.base import MemoryAdapter
 from .recorder import Recorder
@@ -92,7 +93,8 @@ class Engine:
             try:
                 self.step()
             except KeyboardInterrupt:
-                reason = "interrupted by user"
+                killed = kill_active()
+                reason = f"interrupted by user ({killed} child process(es) killed)"
                 break
             except Exception as exc:  # the loop must survive its own bugs
                 self.recorder.log(f"engine error: {exc!r}\n{traceback.format_exc()}")

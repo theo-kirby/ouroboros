@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import shutil
+import signal
 import sys
 import time
 from datetime import datetime
@@ -18,6 +19,7 @@ from .config import DEFAULT_CONFIG_PATH, Config
 from .engine import Engine
 from .gitguard import GitError, GitGuard
 from .harness import make_harness
+from .harness.backend_headless import kill_active
 from .memory import make_memory
 from .memory.handoff import HandoffMemory
 from .recorder import Recorder
@@ -199,6 +201,17 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 2
 
     recorder = Recorder(run_dir_for(repo, cfg.run))
+
+    def _die(signum, frame):  # tmux kill-session sends SIGHUP; kill/systemd send SIGTERM
+        killed = kill_active()
+        recorder.log(f"signal {signum}: {killed} child process(es) killed, exiting")
+        recorder.status(run=cfg.run, state="killed", iteration=-1, branch=cfg.branch, harness=cfg.role("actor").harness,
+                        memory=cfg.memory, cost_usd=0, elapsed_s=0, last_ok_tag=None, signal=signum)
+        sys.exit(128 + signum)
+
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, _die)
+
     (recorder.run_dir / "run.yml").write_text(cfg.dump() + f"\nstarted: {datetime.now().isoformat(timespec='seconds')}\nversion: {__version__}\n")
     (recorder.run_dir / "pid").write_text(str(os.getpid()))
 
