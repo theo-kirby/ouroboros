@@ -202,15 +202,25 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     recorder = Recorder(run_dir_for(repo, cfg.run))
 
-    def _die(signum, frame):  # tmux kill-session sends SIGHUP; kill/systemd send SIGTERM
-        killed = kill_active()
-        recorder.log(f"signal {signum}: {killed} child process(es) killed, exiting")
-        recorder.status(run=cfg.run, state="killed", iteration=-1, branch=cfg.branch, harness=cfg.role("actor").harness,
-                        memory=cfg.memory, cost_usd=0, elapsed_s=0, last_ok_tag=None, signal=signum)
-        sys.exit(128 + signum)
+    def _die(signum, frame):  # SIGTERM (kill, `ouroboros stop`): take the children down and exit
+        try:
+            killed = kill_active()
+            recorder.log(f"signal {signum}: {killed} child process(es) killed, exiting")
+            st = recorder.read_status() or {}
+            st.update(state="killed", signal=signum)
+            recorder.status(**{k: v for k, v in st.items() if k not in ("ts", "epoch")})
+        finally:
+            os._exit(128 + signum)
 
-    for sig in (signal.SIGTERM, signal.SIGHUP):
-        signal.signal(sig, _die)
+    def _hup(signum, frame):  # the tmux pane or terminal died: keep looping, log to file only
+        try:
+            recorder.echo = None
+            recorder.log("SIGHUP: terminal went away; continuing headless (stop with `ouroboros stop`)")
+        except Exception:
+            pass
+
+    signal.signal(signal.SIGTERM, _die)
+    signal.signal(signal.SIGHUP, _hup)
 
     (recorder.run_dir / "run.yml").write_text(cfg.dump() + f"\nstarted: {datetime.now().isoformat(timespec='seconds')}\nversion: {__version__}\n")
     (recorder.run_dir / "pid").write_text(str(os.getpid()))
@@ -244,6 +254,39 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _pid_alive(run_dir: Path) -> tuple[int | None, bool]:
+    pf = run_dir / "pid"
+    if not pf.exists():
+        return None, False
+    try:
+        pid = int(pf.read_text().strip())
+        os.kill(pid, 0)
+        return pid, True
+    except (ValueError, ProcessLookupError, PermissionError):
+        return None, False
+
+
+def cmd_stop(args: argparse.Namespace) -> int:
+    repo = repo_root()
+    cfg = load_config(args, repo)
+    rd = run_dir_for(repo, cfg.run)
+    pid, alive = _pid_alive(rd)
+    if not alive:
+        print(f"run {cfg.run!r} is not running")
+        tmux.kill(tmux.session_name(cfg.run))
+        return 0
+    os.kill(pid, signal.SIGTERM)
+    for _ in range(40):
+        time.sleep(0.25)
+        if not _pid_alive(rd)[1]:
+            break
+    else:
+        os.kill(pid, signal.SIGKILL)
+    tmux.kill(tmux.session_name(cfg.run))
+    print(f"stopped run {cfg.run!r} (pid {pid})")
+    return 0
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     repo = repo_root()
     cfg = load_config(args, repo)
@@ -256,7 +299,9 @@ def cmd_status(args: argparse.Namespace) -> int:
             print(f"no status for run {cfg.run!r}")
         else:
             age = int(time.time() - st.get("epoch", time.time()))
-            print(f"run {st['run']}  state={st['state']}  iteration={st['iteration']}  branch={st['branch']}  memory={st.get('memory', '?')}")
+            pid, alive = _pid_alive(rec.run_dir)
+            proc = f"pid {pid} alive" if alive else "process NOT running"
+            print(f"run {st['run']}  state={st['state']}  iteration={st['iteration']}  branch={st['branch']}  memory={st.get('memory', '?')}  [{proc}]")
             print(f"harness={st['harness']}  cost=${st.get('cost_usd', 0):.2f}  elapsed={st.get('elapsed_s', 0) // 60}m  updated {age}s ago")
             for k in ("last_verdict", "last_ok_tag", "why", "seconds", "stop_reason"):
                 if st.get(k) is not None:
@@ -350,6 +395,9 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("status", parents=[common], help="show the current state")
     s.add_argument("--watch", action="store_true")
     s.set_defaults(fn=cmd_status)
+
+    stp = sub.add_parser("stop", parents=[common], help="stop the running loop (SIGTERM, then the tmux session)")
+    stp.set_defaults(fn=cmd_stop)
 
     rep = sub.add_parser("report", parents=[common], help="write REPORT.md for the morning")
     rep.set_defaults(fn=cmd_report)

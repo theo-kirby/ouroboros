@@ -42,9 +42,17 @@ class Recorder:
 
     def log(self, line: str) -> None:
         stamped = f"{_ts()} {line}"
-        with self.log_path.open("a") as f:
-            f.write(stamped + "\n")
-        self.echo(stamped)
+        try:
+            with self.log_path.open("a") as f:
+                f.write(stamped + "\n")
+        except OSError:
+            pass
+        if self.echo is None:
+            return
+        try:
+            self.echo(stamped)
+        except (OSError, ValueError):  # the terminal went away (EIO, closed stdout): file-only from now on
+            self.echo = None
 
     def status(self, **fields) -> None:
         data = {"ts": _ts(), "epoch": time.time(), **fields}
