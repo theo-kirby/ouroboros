@@ -177,7 +177,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 print(f"tmux session {name} already exists. attach: tmux attach -t {name}")
                 return 1
             tmux.launch(name, [sys.argv[0], *sys.argv[1:]], str(repo))
-            print(f"started in tmux session {name}\n  attach:  tmux attach -t {name}\n  status:  ouroboros status\n  stop:    tmux kill-session -t {name}")
+            print(f"started in tmux session {name}\n  attach:  tmux attach -t {name}\n  status:  ouroboros status\n  stop:    ouroboros stop")
             return 0
 
     git = GitGuard(repo, cfg.branch)
