@@ -38,3 +38,10 @@ def test_build_cmd_overseer_flags():
 def test_parse_structured_output():
     out = json.dumps({"type": "result", "is_error": False, "result": "", "structured_output": {"verdict": "continue"}})
     assert json.loads(ClaudeHarness.parse(out, "", 0, False, None).text) == {"verdict": "continue"}
+
+
+def test_usage_limit_is_retriable():
+    out = json.dumps({"type": "result", "is_error": True, "result": "You've hit your usage limit. Resets at 3am."})
+    assert ClaudeHarness.parse(out, "", 1, False, None).retriable
+    out = json.dumps({"type": "result", "is_error": True, "result": "Claude AI usage limit reached|1757100000"})
+    assert ClaudeHarness.parse(out, "", 1, False, None).retriable

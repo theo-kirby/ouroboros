@@ -168,3 +168,12 @@ def test_engine_bug_does_not_kill_loop(repo, monkeypatch):
     reason = eng.run()
     assert "max_iterations" in reason
     assert sleeps and sleeps[0] == 60
+
+
+def test_failed_iterations_slow_down(repo):
+    h = FakeHarness([crashes("a"), crashes("a"), crashes("b"), crashes("b"), works()])
+    sleeps = []
+    eng = make_engine(repo, h, max_iterations=3, sleeps=sleeps)
+    eng.run()
+    # per iteration: 5s retry gap; then 60s after the 1st failed iteration, 120s after the 2nd
+    assert [s for s in sleeps if s >= 60] == [60, 120]

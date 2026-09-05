@@ -73,6 +73,7 @@ class Engine:
     last_ok_tag: str | None = None
     session_id: str | None = None
     session_uses: int = 0
+    failed_iterations: int = 0
     outcomes: list[IterationOutcome] = field(default_factory=list)
 
     # ------------------------------------------------------------------
@@ -187,6 +188,10 @@ class Engine:
         self.outcomes.append(out)
         if idle and self.budget.should_stop() is None:
             self._sleep(parse_duration(self.config.idle_interval) or 1800.0, "done accepted; report_done policy")
+        # a second net under the retry loop: iterations that keep failing for any reason slow down
+        self.failed_iterations = 0 if result.ok or result.timed_out else self.failed_iterations + 1
+        if self.failed_iterations and self.budget.should_stop() is None:
+            self._sleep(backoff_seconds(self.failed_iterations - 1), f"{self.failed_iterations} failed iteration(s) in a row")
         return out
 
     # ------------------------------------------------------------------

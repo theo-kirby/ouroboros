@@ -9,7 +9,9 @@ from typing import Protocol
 
 _RETRIABLE = re.compile(
     r"rate.?limit|429|overloaded|too many requests|529|503|temporarily unavailable|"
-    r"ECONNRESET|ETIMEDOUT|connection (reset|refused)",
+    r"ECONNRESET|ETIMEDOUT|connection (reset|refused)|"
+    r"usage limit|limit reached|hit your limit|out of (extra )?usage|resets? at|quota|"
+    r"try again (later|in)|server error|internal error|5\d\d",
     re.IGNORECASE,
 )
 _AUTH = re.compile(r"unauthorized|401|not logged in|invalid api key|authentication", re.IGNORECASE)
