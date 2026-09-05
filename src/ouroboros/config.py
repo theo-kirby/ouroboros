@@ -78,6 +78,8 @@ class Config(BaseModel):
     memory: str = "auto"  # auto | hypergraph | handoff
     backend: str = "headless"
     mode: str = "single"
+    overseer: str = "agent"  # agent | rules
+    idle_interval: str = "30m"  # sleep between iterations after done_accepted under report_done
     roles: dict[str, RoleConfig] = Field(
         default_factory=lambda: {
             "actor": RoleConfig(),

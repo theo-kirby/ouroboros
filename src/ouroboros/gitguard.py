@@ -39,6 +39,9 @@ class GitGuard:
     def has_changes(self) -> bool:
         return self.is_dirty()
 
+    def diff_stat(self, a: str, b: str = "HEAD") -> str:
+        return self.git("diff", "--stat", a, b, check=False)
+
     def branch_exists(self, name: str) -> bool:
         return subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{name}"], cwd=str(self.repo), capture_output=True).returncode == 0
 

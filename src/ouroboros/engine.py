@@ -9,7 +9,9 @@ from pathlib import Path
 from typing import Callable
 
 from .budget import BudgetClock, backoff_seconds
-from .config import Config
+import re
+
+from .config import Config, parse_duration
 from .gitguard import GitGuard
 from .harness.base import Harness, Result
 from .memory.base import MemoryAdapter
@@ -18,6 +20,25 @@ from .roles.actor import build_actor_prompt
 from .roles.overseer import Overseer, RulesOverseer, Signals, Verdict
 
 Sleeper = Callable[[float], None]
+
+CREATIVE_REPLY = (
+    "The done criteria are met. Exhaustion policy: creative. Propose three new directions "
+    "that serve the mission, write them in the plan, pick the most valuable one, and do one unit of it."
+)
+MAINTAIN_REPLY = (
+    "The done criteria are met. Exhaustion policy: maintain. Run the tests, fix flakes, "
+    "improve docs and structure, refactor carefully. Do not expand scope."
+)
+REPORT_DONE_REPLY = (
+    "The done criteria are met. Exhaustion policy: report_done. Do one light maintenance pass "
+    "(tests green, docs accurate), record it, and stop."
+)
+_EXHAUST = re.compile(r"##\s*Exhaustion policy\s*\n+\s*\**(creative|maintain|report_done)\**", re.IGNORECASE)
+
+
+def exhaustion_policy(goal_text: str) -> str:
+    m = _EXHAUST.search(goal_text or "")
+    return m.group(1).lower() if m else "creative"
 
 
 @dataclass
@@ -81,6 +102,7 @@ class Engine:
         role = self.config.role("actor")
         prompt = build_actor_prompt(goal_text=self.goal_text, memory=self.memory, iteration=n, injected=self.injected)
         before = self.memory.snapshot()
+        head_before = self.git.head()
         self._status("work", iteration=n)
 
         result = self._call_actor(prompt, role.timeout_seconds, role.model)
@@ -100,11 +122,29 @@ class Engine:
             self.error_streak = 0
         self.last_error = result.error
 
-        verdict = self.overseer.judge(
-            Signals(result.text, changed, recorded, self.no_change_streak, self.error_streak, result.error)
+        self._status("oversee", iteration=n)
+        signals = Signals(
+            result.text, changed, recorded, self.no_change_streak, self.error_streak, result.error,
+            iteration=n, diff_stat=self.git.diff_stat(head_before, commit),
+            history=self.recorder.read_jsonl(self.recorder.overseer)[-3:],
         )
-        self.recorder.decision(iteration=n, verdict=verdict.verdict, reason=verdict.reason, reply=verdict.reply, overseer=getattr(self.overseer, "name", "?"))
-        self.recorder.step(iteration=n, step="oversee", verdict=verdict.verdict, reason=verdict.reason)
+        try:
+            verdict = self.overseer.judge(signals)
+        except Exception as exc:  # an overseer bug must not stop the loop
+            self.recorder.log(f"overseer raised {exc!r}; using rules")
+            verdict = RulesOverseer().judge(signals)
+            verdict.reason = f"rules fallback (overseer raised): {verdict.reason}"
+        overseer_cost = float(getattr(self.overseer, "last_cost", 0.0) or 0.0)
+        self.budget.add(cost=overseer_cost)
+        self.recorder.decision(iteration=n, verdict=verdict.verdict, reason=verdict.reason, reply=verdict.reply, overseer=verdict.source, cost=overseer_cost)
+        self.recorder.step(iteration=n, step="oversee", verdict=verdict.verdict, source=verdict.source, reason=verdict.reason)
+
+        idle = False
+        if verdict.verdict == "done_accepted":
+            policy = exhaustion_policy(self.goal_text)
+            nudge = {"creative": CREATIVE_REPLY, "maintain": MAINTAIN_REPLY}.get(policy, REPORT_DONE_REPLY)
+            verdict.reply = f"{nudge}\n\n{verdict.reply}".strip()
+            idle = policy == "report_done"
 
         if verdict.verdict == "revert" and self.config.git.revert_on_reject and self.last_ok_tag:
             sha = self.git.revert_to(self.last_ok_tag, patch_out=self.recorder.run_dir / "reverted" / f"{n:04d}.patch")
@@ -124,6 +164,8 @@ class Engine:
         self._status("idle", iteration=n, last_verdict=verdict.verdict)
         out = IterationOutcome(n, result, verdict, commit, changed, recorded)
         self.outcomes.append(out)
+        if idle and self.budget.should_stop() is None:
+            self._sleep(parse_duration(self.config.idle_interval) or 1800.0, "done accepted; report_done policy")
         return out
 
     # ------------------------------------------------------------------

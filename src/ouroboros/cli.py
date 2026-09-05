@@ -21,6 +21,7 @@ from .harness import make_harness
 from .memory import make_memory
 from .memory.handoff import HandoffMemory
 from .recorder import Recorder
+from .roles.overseer import AgentOverseer, RulesOverseer
 
 GOAL_TEMPLATE = """# Goal: {name}
 
@@ -128,6 +129,8 @@ def load_config(args: argparse.Namespace, repo: Path) -> Config:
         cfg.stop.max_cost_usd = args.max_cost
     if getattr(args, "allow_dirty", False):
         cfg.git.allow_dirty = True
+    if getattr(args, "overseer", None):
+        cfg.overseer = args.overseer
     return cfg
 
 
@@ -193,9 +196,19 @@ def cmd_run(args: argparse.Namespace) -> int:
     (recorder.run_dir / "run.yml").write_text(cfg.dump() + f"\nstarted: {datetime.now().isoformat(timespec='seconds')}\nversion: {__version__}\n")
     (recorder.run_dir / "pid").write_text(str(os.getpid()))
 
+    if cfg.overseer == "agent":
+        orole = cfg.role("overseer")
+        overseer = AgentOverseer(
+            make_harness(orole.harness), goal_text=goal_text, cwd=repo, timeout=orole.timeout_seconds,
+            model=orole.model, transcript_path=lambda n, a: recorder.transcript_path(n, "overseer", a),
+            log=recorder.log,
+        )
+    else:
+        overseer = RulesOverseer()
+
     engine = Engine(
         config=cfg, repo=repo, harness=make_harness(cfg.role("actor").harness), memory=memory,
-        git=git, recorder=recorder, budget=BudgetClock(cfg.stop), goal_text=goal_text,
+        git=git, recorder=recorder, budget=BudgetClock(cfg.stop), goal_text=goal_text, overseer=overseer,
     )
     # a re-run of the same run name continues where the last one stopped
     prior = recorder.read_jsonl(recorder.iterations)
@@ -309,6 +322,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--harness", choices=["claude", "codex", "pi"])
     r.add_argument("--model")
     r.add_argument("--allow-dirty", action="store_true")
+    r.add_argument("--overseer", choices=["agent", "rules"])
     r.add_argument("--foreground", action="store_true", help="do not wrap in tmux")
     r.set_defaults(fn=cmd_run)
 

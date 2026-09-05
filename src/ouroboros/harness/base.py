@@ -55,4 +55,7 @@ class Harness(Protocol):
         model: str | None = None,
         system_append: str | None = None,
         log_path: Path | None = None,
+        tools: str | None = None,  # None = all, "none" = no tools, "readonly" = read-only set
+        json_schema: dict | None = None,
+        max_turns: int | None = None,
     ) -> Result: ...

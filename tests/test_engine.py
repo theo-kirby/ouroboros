@@ -14,8 +14,9 @@ from fake_harness import (FakeHarness, asks_question, claims_done, crashes, no_r
                           raises, rate_limited, times_out, works)
 
 
-def make_engine(repo: Path, harness: FakeHarness, *, max_iterations=5, resume_for=1, sleeps=None):
-    cfg = Config(run="t", stop=StopConfig(max_iterations=max_iterations))
+def make_engine(repo: Path, harness: FakeHarness, *, max_iterations=5, resume_for=1, sleeps=None,
+                overseer=None, goal_text=None, stop=None):
+    cfg = Config(run="t", stop=stop or StopConfig(max_iterations=max_iterations))
     cfg.roles["actor"].resume_for = resume_for
     git_ = GitGuard(repo, cfg.branch)
     git_.start()
@@ -28,9 +29,10 @@ def make_engine(repo: Path, harness: FakeHarness, *, max_iterations=5, resume_fo
         if len(sleeps) > 50:  # a real run would keep going; a test must fail loudly
             raise KeyboardInterrupt("too many backoffs in a test")
 
+    kw = {"overseer": overseer} if overseer is not None else {}
     eng = Engine(config=cfg, repo=repo, harness=harness, memory=mem, git=git_, recorder=rec,
                  budget=BudgetClock(cfg.stop), sleeper=fake_sleep,
-                 goal_text=(repo / ".ouroboros" / "goal.md").read_text())
+                 goal_text=goal_text if goal_text is not None else (repo / ".ouroboros" / "goal.md").read_text(), **kw)
     return eng
 
 

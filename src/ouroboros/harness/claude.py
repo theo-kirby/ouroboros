@@ -16,8 +16,11 @@ class ClaudeHarness:
     def __init__(self, binary: str = "claude") -> None:
         self.binary = shutil.which(binary) or binary
 
+    READONLY_TOOLS = "Read,Grep,Glob"
+
     def build_cmd(
-        self, *, resume: str | None, model: str | None, system_append: str | None
+        self, *, resume: str | None, model: str | None, system_append: str | None,
+        tools: str | None = None, json_schema: dict | None = None, max_turns: int | None = None,
     ) -> list[str]:
         cmd = [self.binary, "-p", "--output-format", "json", "--dangerously-skip-permissions"]
         if model:
@@ -26,6 +29,14 @@ class ClaudeHarness:
             cmd += ["--resume", resume]
         if system_append:
             cmd += ["--append-system-prompt", system_append]
+        if tools == "none":
+            cmd += ["--tools", ""]
+        elif tools == "readonly":
+            cmd += ["--tools", self.READONLY_TOOLS]
+        if json_schema:
+            cmd += ["--json-schema", json.dumps(json_schema)]
+        if max_turns:
+            cmd += ["--max-turns", str(max_turns)]
         return cmd
 
     def run(
@@ -38,8 +49,12 @@ class ClaudeHarness:
         model: str | None = None,
         system_append: str | None = None,
         log_path: Path | None = None,
+        tools: str | None = None,
+        json_schema: dict | None = None,
+        max_turns: int | None = None,
     ) -> Result:
-        cmd = self.build_cmd(resume=resume, model=model, system_append=system_append)
+        cmd = self.build_cmd(resume=resume, model=model, system_append=system_append,
+                             tools=tools, json_schema=json_schema, max_turns=max_turns)
         proc = run_subprocess(cmd, cwd=cwd, timeout=timeout, stdin_text=prompt, log_path=log_path)
         return self.parse(proc.stdout, proc.stderr, proc.exit_code, proc.timed_out, log_path)
 
@@ -60,6 +75,9 @@ class ClaudeHarness:
                         continue
         if isinstance(data, dict):
             text = data.get("result") or ""
+            structured = data.get("structured_output")
+            if structured is not None and not text:
+                text = json.dumps(structured)
             is_error = bool(data.get("is_error"))
             return Result(
                 text=text if isinstance(text, str) else json.dumps(text),

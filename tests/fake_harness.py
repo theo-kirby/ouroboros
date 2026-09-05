@@ -79,8 +79,17 @@ class FakeHarness:
         self.prompts: list[str] = []
         self.calls: list[dict] = []
 
-    def run(self, prompt, *, cwd, timeout, resume=None, model=None, system_append=None, log_path=None) -> Result:
+    def run(self, prompt, *, cwd, timeout, resume=None, model=None, system_append=None, log_path=None, **kw) -> Result:
         self.prompts.append(prompt)
-        self.calls.append({"resume": resume, "model": model, "timeout": timeout})
+        self.calls.append({"resume": resume, "model": model, "timeout": timeout, **kw})
         behavior = self.script.pop(0) if self.script else self.default
         return behavior(Path(cwd), prompt)
+
+
+def verdict(v: str, reply: str = "", reason: str = "r") -> Behavior:
+    import json
+    return lambda cwd, prompt: Result(text=json.dumps({"verdict": v, "reply": reply, "reason": reason}), cost_usd=0.01)
+
+
+def garbage() -> Behavior:
+    return lambda cwd, prompt: Result(text="I think you should continue, probably?")
