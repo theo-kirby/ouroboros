@@ -19,7 +19,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from .backend_headless import run_subprocess
+from . import backend_headless as backend
 from .base import Result
 
 _LIMIT = re.compile(
@@ -85,7 +85,7 @@ class CodexHarness:
             schema_path = Path(name)
         try:
             cmd = self.build_cmd(cwd=cwd, resume=resume, model=model, tools=tools, schema_path=schema_path)
-            proc = run_subprocess(cmd, cwd=cwd, timeout=timeout, stdin_text=prompt, log_path=log_path)
+            proc = backend.run(cmd, cwd=cwd, timeout=timeout, stdin_text=prompt, log_path=log_path)
         finally:
             if schema_path:
                 schema_path.unlink(missing_ok=True)

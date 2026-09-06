@@ -10,6 +10,7 @@ from pathlib import Path
 
 
 _ACTIVE: set[subprocess.Popen] = set()
+BACKEND = "headless"   # "headless" | "tmux"; set by the CLI from config.backend
 
 
 def kill_active() -> int:
@@ -18,7 +19,19 @@ def kill_active() -> int:
     for proc in list(_ACTIVE):
         _kill_group(proc)
         n += 1
+    if BACKEND == "tmux":
+        from .backend_tmux import kill_active_windows
+        n += kill_active_windows()
     return n
+
+
+def run(cmd: list[str], *, cwd: Path, timeout: float, stdin_text: str | None = None,
+        log_path: Path | None = None, env: dict[str, str] | None = None) -> "ProcResult":
+    """Run through the configured backend."""
+    if BACKEND == "tmux":
+        from .backend_tmux import run_in_tmux
+        return run_in_tmux(cmd, cwd=cwd, timeout=timeout, stdin_text=stdin_text, log_path=log_path, env=env)
+    return run_subprocess(cmd, cwd=cwd, timeout=timeout, stdin_text=stdin_text, log_path=log_path, env=env)
 
 
 @dataclass

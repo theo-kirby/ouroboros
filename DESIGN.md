@@ -4,7 +4,7 @@
 It runs Claude Code, Codex, or Pi again and again, never blocks on a question,
 never believes "done" too early, and leaves a clean memory trail for the morning.
 
-Status: design v0. Phases 1 (walking skeleton), 2 (agent overseer), 3 (hypergraph adapter), and 4 (Codex and Pi drivers, fallback chains) are built. Phases 1–3 ran a real night (cadex nt1). Section 20 records the charter/plan decisions and the next build order.
+Status: design v0. Phases 1 (walking skeleton), 2 (agent overseer), 3 (hypergraph adapter), 4 (Codex and Pi drivers, fallback chains), 5 (critic and council modes), 6 (design and morning skills), and 7 (tmux backend) are built. Phases 1–3 ran a real night (cadex nt1). Section 20 records the charter/plan layer, also built.
 
 ---
 
@@ -231,7 +231,18 @@ class Harness(Protocol):
 Ouroboros runs each harness with `--dangerously-…` flags. That is the point.
 The run branch and the critic are the safety net, not the permission prompt.
 
-### tmux backend (second)
+### tmux backend (built)
+
+`backend: tmux` in the config. Every harness call runs in its own window of the
+run's tmux session (`ouroboros-<run>`), named after the transcript
+(`0007-actor-0`), so a human who attaches sees the current call stream. Claude
+runs with `--output-format stream-json --verbose` there; Codex and Pi already
+stream JSONL. The call still lands as files under `transcripts/` (stdout,
+stderr, exit code), so the drivers parse exactly what they parse headless.
+The window closes when the call ends; a timeout kills the window. Without a
+reachable session (a `--foreground` run, no tmux) calls fall back to headless.
+`ouroboros stop` and SIGTERM kill active windows as well as child processes.
+
 
 Starts the harness's normal TUI in a tmux pane. Sends the prompt with
 `send-keys`. Polls `capture-pane`. Detects the idle prompt and question
@@ -509,7 +520,8 @@ Each phase ends with something you can run overnight.
 4. **Codex and Pi drivers.** Same tests, three harnesses.
 5. **Critic + modes.** `actor-critic`, `council`, revert on reject, tags.
 6. **Skills.** `ouroboros-design` interview, `ouroboros-morning` report.
-7. **tmux backend.** Last, because it is the fragile one.
+7. **tmux backend.** Last, because it is the fragile one. (Built as a per-call
+   window in the run session; see section 9.)
 
 ## 19. Open questions
 

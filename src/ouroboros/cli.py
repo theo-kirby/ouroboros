@@ -19,6 +19,7 @@ from .config import DEFAULT_CONFIG_PATH, Config
 from .engine import Engine
 from .gitguard import GitError, GitGuard
 from .harness import make_harness
+from .harness import backend_headless
 from .harness.backend_headless import kill_active
 from .harness.pool import LimitBoard, PooledHarness
 from .memory import make_memory
@@ -251,6 +252,11 @@ def cmd_run(args: argparse.Namespace) -> int:
     (recorder.run_dir / "run.yml").write_text(cfg.dump() + f"\nstarted: {datetime.now().isoformat(timespec='seconds')}\nversion: {__version__}\n")
     (recorder.run_dir / "pid").write_text(str(os.getpid()))
 
+    backend_headless.BACKEND = "tmux" if cfg.backend == "tmux" else "headless"
+    if cfg.backend == "tmux":
+        from .harness.backend_tmux import usable as tmux_usable
+        if not tmux_usable():
+            recorder.log("backend tmux requested but no run session is reachable; calls run headless")
     pools = _pools(cfg, recorder.log)
     if cfg.overseer == "agent":
         orole = cfg.role("overseer")

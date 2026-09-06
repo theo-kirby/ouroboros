@@ -28,7 +28,7 @@ def session_exists(name: str) -> bool:
 
 def launch(name: str, argv: list[str], cwd: str) -> None:
     """Start `argv` in a detached tmux session with a second pane tailing status."""
-    inner = f"{ENV_FLAG}=1 " + " ".join(shlex.quote(a) for a in argv)
+    inner = f"{ENV_FLAG}=1 OUROBOROS_TMUX_SESSION={shlex.quote(name)} " + " ".join(shlex.quote(a) for a in argv)
     cmd = f"{inner}; echo; echo \"[ouroboros exited with status $?] press enter to close\"; read _"
     subprocess.run(["tmux", "new-session", "-d", "-s", name, "-c", cwd, cmd], check=True)
     subprocess.run(["tmux", "split-window", "-v", "-t", name, "-c", cwd, "-l", "8",

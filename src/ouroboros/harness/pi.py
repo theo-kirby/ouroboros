@@ -18,7 +18,7 @@ import shutil
 import uuid
 from pathlib import Path
 
-from .backend_headless import run_subprocess
+from . import backend_headless as backend
 from .base import Result
 
 READONLY_TOOLS = "read,grep,find,ls"
@@ -66,7 +66,7 @@ class PiHarness:
                        + json.dumps(json_schema))
         cmd = self.build_cmd(session_id=session_id, model=model, system_append=system_append, tools=tools)
         cmd += ["--", prompt]
-        proc = run_subprocess(cmd, cwd=cwd, timeout=timeout, stdin_text="", log_path=log_path)
+        proc = backend.run(cmd, cwd=cwd, timeout=timeout, stdin_text="", log_path=log_path)
         result = self.parse(proc.stdout, proc.stderr, proc.exit_code, proc.timed_out, log_path)
         result.session_id = result.session_id or session_id
         return result

@@ -6,7 +6,7 @@ import json
 import shutil
 from pathlib import Path
 
-from .backend_headless import run_subprocess
+from . import backend_headless as backend
 from .base import Result
 
 
@@ -22,7 +22,10 @@ class ClaudeHarness:
         self, *, resume: str | None, model: str | None, system_append: str | None,
         tools: str | None = None, json_schema: dict | None = None, max_turns: int | None = None,
     ) -> list[str]:
-        cmd = [self.binary, "-p", "--output-format", "json", "--dangerously-skip-permissions"]
+        if backend.BACKEND == "tmux":   # stream events so the window shows progress; the last line is the result object
+            cmd = [self.binary, "-p", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions"]
+        else:
+            cmd = [self.binary, "-p", "--output-format", "json", "--dangerously-skip-permissions"]
         if model:
             cmd += ["--model", model]
         if resume:
@@ -55,7 +58,7 @@ class ClaudeHarness:
     ) -> Result:
         cmd = self.build_cmd(resume=resume, model=model, system_append=system_append,
                              tools=tools, json_schema=json_schema, max_turns=max_turns)
-        proc = run_subprocess(cmd, cwd=cwd, timeout=timeout, stdin_text=prompt, log_path=log_path)
+        proc = backend.run(cmd, cwd=cwd, timeout=timeout, stdin_text=prompt, log_path=log_path)
         return self.parse(proc.stdout, proc.stderr, proc.exit_code, proc.timed_out, log_path)
 
     @staticmethod
