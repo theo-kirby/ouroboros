@@ -45,9 +45,10 @@ class HandoffMemory(BaseMemory):
             t = recent[-1].read_text()
             last_next = t.split("## Next", 1)[1].strip()[:1500] if "## Next" in t else ""
         fold = (
-            f"1. Rewrite `{self._rel(self.plan)}` in full with exactly three sections: `## now` (the next two or three "
-            f"units, ranked), `## soon` (this week's gaps in order, with why), `## later` (this month and beyond: bets and "
-            f"directions). Cite the handoff file that motivates each line, like `[handoff/0007.md]`.\n"
+            f"1. Rewrite `{self._rel(self.plan)}` in full with exactly three sections: `## short` (the next two or three "
+            f"units, one iteration each, ranked), `## medium` (the open gaps in the order they should fall, with why), "
+            f"`## long` (directions, bets, things to prove, and the standing work that never ends). "
+            f"Cite the handoff file that motivates each line, like `[handoff/0007.md]`.\n"
             f"2. Append ONE entry to `{self._rel(self.bets)}` (create it with a `# Bets` heading if missing): "
             f"`## Bet <ISO date>: <summary>` followed by `### Why` (the reasoning and the evidence) and `### Changed` "
             f"(what moved between horizons; or `plan holds: <reason>` when nothing changes).\n"

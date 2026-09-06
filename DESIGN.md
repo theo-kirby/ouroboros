@@ -96,7 +96,7 @@ failure; it is a recorded event and the loop continues.
 
 | Step | What happens | Who runs it |
 |---|---|---|
-| **ORIENT** | Read the charter, the memory (STATE.md, the plan, the unreconciled tail, or the recent handoffs), the overseer's message. Pick the next unit from the plan's `now` horizon or a frontier node. | actor (headless call) |
+| **ORIENT** | Read the charter, the memory (STATE.md, the plan, the unreconciled tail, or the recent handoffs), the overseer's message. Pick the next unit from the plan's `short` horizon or a frontier node. | actor (headless call) |
 | **WORK** | Do one bounded unit of work. Budget: N units (default 1). | actor (same call) |
 | **RECORD** | Write the memory entry for that unit (hypergraph record node or handoff file). | actor (same call) |
 | **COMMIT** | Git guard commits whatever changed on the run branch. No change, no commit. | ouroboros (local) |
@@ -198,7 +198,7 @@ off, a JSON schema, and three turns at most. It gets:
 
 - the charter (the user's voice),
 - what is true now: the STATE.md frontier, the unreconciled count, and the
-  plan (`now` / `soon` / `later`); for handoff repos the plan file and the last
+  plan (`short` / `medium` / `long`); for handoff repos the plan file and the last
   handoff's `## Next`,
 - the actor's final message,
 - the loop's signals: changed, recorded, no-change streak, error streak, the
@@ -437,8 +437,8 @@ through an interview. Its sections are fixed; `goal.py` parses them:
 ## Done criteria      — `- [ ]` claims about the world, not tasks. each open box
                         becomes an open gap on the frontier; a ticked box is a
                         criterion the human already accepts and declares no gap.
-## Horizon ladder     — `- **the next hour:**` … day, week, month, year.
-                        the first plan; the planner re-plans from it.
+## Horizon ladder     — `- **short-term:**`, `- **medium-term:**`, `- **long-term:**`.
+                        granularity, not time. the first plan; the planner re-plans from it.
 ## Constraints        — never do X. always keep Y green. stay inside dir Z.
 ## Question policy    — how to decide for me. e.g. "prefer the reversible option".
 ## Exhaustion policy  — creative | maintain | report_done
@@ -449,8 +449,8 @@ through an interview. Its sections are fixed; `goal.py` parses them:
 ## Reconcile          — hypergraph only: prose for the maintainer and planner.
 ```
 
-The horizon ladder is the trick. A goal that has a "next year" line never
-runs out of work. With the planner on, the ladder is only the first plan.
+The horizon ladder is the trick. A goal whose long-term rung holds standing
+work never runs out. With the planner on, the ladder is only the first plan.
 
 ## 14. Skills
 
@@ -542,7 +542,7 @@ plan:
   every: 5                  # handoff repos: planner pass every N worked iterations
   view: plan                # the hypergraph view name
   md: PLAN.md               # its rendered snapshot
-  max_new_directions: 3
+  max_new_directions: 1     # new directions per planner pass
 ```
 
 A fallback is `{ harness: codex, model: null }`; the chain is the role's own
@@ -650,12 +650,21 @@ charter version; Ouroboros mints a new directive record for it.
 
 ### Four grains of goal
 
-| Grain | Horizon | Where it lives | Who writes it |
+| Grain | Size | Where it lives | Who writes it |
 |---|---|---|---|
-| Unit | this hour | the dispatch record node of the iteration | actor |
-| Gap | this week | open, broken, blocked state nodes on the frontier | maintainer, from declared impacts |
-| Bet | this month | `Bet:` decision records, folded into the `plan` view (`now`, `soon`, `later`) | planner |
-| Mission | this year | the charter | human |
+| Unit | one iteration | the dispatch record node of the iteration | actor |
+| Gap | several units | open, broken, blocked state nodes on the frontier | maintainer, from declared impacts |
+| Bet | a direction | `Bet:` decision records, folded into the `plan` view (`short`, `medium`, `long`) | planner |
+| Mission | the whole | the charter | human |
+
+Grains are sizes, not times (decided 2026-09-06 before nt2). Agents have no
+clock: "this week" means nothing to an actor that sees one iteration, and a
+charter written for a night is wrong on day two of a week. The ladder rungs are
+`short-term` (units), `medium-term` (gaps), `long-term` (directions and standing
+work), and the planner reads the run budget from the loop signals (iterations
+and hours elapsed and left), never from the charter. Charters with the old
+`next hour … next year` rungs still parse: hour and day fold to short, week to
+medium, month and year to long.
 
 ### Mechanics
 
@@ -668,10 +677,9 @@ charter version; Ouroboros mints a new directive record for it.
 2. **The horizon ladder becomes the `plan` view.** Ouroboros declares the view
    (`hypergraph views add plan --md PLAN.md --reconcile`) at run start when
    missing. The directive seeds three view nodes through impacts:
-   `plan/NEW now` (hour and day rungs), `plan/NEW soon` (week),
-   `plan/NEW later` (month and year). Each node's `## Current` is the ranked plan
-   at that horizon, with citations. The `now` node holds the next two or three
-   units, never a task list.
+   `plan/NEW short`, `plan/NEW medium`, `plan/NEW long`, one per ladder rung.
+   Each node's `## Current` is the ranked plan at that grain, with citations.
+   The `short` node holds the next two or three units, never a task list.
 3. **The planner writes bets.** A planner pass runs right after every maintainer
    pass (about every five iterations), and after a `done_accepted` verdict. It
    reads the charter, `STATE.md`, `PLAN.md`, the pending plan impacts, and the
@@ -685,7 +693,7 @@ charter version; Ouroboros mints a new directive record for it.
    Actors write neither.
 5. **The overseer reads the frontier and the plan,** not the checklist. "Done"
    means no charter-derived gap is open.
-6. **The morning report leads with the bets changed tonight,** each with its
+6. **The morning report leads with the bets the planner changed this run,** each with its
    why, then the current `PLAN.md`, then the decisions the overseer made for
    you.
 
@@ -694,7 +702,8 @@ charter version; Ouroboros mints a new directive record for it.
 - May re-rank and add freely.
 - May retire a charter-derived gap only by proposing status `blocked` or
   `superseded` with a cited reason. Never delete.
-- At most three new directions per night. Each names the mission item it serves.
+- At most `plan.max_new_directions` new directions per planner pass (default one).
+  Each names the mission item it serves.
 - Every plan change is a record node with `## Why`. Every plan node cites its
   bets. `hypergraph check` keeps that honest.
 
@@ -724,7 +733,7 @@ Facts from the run, and what changed because of each.
 | The actor committed on its own, so the loop saw a clean tree and counted "no changes" streaks while work was landing. | Changed = HEAD moved or tree dirty. |
 | Failed iterations still committed (empty), ticked the reconcile counter, and triggered maintainer passes. | A failed iteration commits nothing, counts nothing, reconciles nothing. Empty commits are gone entirely. |
 | At iteration 50 the overseer rejected "done" with "file lifecycle 0/3" while all three had shipped: it counted boxes in a static file. | The charter/plan split (section 20). Criteria become gaps on the frontier; the overseer judges against the frontier and the plan; a ticked box declares no gap. |
-| The frontier had 3 open nodes and the fine grain lived only in goal.md, so the actor was steered by a document nothing updates. | The plan view (`now` / `soon` / `later`) and the planner role. |
+| The frontier had 3 open nodes and the fine grain lived only in goal.md, so the actor was steered by a document nothing updates. | The plan view (`short` / `medium` / `long`) and the planner role. |
 | The horizon ladder worked: the actor took rungs in order and never ran dry. | Kept as the seed of the plan. |
 | The tmux session was killed from outside; the loop crashed on SIGHUP because the logger raised EIO. | Logger falls back to file only; SIGHUP keeps looping; `ouroboros stop`; status shows the pid. |
 | An orphaned `claude -p` survived the tmux kill. | Children run in their own process group and are killed on SIGTERM/Ctrl-C; tmux windows too. |

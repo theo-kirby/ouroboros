@@ -31,7 +31,7 @@ from .roles.overseer import AgentOverseer, RulesOverseer
 GOAL_TEMPLATE = """# Goal: {name}
 
 <!-- This is the charter: the one document the human owns. No agent role edits it.
-     The agents write the plan (now / soon / later) and their bets; you overrule them
+     The agents write the plan (short / medium / long) and their bets; you overrule them
      by editing this file and restarting. /ouroboros-design writes it by interview. -->
 
 ## Mission
@@ -46,13 +46,12 @@ GOAL_TEMPLATE = """# Goal: {name}
 
 ## Horizon ladder
 
-What to do if this runs for:
+What to do when the rung above is exhausted. Granularity, not time: agents have
+no clock, so never write hours, days, or weeks here.
 
-- **the next hour:** ...
-- **the next day:** ...
-- **the next week:** ...
-- **the next month:** ...
-- **the next year:** ...
+- **short-term:** (units, one iteration each) ...
+- **medium-term:** (gaps, several units each) ...
+- **long-term:** (directions, and the standing work that never ends) ...
 
 ## Constraints
 
@@ -379,7 +378,7 @@ def cmd_report(args: argparse.Namespace) -> int:
               f"- iterations: {len(commits)}   changed: {sum(1 for c in commits if c.get('changed'))}   recorded: {sum(1 for c in commits if c.get('recorded'))}",
               f"- reverts: {len(reverts)}", f"- api-equivalent cost: ~${cost:.2f} (what the tokens would cost at API list price; a subscription is not billed per call)", f"- branch: {cfg.branch}", ""]
     bets = [s for s in steps if s.get("step") == "plan"]
-    lines += ["## Bets changed tonight (the planner's decisions; overrule by editing the charter)", ""]
+    lines += ["## Bets the planner changed this run (overrule by editing the charter)", ""]
     lines += [f"- #{b.get('iteration')} ({b.get('why')}): {b.get('bet') or 'no bet landed' + (' — ' + b['error'] if b.get('error') else '')}" for b in bets] or ["- (no planner pass ran)"]
     plan_md = repo / cfg.plan.md
     plan_file = plan_md if plan_md.exists() else repo / ".ouroboros" / "plan.md"

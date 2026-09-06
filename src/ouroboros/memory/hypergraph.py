@@ -280,7 +280,7 @@ class HypergraphMemory(BaseMemory):
             status = body.splitlines()[0].replace("Status:", "").strip() if body.startswith("Status:") else "?"
             current = body.split("## Current", 1)[1].split("## Negative knowledge", 1)[0].strip() if "## Current" in body else body
             out.append({"slug": f.stem, "title": _title_of(f), "status": status, "current": current})
-        order = {"now": 0, "soon": 1, "later": 2}
+        order = {"short": 0, "medium": 1, "long": 2}
         out.sort(key=lambda n: (order.get(n["title"].lower(), 9), n["title"]))
         return out
 
@@ -304,9 +304,9 @@ class HypergraphMemory(BaseMemory):
 
         seed = "Seeded from the charter's horizon ladder; the planner re-plans after each maintainer pass"
         return [
-            f"{self.plan_view}/NEW now — {seed}. Next units: {rung('hour', 'day')}",
-            f"{self.plan_view}/NEW soon — {seed}. This week: {rung('week')}",
-            f"{self.plan_view}/NEW later — {seed}. This month and beyond: {rung('month', 'year')}",
+            f"{self.plan_view}/NEW short — {seed}. Next units, one iteration each: {rung('short')}",
+            f"{self.plan_view}/NEW medium — {seed}. Open gaps in order, several units each: {rung('medium')}",
+            f"{self.plan_view}/NEW long — {seed}. Directions and standing work: {rung('long')}",
         ]
 
     def plan_pending(self) -> str:
@@ -330,7 +330,7 @@ class HypergraphMemory(BaseMemory):
             f"--impact \"{self.plan_view}/<slug> — <delta>\" --repo-auto`, one `--impact` per plan node you change "
             f"(`{self.plan_view}/NEW <name>` for a new one). Use `--none \"plan holds: <reason>\"` when nothing changes; then stop after step 5.\n"
             f"2. You are the single writer of the `{self.plan_view}` view. Fold your own bet and every pending plan impact listed above:\n"
-            f"   - new node: `hypergraph new {self.plan_view} --config .hypergraph/config.yml --title <now|soon|later|name> --status open "
+            f"   - new node: `hypergraph new {self.plan_view} --config .hypergraph/config.yml --title <short|medium|long|name> --status open "
             f"--parent {self.plan_root_slug} --prov \"<bet-slug> — why\" --reconcile --body current.md` where current.md holds ONLY the "
             f"`## Current` content (ranked bullets, each with `[rec: <slug>]`).\n"
             f"   - existing node: `hypergraph update <slug> --config .hypergraph/config.yml --print-sha`, then rewrite the FULL body "
@@ -348,7 +348,7 @@ class HypergraphMemory(BaseMemory):
             tpl.replace("{max_new}", str(self.max_new_directions))
             .replace("{charter}", (self.goal_text or "").strip()[:12000] or "(none)")
             .replace("{frontier}", frontier or "(empty: no open gaps — propose directions)")
-            .replace("{plan}", self.plan_text(6000) or "(no plan nodes yet: create now, soon, later from the pending impacts)")
+            .replace("{plan}", self.plan_text(6000) or "(no plan nodes yet: create short, medium, long from the pending impacts)")
             .replace("{pending}", self.plan_pending())
             .replace("{recent}", recent_text)
             .replace("{signals}", signals.strip() or "(none)")
@@ -392,7 +392,7 @@ class HypergraphMemory(BaseMemory):
             parts.append("## STATE.md\n\n(missing — run `hypergraph sync --config .hypergraph/config.yml`)")
         plan = self.plan_text()
         if plan:
-            parts.append("## Plan (agent-owned bets: now / soon / later)\n\nPick this iteration's unit from `now` unless the "
+            parts.append("## Plan (agent-owned bets: short / medium / long)\n\nPick this iteration's unit from `short` unless the "
                          "overseer's message or a broken frontier node says otherwise.\n\n" + plan)
         count, out = self.unreconciled()
         parts.append(f"## Unreconciled tail ({count} node(s))\n\n```\n{out.strip()[-4000:]}\n```")
@@ -465,7 +465,7 @@ class HypergraphMemory(BaseMemory):
         parts.append(f"Unreconciled record nodes past the high-water mark: {count} (their declared impacts are not on the frontier yet).")
         plan = self.plan_text()
         if plan:
-            parts.append("### Plan (agent-owned bets: now / soon / later)\n\n" + plan)
+            parts.append("### Plan (agent-owned bets: short / medium / long)\n\n" + plan)
         return "\n\n".join(parts)
 
     def check_report(self) -> str | None:

@@ -46,11 +46,11 @@ actor (orient → one unit of work → record) → commit → critic? → overse
 
 | Role | Job |
 |---|---|
-| actor | one bounded unit from the plan's `now` horizon, then a record node or handoff |
+| actor | one bounded unit from the plan's `short` horizon, then a record node or handoff |
 | critic | `actor-critic` / `council` modes: grades the diff; a reject reverts the iteration |
 | overseer | the sleeping user: answers questions, rejects false "done", unsticks; judges against the frontier |
 | maintainer | hypergraph reconcile pass: folds record impacts into the state graph |
-| planner | after each reconcile: one `Bet:` record folded into the `plan` view (`now` / `soon` / `later`) |
+| planner | after each reconcile: one `Bet:` record folded into the `plan` view (`short` / `medium` / `long`) |
 
 Every role can carry a fallback chain. On a usage limit the loop switches
 harness in the same call and comes back when the limit resets.
@@ -67,7 +67,7 @@ stop: { after: 15h }
 
 `.ouroboros/goal.md` is the one document the human owns. No agent role edits
 it. Its done criteria become open gaps on the frontier; its horizon ladder
-seeds the plan; the agents re-plan from there and record their bets. You
+(short, medium, long: granularity, not time) seeds the plan; the agents re-plan from there and record their bets. You
 overrule them by editing the charter and running again.
 
 ## Cost

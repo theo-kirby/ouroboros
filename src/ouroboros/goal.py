@@ -6,11 +6,18 @@ import re
 
 _H2 = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
 _CHECK = re.compile(r"^\s*-\s*\[([ xX])\]\s*(.*)$")
-_RUNG = re.compile(r"^\s*-\s*\*\*(?:the\s+)?next\s+(hour|day|week|month|year)[:*]*\*\*:?\s*(.*)$", re.IGNORECASE)
+_RUNG = re.compile(
+    r"^\s*-\s*\*\*(?:the\s+)?(?:next\s+)?(short|medium|long|longer|hour|day|week|month|year)(?:[\s-]*term)?[:*]*\*\*:?\s*(.*)$",
+    re.IGNORECASE,
+)
 _WORD = re.compile(r"[a-z0-9]+")
 _STOP = {"a", "an", "the", "and", "or", "of", "to", "in", "on", "is", "are", "with", "for", "by", "at", "its", "it"}
 
-RUNGS = ("hour", "day", "week", "month", "year")
+# Rungs are granularity, not time: agents have no clock. `short` = units, one iteration each;
+# `medium` = gaps, several units each; `long` = directions and the standing work that never ends.
+RUNGS = ("short", "medium", "long")
+# Charters written before 2026-09-06 used time rungs; fold them onto the granularity rungs.
+_LEGACY = {"hour": "short", "day": "short", "week": "medium", "month": "long", "year": "long", "longer": "long"}
 
 
 def sections(goal_text: str) -> dict[str, str]:
@@ -61,11 +68,11 @@ def horizon_ladder(goal_text: str) -> dict[str, str]:
     for line in body.splitlines():
         m = _RUNG.match(line)
         if m:
-            current = m.group(1).lower()
-            ladder[current] = m.group(2).strip()
+            current = _LEGACY.get(m.group(1).lower(), m.group(1).lower())
+            ladder[current] = f"{ladder.get(current, '')} {m.group(2).strip()}".strip()
         elif current and line.strip() and line.startswith((" ", "\t")):
             ladder[current] = f"{ladder[current]} {line.strip()}".strip()
-    return {k: re.sub(r"\s+", " ", v) for k, v in ladder.items()}
+    return {k: re.sub(r"\s+", " ", ladder[k]) for k in RUNGS if k in ladder}
 
 
 def exhaustion_policy(goal_text: str) -> str:

@@ -111,7 +111,7 @@ class PlanConfig(BaseModel):
     every: int = 5                # handoff repos: planner pass every N work iterations (hypergraph: after each reconcile)
     view: str = "plan"
     md: str = "PLAN.md"
-    max_new_directions: int = 3
+    max_new_directions: int = 1   # per planner pass, not per run
 
 
 class Config(BaseModel):

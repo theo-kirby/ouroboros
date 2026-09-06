@@ -29,21 +29,32 @@ Ask in rounds. One round per section. Propose a draft from what you read, then a
 the user to correct it. Never accept a vague answer; ask for the concrete version.
 
 1. **Mission.** One paragraph: what and why, in priority order if there are several
-   thrusts. Ask: "If the loop only achieved one thing tonight, what must it be?"
+   thrusts. Ask: "If the loop only achieved one thing this run, what must it be?"
 2. **Done criteria.** Claims about the world, not tasks. Each becomes an open gap
    on the frontier that work must falsify. Bad: "add tests". Good: "the parser
    suite passes on a clean clone". Ask for the test or evidence that proves each.
-3. **Horizon ladder.** The trick that makes a run never end. For each rung, ask
-   "what should it do if it is still running after this long?":
-   the next hour, the next day, the next week, the next month, the next year.
+   Write enough of them that the frontier outlasts the run: only criteria become
+   gaps, and an empty frontier drops the loop to the exhaustion policy. For a long
+   run, write criteria at two grains ("this run" and "beyond"), and prefer ones
+   that scale ("the walk runs on a second mechanism") over ones that close once.
+3. **Horizon ladder.** The trick that makes a run never end. Three rungs of
+   granularity, not time; agents have no clock, so never write hours, days, or
+   weeks into a rung. For each rung, ask "what should it do when the rung above is
+   exhausted?": **short-term** (units, one iteration each), **medium-term** (gaps,
+   several units each), **long-term** (directions, things to prove, and the
+   standing work that never ends).
    **Refuse to finish until every rung has at least three concrete items.** The
-   year rung is usually maintenance: "keep every gate green, every doc true".
+   long-term rung always ends with maintenance: "keep every gate green, every doc
+   true".
    Tell the user: the agents will re-plan from this ladder every few iterations
    and record their bets; the ladder is the first plan, not the last.
 4. **Constraints.** Never-do and always-keep. Which directories are off limits,
    which commands must never run (GUI launches, deploys, GPU boxes), what must
    never be committed (secrets, machine paths, build outputs), which repo rules
-   are the contract (usually "obey AGENTS.md").
+   are the contract (usually "obey AGENTS.md"). Split them into **Standing**
+   (true for every run) and **This run** (what the human lifts by editing the
+   charter mid-run, which mints a new directive). For a long run add hygiene:
+   artifact size limits, the run branch buildable at every commit.
 5. **Question policy.** How to decide when nobody answers. Reversible over
    irreversible; smallest unit in the highest-ranked open item; code wins over
    docs; what to do with pre-existing failures; "never wait for a human".
@@ -63,7 +74,7 @@ the user to correct it. Never accept a vague answer; ask for the concrete versio
   `# Goal: <name>`, `## Mission`, `## Done criteria`, `## Horizon ladder`,
   `## Constraints`, `## Question policy`, `## Exhaustion policy`, `## Quality bar`,
   and for hypergraph repos `## Reconcile`. Done criteria are `- [ ]` checkboxes.
-  Ladder rungs are `- **the next hour:** ...` lines.
+  Ladder rungs are `- **short-term:** ...`, `- **medium-term:** ...`, `- **long-term:** ...` lines.
 - `.ouroboros/config.yml` (run `ouroboros init` first if missing). Example:
 
 ```yaml
@@ -79,7 +90,7 @@ roles:
   planner:    { harness: claude, timeout: 20m, fallback: [{ harness: codex }] }
 stop: { after: 10h }
 hypergraph: { reconcile_every: 5, pressure: 3, budget_units: 1 }
-plan: { enabled: true, every: 5, max_new_directions: 3 }
+plan: { enabled: true, every: 5, max_new_directions: 1 }   # new directions per planner pass
 ```
 
 - Read both files back to the user in full. Then say: `ouroboros run` starts it,
@@ -89,7 +100,7 @@ plan: { enabled: true, every: 5, max_new_directions: 3 }
 ## Rules
 
 - The human owns the charter; do not let it drift into a task list. If the user
-  starts listing tasks, put them on the ladder's hour and day rungs and turn the
+  starts listing tasks, put them on the ladder's short-term rung and turn the
   outcome into a done criterion.
 - A re-version replaces the file; Ouroboros mints a new directive record for it
   and declares only the criteria it adds. Say so.

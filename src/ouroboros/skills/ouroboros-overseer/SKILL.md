@@ -36,7 +36,7 @@ Rules:
   frontier is done even if its box is unchecked. The goal file is the human's voice
   and is never updated by the loop; the frontier and the plan are.
 - **Steer from the plan.** When the actor drifts or stalls, point it at the top of
-  the `now` horizon in the plan, or at the highest open gap on the frontier.
+  the `short` horizon in the plan, or at the highest open gap on the frontier.
 - **Stay in scope.** If the actor drifts from the mission, `continue` with a steer.
 - **Be short.** `reply` under 120 words. It is read by a busy agent.
 

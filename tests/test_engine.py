@@ -221,10 +221,21 @@ def test_failed_iteration_makes_no_empty_commit(repo):
     assert after == before
 
 
+def test_plan_signals_carry_the_run_budget(repo: Path):
+    from ouroboros.config import StopConfig
+    eng = make_engine(repo, FakeHarness([works("a")]), stop=StopConfig(max_iterations=3, after="2h"))
+    eng.run()
+    text = eng._plan_signals()
+    assert "iterations so far: 3 of 3" in text and "run budget:" in text and "h left" in text
+    eng2 = make_engine(repo, FakeHarness([works("b")]), max_iterations=1)
+    eng2.run()
+    assert "(no iteration cap)" not in eng2._plan_signals() and "no wall-clock cap" in eng2._plan_signals()
+
+
 def test_handoff_planner_runs_every_n_iterations(repo: Path):
     def plans(cwd: Path, prompt: str) -> Result:
         root = cwd / ".ouroboros"
-        (root / "plan.md").write_text("# Plan\n\n## now\n\n- unit A [handoff/0001.md]\n\n## soon\n\n- B\n\n## later\n\n- C\n")
+        (root / "plan.md").write_text("# Plan\n\n## short\n\n- unit A [handoff/0001.md]\n\n## medium\n\n- B\n\n## long\n\n- C\n")
         with (root / "bets.md").open("a") as f:
             f.write("# Bets\n\n## Bet 2026-09-06: A before B\n\n### Why\n\nevidence\n\n### Changed\n\nA moved up\n")
         return Result(text="planned", cost_usd=0.05)

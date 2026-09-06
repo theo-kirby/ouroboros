@@ -260,7 +260,14 @@ class Engine:
 
     def _plan_signals(self) -> str:
         outs = self.outcomes[-self.config.plan.every :]
-        lines = [f"- iterations so far: {self.iteration}; api-equivalent cost so far: ${self.budget.cost_usd:.2f}"]
+        stop = self.config.stop
+        cap = f"of {stop.max_iterations}" if stop.max_iterations else "(no iteration cap)"
+        elapsed = self.budget.elapsed / 3600
+        left = f"{max(stop.after_seconds / 3600 - elapsed, 0):.1f}h left" if stop.after_seconds else "no wall-clock cap"
+        lines = [
+            f"- iterations so far: {self.iteration} {cap}; api-equivalent cost so far: ${self.budget.cost_usd:.2f}",
+            f"- run budget: {elapsed:.1f}h elapsed, {left}. Size the short horizon to what fits; the charter has no clock.",
+        ]
         for o in outs:
             lines.append(f"- #{o.iteration}: {o.verdict.verdict} ({o.verdict.reason[:100]}); changed={o.changed} recorded={o.recorded}")
         if self.no_change_streak:

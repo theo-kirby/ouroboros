@@ -205,13 +205,13 @@ def test_overseer_context_has_frontier_and_tail(hg_repo):
     ctx = mem.overseer_context()
     assert "Gap A" in ctx and "Unreconciled record nodes" in ctx and "Architecture" not in ctx
     assert frontier_of("# x\n\n## Frontier\n\n(empty)\n") == "(empty)"
-    (hg_repo / "PLAN.md").write_text("# plan\n\n## now\n\n- do A\n")
+    (hg_repo / "PLAN.md").write_text("# plan\n\n## short\n\n- do A\n")
     assert "Plan (agent-owned" in mem.overseer_context() and "do A" in mem.overseer_context()
 
 
 GOAL_WITH_LADDER = GOAL_WITH_GAPS + (
-    "\n## Horizon ladder\n\n- **the next hour:** fix the build.\n- **the next day:** write the README.\n"
-    "- **the next week:** add CI.\n- **the next month:** a second platform.\n- **the next year:** keep it green.\n"
+    "\n## Horizon ladder\n\n- **short-term:** fix the build. write the README.\n"
+    "- **medium-term:** add CI.\n- **long-term:** a second platform. keep it green.\n"
 )
 
 
@@ -220,8 +220,8 @@ def test_plan_view_is_declared_and_seeded(hg_repo):
     mem.start(run="t", goal_text=GOAL_WITH_LADDER, run_dir=hg_repo / ".ouroboros" / "runs" / "t", branch="ouroboros/t")
     assert mem.plan_root_slug and (hg_repo / ".hypergraph" / "graph" / "plan").exists()
     body = mem.read_record(mem.directive_slug)
-    assert "plan/NEW now" in body and "fix the build. write the README." in body
-    assert "plan/NEW soon" in body and "plan/NEW later" in body and "keep it green" in body
+    assert "plan/NEW short" in body and "fix the build. write the README." in body
+    assert "plan/NEW medium" in body and "plan/NEW long" in body and "keep it green" in body
     # a second start does not re-declare the view or re-seed
     mem2 = HypergraphMemory(hg_repo)
     mem2.start(run="t", goal_text=GOAL_WITH_LADDER, run_dir=hg_repo / ".ouroboros" / "runs" / "t", branch="ouroboros/t")
@@ -233,7 +233,7 @@ def test_planner_prompt_and_verify_bet(hg_repo):
     mem = HypergraphMemory(hg_repo)
     mem.start(run="t", goal_text=GOAL_WITH_LADDER, run_dir=hg_repo / ".ouroboros" / "runs" / "t", branch="ouroboros/t")
     prompt = mem.planner_prompt("- iterations so far: 3")
-    assert "You are the planner" in prompt and "plan/NEW now" in prompt   # pending impacts listed
+    assert "You are the planner" in prompt and "plan/NEW short" in prompt   # pending impacts listed
     assert f"--parent {mem.plan_root_slug}" in prompt and "hypergraph new plan" in prompt
     assert "keep the graph honest" in prompt and "iterations so far: 3" in prompt
     before = mem.snapshot()
