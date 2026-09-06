@@ -63,6 +63,8 @@ class GitGuard:
             self.git("checkout", "-b", self.branch)
 
     def commit(self, message: str, *, allow_empty: bool = True) -> str:
+        if not allow_empty and not self.is_dirty():
+            return self.head()
         self.git("add", "-A")
         args = ["commit", "-q", "-m", message, "--no-verify"]
         if allow_empty:

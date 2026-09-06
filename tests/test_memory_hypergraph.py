@@ -151,3 +151,15 @@ class FakeHarnessOverseer:
     def judge(self, s):
         from ouroboros.roles.overseer import Verdict
         return Verdict("continue", "", "ok", source="fake")
+
+
+def test_failed_iterations_do_not_trigger_reconcile(hg_repo):
+    from fake_harness import crashes
+    mem = HypergraphMemory(hg_repo, reconcile_every=1, pressure=99)
+    maintainer = FakeHarness([], default=lambda cwd, p: Result(text="reconciled"))
+    eng = make_engine(hg_repo, FakeHarness([], default=crashes("boom")), overseer=FakeHarnessOverseer(), max_iterations=2)
+    eng.memory = mem
+    eng.maintainer = maintainer
+    eng.goal_text = GOAL
+    eng.run()
+    assert maintainer.prompts == [] and mem.since_reconcile == 0

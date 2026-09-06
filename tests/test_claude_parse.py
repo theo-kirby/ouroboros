@@ -45,3 +45,21 @@ def test_usage_limit_is_retriable():
     assert ClaudeHarness.parse(out, "", 1, False, None).retriable
     out = json.dumps({"type": "result", "is_error": True, "result": "Claude AI usage limit reached|1757100000"})
     assert ClaudeHarness.parse(out, "", 1, False, None).retriable
+
+
+def test_session_limit_is_retriable_and_reset_time_parses():
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+    from ouroboros.harness.base import parse_reset_time
+    out = json.dumps({"type": "result", "is_error": True, "result": "You've hit your session limit · resets 2:50am (Europe/Madrid)"})
+    r = ClaudeHarness.parse(out, "", 0, False, None)
+    assert not r.ok and r.retriable
+    now = datetime(2026, 9, 6, 0, 31, tzinfo=ZoneInfo("Europe/Madrid"))
+    at = parse_reset_time(r.error, now=now)
+    assert at == datetime(2026, 9, 6, 2, 50, tzinfo=ZoneInfo("Europe/Madrid"))
+    assert abs(r.reset_wait_seconds(now=now) - (2 * 3600 + 19 * 60)) < 1
+    # pm, and a reset time already passed today rolls to tomorrow
+    at = parse_reset_time("resets 12:50pm (Europe/Madrid)", now=datetime(2026, 9, 6, 13, 0, tzinfo=ZoneInfo("Europe/Madrid")))
+    assert at == datetime(2026, 9, 7, 12, 50, tzinfo=ZoneInfo("Europe/Madrid"))
+    assert parse_reset_time("Claude AI usage limit reached|1757100000") == datetime.fromtimestamp(1757100000, tz=timezone.utc)
+    assert parse_reset_time("some other error") is None

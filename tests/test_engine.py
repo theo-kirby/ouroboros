@@ -128,7 +128,8 @@ def test_same_error_three_times_reverts_to_last_ok(repo):
     eng.run()
     verdicts = [o.verdict.verdict for o in eng.outcomes]
     assert verdicts[3] == "revert"
-    assert (repo / ".ouroboros" / "runs" / "t" / "reverted" / "0004.patch").exists()
+    # failed iterations make no commits, so there was nothing to revert and no patch to save
+    assert not (repo / ".ouroboros" / "runs" / "t" / "reverted" / "0004.patch").exists()
     # the tree matches the last accepted tag
     assert git(repo, "diff", "ouroboros/t/ok-0001", "HEAD", "--stat") == ""
 
@@ -177,3 +178,41 @@ def test_failed_iterations_slow_down(repo):
     eng.run()
     # per iteration: 5s retry gap; then 60s after the 1st failed iteration, 120s after the 2nd
     assert [s for s in sleeps if s >= 60] == [60, 120]
+
+
+def test_session_limit_waits_until_reset(repo):
+    from ouroboros.harness.base import Result
+
+    def limited(cwd, prompt):
+        return Result(text="You've hit your session limit · resets 2:50am (Europe/Madrid)", exit_code=0,
+                      error="You've hit your session limit · resets 2:50am (Europe/Madrid)")
+
+    h = FakeHarness([limited, works()])
+    sleeps = []
+    eng = make_engine(repo, h, max_iterations=1, sleeps=sleeps)
+    eng.run()
+    assert len(sleeps) == 1 and 60 < sleeps[0] <= 24 * 3600 + 60
+    assert eng.outcomes[0].result.ok
+
+
+def test_actor_own_commit_counts_as_change(repo):
+    def commits_itself(cwd, prompt):
+        (cwd / "self.txt").write_text("x\n")
+        git(cwd, "add", "-A")
+        git(cwd, "commit", "-q", "-m", "actor commit")
+        from fake_harness import _handoff
+        _handoff(cwd, "committed myself")
+        from ouroboros.harness.base import Result
+        return Result(text="done a unit", session_id="s")
+
+    eng = make_engine(repo, FakeHarness([commits_itself]), max_iterations=1)
+    eng.run()
+    assert eng.outcomes[0].changed is True and eng.no_change_streak == 0
+
+
+def test_failed_iteration_makes_no_empty_commit(repo):
+    before = len(git(repo, "log", "--oneline").splitlines())
+    eng = make_engine(repo, FakeHarness([crashes("x"), crashes("x")]), max_iterations=1)
+    eng.run()
+    after = len(git(repo, "log", "--oneline").splitlines())
+    assert after == before

@@ -22,6 +22,8 @@ from .roles.overseer import Overseer, RulesOverseer, Signals, Verdict
 
 Sleeper = Callable[[float], None]
 
+MAX_RESET_WAIT = 6 * 3600.0  # never trust a parsed reset time further out than this
+
 CREATIVE_REPLY = (
     "The done criteria are met. Exhaustion policy: creative. Propose three new directions "
     "that serve the mission, write them in the plan, pick the most valuable one, and do one unit of it."
@@ -118,11 +120,13 @@ class Engine:
         result = self._call_actor(prompt, role.timeout_seconds, role.model)
 
         recorded = self.memory.verify_recorded(before)
-        changed = self.git.has_changes()
+        worked = result.ok or result.timed_out  # the actor ran; a timeout still may have landed work
+        changed = self.git.has_changes() or self.git.head() != head_before  # the actor may commit on its own
         summary = self.memory.last_summary() if recorded else (result.error or "no record")[:60]
-        commit = self.git.commit(f"ouroboros #{n}: {summary}")
+        commit = self.git.commit(f"ouroboros #{n}: {summary}", allow_empty=worked)
         self.recorder.step(iteration=n, step="commit", sha=commit[:10], changed=changed, recorded=recorded, cost=result.cost_usd)
-        self.memory.mark_iteration()
+        if worked:
+            self.memory.mark_iteration()
 
         check_problem = None
         try:
@@ -181,7 +185,7 @@ class Engine:
             verdict.reply = f"{verdict.reply}\n\nThe memory checker reports a problem. Fix it first:\n{check_problem}".strip()
         self.injected = verdict.reply or None
 
-        if verdict.verdict != "revert":
+        if worked and verdict.verdict != "revert":
             self._maybe_reconcile(n)
 
         self.budget.add(cost=result.cost_usd, iteration=True, done_accepted=(verdict.verdict == "done_accepted") if verdict.verdict.startswith("done") else None)
@@ -254,7 +258,11 @@ class Engine:
                 retriable_attempts += 1
                 continue
             if result.retriable:
-                self._sleep(backoff_seconds(retriable_attempts), "rate limit / transient")
+                wait = result.reset_wait_seconds()
+                if wait is not None:
+                    self._sleep(min(wait + 60.0, MAX_RESET_WAIT), f"limit resets in {int(wait) // 60} min: {(result.error or result.text)[:80]}")
+                else:
+                    self._sleep(backoff_seconds(retriable_attempts), "rate limit / transient")
                 retriable_attempts += 1
                 continue
             if plain_attempts < 1:
