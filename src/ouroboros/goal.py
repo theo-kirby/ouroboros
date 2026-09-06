@@ -75,6 +75,32 @@ def horizon_ladder(goal_text: str) -> dict[str, str]:
     return {k: re.sub(r"\s+", " ", ladder[k]) for k in RUNGS if k in ladder}
 
 
+_PLACEHOLDER = re.compile(r"^\(?\.\.\.\)?\.?$")
+
+
+def _is_placeholder(text: str) -> bool:
+    """`...`, `(hint) ...`, or empty: the template's own words, not the human's."""
+    bare = re.sub(r"\([^)]*\)", "", text).strip().strip("`")
+    return not bare or _PLACEHOLDER.match(bare) is not None
+
+
+def unfilled(goal_text: str) -> list[str]:
+    """Why this charter is still the `ouroboros init` template. Empty when it is filled in."""
+    reasons: list[str] = []
+    m = mission(goal_text).strip()
+    if not m or _is_placeholder(m) or m.startswith("(one paragraph"):
+        reasons.append("the mission is empty or still the template hint")
+    crits = [c for c in done_criteria(goal_text, include_checked=True) if not _is_placeholder(c)]
+    if not crits:
+        reasons.append("no done criteria (only `- [ ] ...`)")
+    ladder = horizon_ladder(goal_text)
+    if not ladder:
+        reasons.append("no horizon ladder (`- **short-term:** ...` lines)")
+    elif all(_is_placeholder(v) for v in ladder.values()):
+        reasons.append("every horizon ladder rung is still `...`")
+    return reasons
+
+
 def exhaustion_policy(goal_text: str) -> str:
     body = section(goal_text, "exhaustion").lower()
     for word in ("report_done", "creative", "maintain"):

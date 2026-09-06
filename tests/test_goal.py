@@ -64,6 +64,17 @@ def test_horizon_ladder_folds_legacy_time_rungs():
     assert goal.horizon_ladder("## Horizon ladder\n\n- **Short term:** a\n- **longer-term**: c\n") == {"short": "a", "long": "c"}
 
 
+def test_unfilled_flags_the_template_and_passes_a_real_charter():
+    from ouroboros.cli import GOAL_TEMPLATE
+    reasons = goal.unfilled(GOAL_TEMPLATE.format(name="t"))
+    assert len(reasons) == 3 and any("mission" in r for r in reasons) and any("done criteria" in r for r in reasons)
+    assert goal.unfilled(CHARTER) == []
+    half = CHARTER.replace("- **short-term:** orient. Take file lifecycle first,\n  with a test.", "- **short-term:** (units) ...")
+    assert goal.unfilled(half) == []            # one real rung is enough
+    no_ladder = CHARTER.split("## Horizon ladder")[0]
+    assert goal.unfilled(no_ladder) == ["no horizon ladder (`- **short-term:** ...` lines)"]
+
+
 def test_sections_and_policy():
     assert goal.mission(CHARTER) == "Ship it."
     assert goal.exhaustion_policy(CHARTER) == "maintain"

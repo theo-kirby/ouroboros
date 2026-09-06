@@ -14,9 +14,13 @@ the parts to read first.
 ## Install
 
 ```bash
-uv tool install --editable /path/to/ouroboros   # the `ouroboros` command; edits are live
-ouroboros skills install --user                 # /ouroboros-design and /ouroboros-morning in Claude Code
+git clone <this repo> ~/src/ouroboros
+uv tool install --editable ~/src/ouroboros      # the `ouroboros` command; edits are live
+ouroboros skills install --user                 # the skills, into every harness you have: claude, codex, pi
 ```
+
+You need one harness installed and logged in: `claude`, `codex`, or `pi`.
+`ouroboros run` checks the logins before it starts and says what is missing.
 
 Optional but recommended: [hypergraph-protocol](https://github.com/theo-kirby/hypergraph-protocol)
 (`uv tool install hypergraph-protocol`). A repo with `.hypergraph/config.yml`
@@ -27,9 +31,10 @@ gets handoff files with the same plan layer.
 
 ```bash
 cd your-repo
+ouroboros                      # the menu: init / design / run / monitor
 ouroboros init                 # .ouroboros/config.yml + goal.md
-# in Claude Code: /ouroboros-design   (interview → charter + config)
-ouroboros run                  # tmux session ouroboros-<run>, branch ouroboros/<run>
+ouroboros design               # interview → charter + config, in claude, codex, or pi
+ouroboros run                  # refuses a dirty tree, a template charter, or no login; then tmux session ouroboros-<run>
 ouroboros status --watch       # state, harness, cost, limit blocks
 ouroboros stop                 # kills the loop and its children
 ouroboros report               # REPORT.md; or /ouroboros-morning in Claude Code

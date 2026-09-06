@@ -38,10 +38,12 @@ One `uv` tool plus a small set of skills.
 
 ```
 uv tool install --editable .  # from this repo; edits are live for new processes
-ouroboros                    # ASCII banner and interactive init / monitor menu
-ouroboros skills install      # → ./.claude/skills, ./.agents/skills (--user for ~/.claude/skills)
+ouroboros                    # ASCII banner and the menu: init / design / run / monitor
+ouroboros skills install      # → ./.claude/skills, ./.agents/skills, ./.pi/skills
+                              #   --user → ~/.claude, ~/.codex, ~/.pi/agent (those present) and ~/.agents
 ouroboros init                # → .ouroboros/config.yml + goal.md (the charter)
-ouroboros run --for 10h       # runs inside tmux session ouroboros-<run>
+ouroboros design              # the charter interview, in claude, codex, or pi (--harness)
+ouroboros run --for 10h       # preflight (git, charter filled in, logins), then tmux session ouroboros-<run>
 ouroboros status --watch      # what is it doing right now; which harness; limit blocks
 ouroboros stop                # SIGTERM the loop and its children, then the tmux session
 ouroboros report              # REPORT.md: bets, plan, verdicts, cost
@@ -52,9 +54,9 @@ numbers, the ok tag, and the branch carry over.
 
 With no arguments, the CLI prints the ASCII serpent with `OUROBOROS` centered
 inside the coil, followed by `an infinite loop` with a blank line before and
-after the tagline, then a numbered menu: `1. init` and `2. monitor`.
-In an interactive terminal, entering `1` runs the existing `init` command;
-entering `2` runs `status --watch`. Only the options are shown, with no selection
+after the tagline, then a numbered menu: `1. init`, `2. design`, `3. run`,
+`4. monitor`: the first-run path in order. In an interactive terminal, entering a
+number runs that command (`4` is `status --watch`). Only the options are shown, with no selection
 prompt; invalid selections retry silently. Ctrl-C or EOF
 exits the menu cleanly; Ctrl-C also exits the selected monitor without stopping
 the agent run. When stdin or stdout is not a terminal, the CLI prints the menu
@@ -66,6 +68,16 @@ with Python to print the same artwork and description. Explicit commands and fla
 normal output without the banner.
 
 Python 3.12+, `uv`, no daemon, no database. All state is files in the repo.
+
+**Preflight** runs before `run` detaches into tmux, so its messages land in the
+human's terminal: a git repo with a commit and a clean tree; a charter that is
+not the `init` template any more (mission, at least one done criterion, a
+ladder rung: `goal.unfilled`); and a login check per harness in the config
+(`claude auth status --json`, `codex login status`, `pi auth check --provider
+<default>`). A role whose first harness is out but whose fallback is in starts
+with a note; a role with no logged-in harness refuses to start. After start the
+loop never asks again: an auth failure mid-run is NEEDS_HUMAN plus a retry every
+ten minutes.
 
 ## 4. Decisions already made
 
@@ -470,8 +482,12 @@ work never runs out. With the planner on, the ladder is only the first plan.
 
 ## 14. Skills
 
-Installed by `ouroboros skills install`. Plain `SKILL.md` folders. They work in
-Claude Code, Codex, and Pi (Pi gets `--skill` on every call).
+Installed by `ouroboros skills install`. Plain `SKILL.md` folders in the format
+all three harnesses read: Claude Code invokes one as `/name`, Codex as `$name`,
+Pi by discovery or `--skill <dir>`. `--user` copies them into every harness home
+that exists (`~/.claude/skills`, `~/.codex/skills`, `~/.pi/agent/skills`) plus
+`~/.agents/skills`. `ouroboros design` opens the interview in whichever harness
+the actor chain names first, by skill name when installed and inline otherwise.
 
 | Skill | What it does |
 |---|---|
@@ -573,14 +589,15 @@ CLI flags override config: `--run-name --for --max-iterations --max-cost --mode
 ouroboros/
   pyproject.toml            # [project.scripts] ouroboros = "ouroboros.cli:main"; pydantic, pyyaml; pytest
   src/ouroboros/
-    cli.py                  # init | run | stop | status | report | skills install; preflight; signals
+    cli.py                  # init | design | run | stop | status | report | skills install; menu; preflight; signals
     engine.py               # the state machine (section 6): step(), retry policy, reconcile, plan, critique
     config.py               # pydantic models for config.yml (section 16)
-    goal.py                 # the charter parser: sections, done criteria → gap names, ladder, policies
+    goal.py                 # the charter parser: sections, done criteria → gap names, ladder, policies, template check
     harness/
       base.py               # Harness protocol, Result (+ kind: ok|timeout|limit|auth|transient|error, reset time parsing)
       claude.py  codex.py  pi.py
       pool.py               # LimitBoard (per run) + PooledHarness (per role): fallback chains
+      login.py              # login checks per harness for preflight (claude auth status, codex login status, pi auth check)
       backend_headless.py   # subprocess in its own process group, timeouts, kill_active, backend switch
       backend_tmux.py       # one tmux window per call, output to files
     memory/
@@ -631,9 +648,10 @@ harness depends on skill discovery.
    real caps.
 2. **Reject means revert.** Decided: on (`git.revert_on_reject`). A critic
    reject reverts the iteration and the next actor starts from `must_fix`.
-3. **Skills for Codex.** Decided: the role prompt text is inlined in every
-   call; `skills install` also copies to `.claude/skills` and `.agents/skills`
-   for humans and interactive sessions.
+3. **Skills for Codex and Pi.** Decided: the role prompt text is inlined in
+   every loop call; `skills install` copies the same folders into each
+   harness's skill directory for interactive use, and `ouroboros design` runs
+   the interview in any of the three.
 
 Still open:
 

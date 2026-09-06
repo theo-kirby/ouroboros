@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import signal
+import subprocess
 import sys
 import time
 from datetime import datetime
@@ -19,7 +20,8 @@ from .budget import BudgetClock
 from .config import DEFAULT_CONFIG_PATH, Config
 from .engine import Engine
 from .gitguard import GitError, GitGuard
-from .harness import make_harness
+from . import goal as charter
+from .harness import login, make_harness
 from .harness import backend_headless
 from .harness.backend_headless import kill_active
 from .harness.pool import LimitBoard, PooledHarness
@@ -161,12 +163,23 @@ def preflight(cfg: Config, repo: Path) -> str | None:
     goal_path = repo / cfg.goal
     if not goal_path.exists() or not goal_path.read_text().strip():
         return f"no goal at {goal_path}; run `ouroboros init` and fill it in"
+    reasons = charter.unfilled(goal_path.read_text())
+    if reasons:
+        return (f"the charter at {goal_path} is not filled in: " + "; ".join(reasons)
+                + ". Run `ouroboros design` (or /ouroboros-design in Claude Code), or edit it by hand")
+    chains = {}
     for role_name in ("actor", "overseer", "maintainer", "planner", "critic"):
         for harness_name, _model in cfg.role(role_name).chain:
             try:
                 make_harness(harness_name)
             except ValueError as exc:
                 return f"{role_name}: {exc}"
+        chains[role_name] = cfg.role(role_name).chain
+    errors, notes = login.check_roles(chains)
+    for note in notes:
+        print(f"  {note}", file=sys.stderr)
+    if errors:
+        return "not logged in: " + " | ".join(errors)
     return None
 
 
@@ -401,11 +414,29 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+# Where each harness discovers skills. All three read the same `SKILL.md` folder
+# format: Claude Code as /name, Codex as $name, Pi by `--skill <dir>` or discovery.
+USER_SKILL_DIRS = {
+    "claude": Path(".claude") / "skills",
+    "codex": Path(".codex") / "skills",
+    "pi": Path(".pi") / "agent" / "skills",
+    "agents": Path(".agents") / "skills",     # the cross-tool location Codex and others scan
+}
+PROJECT_SKILL_DIRS = [Path(".claude/skills"), Path(".agents/skills"), Path(".pi/skills")]
+
+
+def skill_targets(*, user: bool, home: Path | None = None) -> list[Path]:
+    """Project dirs, or for --user the dirs of every harness that has a home folder (plus ~/.agents)."""
+    if not user:
+        return list(PROJECT_SKILL_DIRS)
+    home = home or Path.home()
+    out = [home / rel for name, rel in USER_SKILL_DIRS.items() if name == "agents" or (home / rel.parts[0]).exists()]
+    return out
+
+
 def cmd_skills(args: argparse.Namespace) -> int:
     src = resources.files("ouroboros.skills")
-    targets = [Path(args.target)] if args.target else [Path(".claude/skills"), Path(".agents/skills")]
-    if args.user:
-        targets = [Path.home() / ".claude" / "skills"]
+    targets = [Path(args.target)] if args.target else skill_targets(user=args.user)
     for t in targets:
         t.mkdir(parents=True, exist_ok=True)
         for skill in src.iterdir():
@@ -457,20 +488,72 @@ def build_parser() -> argparse.ArgumentParser:
     rep = sub.add_parser("report", parents=[common], help="write REPORT.md for the morning")
     rep.set_defaults(fn=cmd_report)
 
-    sk = sub.add_parser("skills", help="install the ouroboros-* skills")
+    d = sub.add_parser("design", parents=[common], help="write the charter by interview, in claude, codex, or pi")
+    d.add_argument("--harness", choices=["claude", "codex", "pi"])
+    d.set_defaults(fn=cmd_design)
+
+    sk = sub.add_parser("skills", help="install the ouroboros-* skills for claude, codex, and pi")
     sk.add_argument("action", choices=["install"])
-    sk.add_argument("--user", action="store_true", help="install to ~/.claude/skills")
+    sk.add_argument("--user", action="store_true", help="install to ~/.claude, ~/.codex, ~/.pi/agent, ~/.agents skill dirs")
     sk.add_argument("--target")
     sk.set_defaults(fn=cmd_skills)
     return p
 
 
+def design_command(harness: str, skill_dir: Path, installed: bool) -> list[str]:
+    """The interactive harness call that runs the design interview.
+
+    Claude Code and Codex get the installed skill by name; when it is not installed,
+    or for Pi, the skill body travels inline (Pi also gets `--skill <dir>`).
+    """
+    body = (skill_dir / "SKILL.md").read_text()
+    body = body.split("\n---\n", 1)[1] if body.startswith("---") else body
+    inline = "Follow this skill now, in this repository:\n\n" + body
+    if harness == "claude":
+        return ["claude", "/ouroboros-design" if installed else inline]
+    if harness == "codex":
+        return ["codex", "$ouroboros-design" if installed else inline]
+    if harness == "pi":
+        return ["pi", "--skill", str(skill_dir), "Run the ouroboros-design skill now, in this repository."]
+    raise ValueError(f"unknown harness {harness!r}")
+
+
+def pick_harness(cfg: Config, wanted: str | None) -> str | None:
+    """The harness for an interactive session: asked for, else the actor chain, else any on PATH."""
+    order = [wanted] if wanted else [h for h, _ in cfg.role("actor").chain] + ["claude", "codex", "pi"]
+    for name in order:
+        if name and shutil.which(name):
+            return name
+    return None
+
+
+def cmd_design(args: argparse.Namespace) -> int:
+    """Run the charter interview in an interactive harness session."""
+    repo = repo_root()
+    cfg = load_config(args, repo)
+    if not (repo / DEFAULT_CONFIG_PATH).exists():
+        cmd_init(argparse.Namespace(name=None, force=False))
+    harness = pick_harness(cfg, args.harness)
+    if harness is None:
+        print("no harness on PATH (claude, codex, or pi); install and log in to one first", file=sys.stderr)
+        return 2
+    skill_dir = Path(str(resources.files("ouroboros.skills").joinpath("ouroboros-design")))
+    installed = (Path.home() / USER_SKILL_DIRS[harness] / "ouroboros-design").exists() if harness in ("claude", "codex") else False
+    cmd = design_command(harness, skill_dir, installed)
+    print(f"design interview in {harness}; it writes .ouroboros/goal.md and config.yml, then run `ouroboros run`\n")
+    return subprocess.call(cmd, cwd=repo)
+
+
+MENU = {"1": ["init"], "2": ["design"], "3": ["run"], "4": ["status", "--watch"]}
+MENU_TEXT = "1. init\n2. design\n3. run\n4. monitor\n"
+
+
 def interactive_menu(parser: argparse.ArgumentParser) -> int:
-    print("1. init\n2. monitor\n")
+    print(MENU_TEXT)
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         return 0
 
-    choices = {"1": ["init"], "2": ["status", "--watch"]}
+    choices = MENU
     try:
         while True:
             choice = input("").strip()
