@@ -90,7 +90,6 @@ def draw_run(p: Painter, rect: Rect, s: Snapshot) -> None:
     line1 = [
         ("state ", PAIR_DIM), (f"{state:<9}", STATE_PAIR.get(state, PAIR_DIM)),
         ("  iteration ", PAIR_DIM), (f"{it}{cap}", PAIR_TITLE),
-        ("  in stage ", PAIR_DIM), (fmt_duration(s.now - s.stage_since), PAIR_TITLE),
         ("  elapsed ", PAIR_DIM), (fmt_duration(s.elapsed), PAIR_TITLE),
         ("  ", PAIR_DIM), (left, PAIR_DIM),
         ("  pid ", PAIR_DIM), (f"{s.pid or '-'} {proc}", PAIR_GREEN if s.alive else PAIR_RED),
@@ -115,7 +114,7 @@ def draw_run(p: Painter, rect: Rect, s: Snapshot) -> None:
             else:
                 pair, mark = PAIR_INACTIVE, name
             p.text(y + 1, cx, mark, t.attr(pair, bold=name == active)); cx += len(mark)
-        tail = f"  cost ${s.cost:.2f} api-eq  switches {s.switches}  updated {int(s.now - float(st.get('epoch') or s.now))}s ago"
+        tail = f"  ·  ${s.cost:.2f} api-eq" + (f"  ·  {s.switches} switches" if s.switches else "")
         p.text(y + 1, cx, tail, t.attr(PAIR_DIM), width=max(0, x + w - cx))
     if inner.h >= 3:
         if s.stop_after_s:
@@ -172,6 +171,79 @@ def draw_stages(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
         row += 1
 
 
+# ---------------------------------------------------------------- loop (the compact default)
+def _outcome_glyph(it) -> tuple[str, int]:
+    if it.reverted:
+        return "✗", PAIR_RED
+    if it.bet:
+        return "◆", PAIR_MAGENTA
+    if it.changed and it.recorded:
+        return "■", PAIR_GREEN
+    if it.changed:
+        return "▪", PAIR_YELLOW
+    if it.error:
+        return "!", PAIR_RED
+    return "·", PAIR_INACTIVE
+
+
+def draw_loop(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
+    t = p.theme
+    inner = p.box(rect, "loop", num, PAIR_BOX_STAGES)
+    if inner.h <= 0:
+        return
+    y, x, w = inner.y, inner.x + 1, inner.w - 2
+    # 1. the pipeline, active stage lit
+    cx = x
+    for i, name in enumerate(STAGES):
+        if name == "commit":
+            continue
+        if cx > x:
+            p.text(y, cx, "→", t.attr(PAIR_INACTIVE)); cx += 1
+        active = name == s.stage
+        pair = STATE_PAIR.get({"actor": "work", "critic": "critique", "overseer": "oversee",
+                               "maintainer": "reconcile", "planner": "plan"}[name], PAIR_DIM)
+        p.text(y, cx, name, t.attr(pair if active else PAIR_INACTIVE, bold=active), width=max(0, x + w - cx))
+        cx += len(name)
+    if s.stage not in ("actor", "critic", "overseer", "maintainer", "planner"):
+        p.text(y, min(cx + 2, x + w), s.stage, t.attr(STATE_PAIR.get(s.stage, PAIR_DIM), bold=True), width=max(0, x + w - cx - 2))
+    if inner.h < 2:
+        return
+    # 2. outcome strip, newest right
+    its = s.iterations
+    strip = its[-(w - 12):]
+    p.text(y + 1, x, f"{len(its):>4} iter ", t.attr(PAIR_DIM))
+    for i, it in enumerate(strip):
+        ch, pair = _outcome_glyph(it)
+        p.text(y + 1, x + 10 + i, ch, t.attr(pair, bold=True))
+    if inner.h < 3:
+        return
+    # 3. counts
+    productive = sum(1 for i in its if i.changed and i.recorded)
+    empty = sum(1 for i in its if not i.changed)
+    reverts = sum(1 for i in its if i.reverted)
+    p.text(y + 2, x, f"{productive} productive · {empty} empty · {reverts} reverted · {s.reconciles} reconciles · {s.plans} bets",
+           t.attr(PAIR_DIM), width=w)
+    if inner.h < 4:
+        return
+    # 4. the current stage's clock and the last iteration
+    st = s.stages.get(s.stage)
+    avg = f", avg {fmt_duration(st.avg)}" if st and st.count else ""
+    p.text(y + 3, x, f"{s.stage} for {fmt_duration(s.now - s.stage_since)}{avg}", t.attr(PAIR_TITLE), width=w)
+    if inner.h >= 5 and its:
+        last = its[-1]
+        line = f"last #{last.n}: {fmt_duration(last.actor_seconds)} actor · {last.verdict or '…'}"
+        if last.critique:
+            line += f" · critic {last.critique}"
+        if last.error:
+            line += f" · {last.error}"
+        p.text(y + 4, x, line, t.attr(PAIR_DIM), width=w)
+    if inner.h >= 6:
+        limited = (s.status or {}).get("limited") or {}
+        if limited:
+            note = "limited: " + ", ".join(f"{k} {str(v).split(' (')[0]}" for k, v in limited.items())
+            p.text(y + 5, x, note, t.attr(PAIR_RED), width=w)
+
+
 # ---------------------------------------------------------------- iterations
 def draw_iterations(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
     t = p.theme
@@ -179,26 +251,15 @@ def draw_iterations(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
     productive = sum(1 for i in its if i.changed and i.recorded)
     empty = sum(1 for i in its if not i.changed)
     reverts = sum(1 for i in its if i.reverted)
-    inner = p.box(rect, "iterations", num, PAIR_BOX_ITER,
-                  title2=f"{len(its)} run · {productive} productive · {empty} empty · {reverts} reverted · {s.reconciles} reconcile · {s.plans} bets")
+    inner = p.box(rect, "iterations · actor minutes", num, PAIR_BOX_ITER,
+                  title2=f"{productive} productive · {empty} empty · {reverts} reverted")
     if inner.h <= 0:
         return
     y, x, w = inner.y, inner.x + 1, inner.w - 2
     # outcome strip: one glyph per iteration, newest on the right
     strip = its[-w:]
     for i, it in enumerate(strip):
-        if it.reverted:
-            ch, pair = "✗", PAIR_RED
-        elif it.bet:
-            ch, pair = "◆", PAIR_MAGENTA
-        elif it.changed and it.recorded:
-            ch, pair = "■", PAIR_GREEN
-        elif it.changed:
-            ch, pair = "▪", PAIR_YELLOW
-        elif it.error:
-            ch, pair = "!", PAIR_RED
-        else:
-            ch, pair = "·", PAIR_INACTIVE
+        ch, pair = _outcome_glyph(it)
         p.text(y, x + w - len(strip) + i, ch, t.attr(pair, bold=True))
     if not its:
         p.text(y, x, "no iterations yet", t.attr(PAIR_INACTIVE))
@@ -282,7 +343,7 @@ def draw_feed(p: Painter, rect: Rect, s: Snapshot, num: int, show_output: bool) 
     for ev in s.feed:
         if ev.kind == "tool_out" and not show_output:
             continue
-        if ev.kind == "think":
+        if ev.kind in ("think", "init"):
             continue
         prefix, pair = KIND_STYLE.get(ev.kind, ("  ", PAIR_DIM))
         max_lines = 3 if ev.kind == "text" else 1 if ev.kind in ("tool", "init", "result") else 2

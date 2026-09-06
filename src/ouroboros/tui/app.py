@@ -9,19 +9,23 @@ from pathlib import Path
 from typing import Optional, Set
 
 from .layout import MIN_COLS, MIN_LINES, Rect, col, compute_layout, leaf, row
-from .panels import LoadHistory, Painter, draw_feed, draw_iterations, draw_load, draw_log, draw_overseer, draw_plan, draw_run, draw_stages
+from .panels import (
+    LoadHistory, Painter, draw_feed, draw_iterations, draw_load, draw_log, draw_loop, draw_overseer, draw_plan, draw_run, draw_stages,
+)
 from .state import Snapshot, load_snapshot
 from .theme import PAIR_DIM, PAIR_TITLE, PAIR_YELLOW, Theme
 
 RENDER_TICK = 0.25
 RUN_STRIP_H = 5
 
-# hotkey number → panel id; the superscript on each box names it
-PANELS = ["stages", "iterations", "load", "messages", "overseer", "plan", "log"]
+# hotkey number → panel id; the superscript on each box names it. The first three are
+# on by default: what is it saying, where is the loop, what did the overseer decide.
+PANELS = ["messages", "loop", "overseer", "plan", "stages", "iterations", "load", "log"]
+DEFAULT_ON = {"messages", "loop", "overseer"}
 VIEW = col(
-    row(leaf("stages", 5), leaf("iterations", 6), leaf("load", 5), weight=5),
-    row(leaf("messages", 3), col(leaf("overseer", 1), leaf("plan", 1), weight=2), weight=7),
-    leaf("log", 3),
+    row(leaf("messages", 3), col(leaf("loop", 4), leaf("overseer", 3), leaf("plan", 3), weight=2), weight=6),
+    row(leaf("stages", 1), leaf("iterations", 1), leaf("load", 1), weight=3),
+    leaf("log", 2),
 )
 
 
@@ -64,7 +68,7 @@ class App:
         self.poller = Poller(run_dir, **kw)
         self.theme = Theme()
         self.last: Optional[Snapshot] = None
-        self.enabled: Set[str] = set(PANELS)
+        self.enabled: Set[str] = set(DEFAULT_ON)
         self.show_help = False
         self.show_output = False
         self.hist = LoadHistory()
@@ -136,7 +140,9 @@ class App:
         placed = compute_layout(Rect(RUN_STRIP_H, 0, lines - RUN_STRIP_H, cols), VIEW, self.enabled)
         for pid, rect in placed.items():
             num = PANELS.index(pid) + 1
-            if pid == "stages":
+            if pid == "loop":
+                draw_loop(p, rect, s, num)
+            elif pid == "stages":
                 draw_stages(p, rect, s, num)
             elif pid == "iterations":
                 draw_iterations(p, rect, s, num)
@@ -162,7 +168,8 @@ class App:
             "ouroboros status — keys",
             "",
             "  q / Esc    quit (the run keeps going)",
-            "  1 - 7      toggle a panel: " + " ".join(f"{i + 1} {n}" for i, n in enumerate(PANELS)),
+            "  1 - 8      toggle a panel: " + " ".join(f"{i + 1} {n}" for i, n in enumerate(PANELS)),
+            "             (default: messages, loop, overseer; the rest are one key away)",
             "  o          show tool output lines in messages",
             "  + / -      faster / slower refresh",
             "  h / ?      this help",
