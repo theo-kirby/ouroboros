@@ -24,7 +24,7 @@ def test_parse_garbage():
 def test_build_cmd():
     h = ClaudeHarness()
     cmd = h.build_cmd(resume="s", model="opus", system_append="x")
-    assert cmd[1:] == ["-p", "--output-format", "json", "--dangerously-skip-permissions", "--model", "opus", "--resume", "s", "--append-system-prompt", "x"]
+    assert cmd[1:] == ["-p", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions", "--model", "opus", "--resume", "s", "--append-system-prompt", "x"]
 
 
 def test_build_cmd_overseer_flags():

@@ -136,3 +136,17 @@ def test_reset_in_and_epoch_forms():
     now = datetime(2026, 9, 6, 12, 0, tzinfo=timezone.utc)
     assert parse_reset_time("Rate limit reached. Please try again in 11.054s.", now=now) == now.replace(second=11, microsecond=54000)
     assert parse_reset_time('{"type":"usage_limit_reached","plan_type":"plus","resets_at":1788102905}', now=now).timestamp() == 1788102905
+
+
+def test_codex_strict_schema_adds_what_openai_requires():
+    from ouroboros.harness.codex import strict_schema
+    from ouroboros.roles.critic import CRITIQUE_SCHEMA
+    from ouroboros.roles.overseer import VERDICT_SCHEMA
+    for schema in (CRITIQUE_SCHEMA, VERDICT_SCHEMA):
+        s = strict_schema(schema)
+        assert s["additionalProperties"] is False and s["required"] == list(schema["properties"])
+        assert "additionalProperties" not in schema           # the original is untouched
+    nested = {"type": "object", "properties": {"a": {"type": "object", "properties": {"b": {"type": "string"}}}, "c": {"type": "array", "items": {"type": "object", "properties": {"d": {"type": "integer"}}}}}}
+    s = strict_schema(nested)
+    assert s["properties"]["a"]["additionalProperties"] is False and s["properties"]["a"]["required"] == ["b"]
+    assert s["properties"]["c"]["items"]["required"] == ["d"]

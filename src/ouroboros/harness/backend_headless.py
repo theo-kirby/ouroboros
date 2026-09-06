@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -63,27 +64,71 @@ def run_subprocess(
     )
     timed_out = False
     _ACTIVE.add(proc)
+    # stdout streams to the transcript file line by line, so `ouroboros status --watch`
+    # can show the call while it runs instead of after it ends.
+    out_chunks: list[str] = []
+    err_chunks: list[str] = []
+    if log_path is not None:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text("")
+
+    def pump_out() -> None:
+        f = log_path.open("a") if log_path is not None else None
+        try:
+            for line in proc.stdout:
+                out_chunks.append(line)
+                if f is not None:
+                    f.write(line)
+                    f.flush()
+        except (OSError, ValueError):
+            pass
+        finally:
+            if f is not None:
+                f.close()
+
+    def pump_err() -> None:
+        try:
+            for line in proc.stderr:
+                err_chunks.append(line)
+        except (OSError, ValueError):
+            pass
+
+    def feed_in() -> None:
+        try:
+            if stdin_text is not None:
+                proc.stdin.write(stdin_text)
+            if proc.stdin is not None:
+                proc.stdin.close()
+        except (OSError, ValueError):
+            pass
+
+    threads = [threading.Thread(target=t, daemon=True) for t in (pump_out, pump_err, feed_in)]
+    for t in threads:
+        t.start()
     try:
         try:
-            out, err = proc.communicate(input=stdin_text, timeout=timeout)
+            proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             timed_out = True
             _kill_group(proc)
             try:
-                out, err = proc.communicate(timeout=10)
+                proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
-                out, err = "", "killed after timeout"
+                err_chunks.append("killed after timeout")
         except BaseException:
             _kill_group(proc)
             raise
     finally:
         _ACTIVE.discard(proc)
-    if log_path is not None:
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        log_path.write_text(out or "")
-        if err:
+        for t in threads:
+            t.join(timeout=10)
+    out, err = "".join(out_chunks), "".join(err_chunks)
+    if log_path is not None and err:
+        try:
             log_path.with_suffix(log_path.suffix + ".stderr").write_text(err)
-    return ProcResult(proc.returncode if proc.returncode is not None else -9, out or "", err or "", timed_out)
+        except OSError:
+            pass
+    return ProcResult(proc.returncode if proc.returncode is not None else -9, out, err, timed_out)
 
 
 def _kill_group(proc: subprocess.Popen) -> None:

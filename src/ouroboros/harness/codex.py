@@ -32,6 +32,27 @@ _TRANSIENT = re.compile(r"high demand|at capacity|rate limit exceeded|stream dis
 _RECONNECT = re.compile(r"^Reconnecting", re.IGNORECASE)
 
 
+def strict_schema(schema: dict) -> dict:
+    """The schema in the form Codex's structured output accepts (OpenAI strict mode).
+
+    Every object must carry `additionalProperties: false` and list every property
+    in `required`; otherwise the API answers 400 `invalid_json_schema` and the call
+    fails before the model runs (seen live: cadex nt2, 2026-09-06).
+    """
+    def walk(node):
+        if isinstance(node, dict):
+            out = {k: walk(v) for k, v in node.items()}
+            if out.get("type") == "object" or "properties" in out:
+                props = out.get("properties") or {}
+                out["additionalProperties"] = False
+                out["required"] = list(props.keys())
+            return out
+        if isinstance(node, list):
+            return [walk(v) for v in node]
+        return node
+    return walk(schema)
+
+
 class CodexHarness:
     name = "codex"
 
@@ -81,7 +102,7 @@ class CodexHarness:
         if json_schema:
             fd, name = tempfile.mkstemp(prefix="ouroboros-schema-", suffix=".json")
             with os.fdopen(fd, "w") as f:
-                json.dump(json_schema, f)
+                json.dump(strict_schema(json_schema), f)
             schema_path = Path(name)
         try:
             cmd = self.build_cmd(cwd=cwd, resume=resume, model=model, tools=tools, schema_path=schema_path)

@@ -35,7 +35,7 @@ ouroboros                      # the menu: init / design / run / monitor
 ouroboros init                 # .ouroboros/config.yml + goal.md
 ouroboros design               # interview → charter + config, in claude, codex, or pi
 ouroboros run                  # refuses a dirty tree, a template charter, or no login; then tmux session ouroboros-<run>
-ouroboros status --watch       # state, harness, cost, limit blocks
+ouroboros status --watch       # the live TUI: stages, iterations, load, messages, overseer, plan (or `ouroboros top`)
 ouroboros stop                 # kills the loop and its children
 ouroboros report               # REPORT.md; or /ouroboros-morning in Claude Code
 ```

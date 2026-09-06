@@ -1,4 +1,4 @@
-"""Claude Code driver: `claude -p --output-format json`."""
+"""Claude Code driver: `claude -p --output-format stream-json --verbose`."""
 
 from __future__ import annotations
 
@@ -22,10 +22,9 @@ class ClaudeHarness:
         self, *, resume: str | None, model: str | None, system_append: str | None,
         tools: str | None = None, json_schema: dict | None = None, max_turns: int | None = None,
     ) -> list[str]:
-        if backend.BACKEND == "tmux":   # stream events so the window shows progress; the last line is the result object
-            cmd = [self.binary, "-p", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions"]
-        else:
-            cmd = [self.binary, "-p", "--output-format", "json", "--dangerously-skip-permissions"]
+        # stream-json in every backend: the transcript file grows while the call runs (the
+        # status TUI tails it) and the last line is the same result object `json` gives.
+        cmd = [self.binary, "-p", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions"]
         if model:
             cmd += ["--model", model]
         if resume:

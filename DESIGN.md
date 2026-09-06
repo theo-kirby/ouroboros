@@ -44,7 +44,7 @@ ouroboros skills install      # → ./.claude/skills, ./.agents/skills, ./.pi/sk
 ouroboros init                # → .ouroboros/config.yml + goal.md (the charter)
 ouroboros design              # the charter interview, in claude, codex, or pi (--harness)
 ouroboros run --for 10h       # preflight (git, charter filled in, logins), then tmux session ouroboros-<run>
-ouroboros status --watch      # what is it doing right now; which harness; limit blocks
+ouroboros status --watch      # the live TUI (also `ouroboros top`); --plain for the text loop
 ouroboros stop                # SIGTERM the loop and its children, then the tmux session
 ouroboros report              # REPORT.md: bets, plan, verdicts, cost
 ```
@@ -369,6 +369,13 @@ Rules:
   that minted the session.
 - `ouroboros status` shows `limited: claude for 112m (...)`.
 
+**Codex structured output is strict.** `--output-schema` goes through OpenAI's
+strict mode: every object needs `additionalProperties: false` and all of its
+properties in `required`, or the API answers 400 `invalid_json_schema` before
+the model runs. The driver rewrites the schema (`strict_schema`) on the way
+out. Learned live on cadex nt2: the critic failed open and the overseer fell to
+rules on every Codex call until this landed.
+
 ## 10. Modes
 
 A mode is the set of roles that run per iteration. Three are built:
@@ -525,6 +532,26 @@ tmux layout when you attach: pane 1 is the loop log, pane 2 shows
 `ouroboros status --watch`. With `backend: tmux`, each harness call also opens
 its own window while it runs.
 
+**The status TUI** (`ouroboros status --watch` on a terminal, or `ouroboros top`)
+is a btop-style curses monitor in `tui/`, ported from the author's vllmtop. It
+reads only the run directory and the repo, never the loop process, on a poller
+thread every two seconds. A run strip on top: state, iteration, time in stage,
+elapsed and left with a gradient bar, the harness chain with the active one
+green and limited ones red, cost, pid alive. Then seven panels, each toggled by
+its superscript number: **stages** (the pipeline with the active stage lit and
+per-stage run counts, last, average, total durations from `iterations.jsonl`),
+**iterations** (an outcome strip, ■ changed and recorded, ▪ changed, · empty,
+✗ reverted, ◆ bet, ! error, over a braille chart of actor minutes per
+iteration), **load** (a braille chart of the harness process tree's CPU, procs
+and RSS, loadavg, cost per hour, limit blocks), **messages** (the newest
+transcript tailed live: assistant text, tool calls with the command or path,
+errors, the result line; `o` shows tool output too; Claude stream-json, Codex
+and Pi event lines all parse), **overseer** (the last verdicts with reasons and
+the last reply), **plan · short** (the `short` plan node's items, read from the
+hypergraph plan view or the handoff plan file), and **loop.log**. For the feed
+to be live the headless backend streams each call's stdout to the transcript
+file line by line, and Claude runs with `stream-json` in every backend.
+
 `ouroboros report` renders the run into `REPORT.md`: bets changed, the plan as
 it stands, verdict counts, the decisions the overseer made for you, cost.
 
@@ -608,6 +635,7 @@ ouroboros/
     budget.py               # BudgetClock, backoff table
     recorder.py             # jsonl, status.json, loop.log, NEEDS_HUMAN.md
     tmux.py                 # the run session: launch, kill
+    tui/                    # the status TUI: theme, widgets, layout (from vllmtop), state (run-dir reader), panels, app
     skills/                 # packaged with the wheel; `ouroboros skills install` copies them out
       ouroboros-actor/  ouroboros-critic/  ouroboros-overseer/  ouroboros-maintainer/
       ouroboros-planner/  ouroboros-design/  ouroboros-morning/     (each SKILL.md)

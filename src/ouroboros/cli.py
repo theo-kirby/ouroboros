@@ -350,6 +350,13 @@ def cmd_status(args: argparse.Namespace) -> int:
     repo = repo_root()
     cfg = load_config(args, repo)
     rec = Recorder(run_dir_for(repo, cfg.run), echo=lambda *_: None)
+    if args.watch and not getattr(args, "plain", False) and sys.stdout.isatty() and sys.stdin.isatty():
+        from .tui import run_tui
+        return run_tui(
+            rec.run_dir, repo=repo, plan_md=cfg.plan.md, stop_after_s=cfg.stop.after_seconds,
+            max_iterations=cfg.stop.max_iterations, mode=cfg.mode,
+            chains={name: [h for h, _ in cfg.role(name).chain] for name in ("actor", "overseer", "maintainer", "planner", "critic")},
+        )
     while True:
         st = rec.read_status()
         if args.watch:
@@ -478,9 +485,13 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--foreground", action="store_true", help="do not wrap in tmux")
     r.set_defaults(fn=cmd_run)
 
-    s = sub.add_parser("status", parents=[common], help="show the current state")
-    s.add_argument("--watch", action="store_true")
+    s = sub.add_parser("status", parents=[common], help="show the current state (--watch: the live TUI)")
+    s.add_argument("--watch", action="store_true", help="keep watching; on a terminal this is the btop-style TUI")
+    s.add_argument("--plain", action="store_true", help="with --watch: the plain text loop instead of the TUI")
     s.set_defaults(fn=cmd_status)
+
+    top = sub.add_parser("top", parents=[common], help="the live TUI (same as status --watch)")
+    top.set_defaults(fn=cmd_status, watch=True, plain=False)
 
     stp = sub.add_parser("stop", parents=[common], help="stop the running loop (SIGTERM, then the tmux session)")
     stp.set_defaults(fn=cmd_stop)
