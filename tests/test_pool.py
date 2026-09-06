@@ -51,7 +51,7 @@ def test_kind_classification():
 
 
 def test_board_blocks_until_reset_or_cooldown():
-    clock = Clock()
+    clock = Clock(1_000_000.0)   # a whole number: datetime round-trips lose sub-microsecond float precision
     board = LimitBoard(cooldown=100, max_cooldown=350, clock=clock)
     until = datetime.fromtimestamp(clock.t + 500, tz=timezone.utc)
     at = board.block("claude", until=until)

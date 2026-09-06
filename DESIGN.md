@@ -4,7 +4,7 @@
 It runs Claude Code, Codex, or Pi again and again, never blocks on a question,
 never believes "done" too early, and leaves a clean memory trail for the morning.
 
-Status: design v0. Phases 1 (walking skeleton), 2 (agent overseer), 3 (hypergraph adapter), and 4 (Codex and Pi drivers, fallback chains) are built. Phases 1–3 ran a real night (cadex nt1).
+Status: design v0. Phases 1 (walking skeleton), 2 (agent overseer), 3 (hypergraph adapter), and 4 (Codex and Pi drivers, fallback chains) are built. Phases 1–3 ran a real night (cadex nt1). Section 20 records the charter/plan decisions and the next build order.
 
 ---
 
@@ -526,3 +526,90 @@ say if you want different ones.
    exact path changed across versions. Default: install to both
    `.claude/skills/` and `.agents/skills/`, and also inline the role prompt
    text in every call so no harness depends on skill discovery.
+
+## 20. Charter and plan: self-evolving goals
+
+Decided 2026-09-06 after the first night run. The goal document rotted in one
+night: the overseer rejected "done" by counting unchecked boxes in a static
+file while the work was already shipped. The horizon ladder, on the other hand,
+worked: the actor took rungs in order and never ran dry. So the ladder is the
+right idea in the wrong place.
+
+### The split
+
+The goal splits into two layers with different owners.
+
+| Layer | Owner | Changes | Lives in |
+|---|---|---|---|
+| **Charter** | the human | only between runs, by editing `goal.md` | `.ouroboros/goal.md`: mission, constraints, question policy, quality bar, exhaustion policy, done criteria, first horizon ladder |
+| **Plan** | the agents | every few iterations | the hypergraph: open state nodes (gaps), `Bet:` decision records, and a `plan` view rendered to `PLAN.md` |
+
+No agent role may edit the charter. An agent that can edit the criteria can
+meet the criteria by editing. The human overrules the agents by writing a new
+charter version; Ouroboros mints a new directive record for it.
+
+### Four grains of goal
+
+| Grain | Horizon | Where it lives | Who writes it |
+|---|---|---|---|
+| Unit | this hour | the dispatch record node of the iteration | actor |
+| Gap | this week | open, broken, blocked state nodes on the frontier | maintainer, from declared impacts |
+| Bet | this month | `Bet:` decision records, folded into the `plan` view (`now`, `soon`, `later`) | planner |
+| Mission | this year | the charter | human |
+
+### Mechanics
+
+1. **Done criteria become gaps.** The directive record node declares one
+   `NEW <gap>` impact per done criterion. The maintainer folds them into open
+   state nodes. Work falsifies them through the ordinary impact channel
+   (`target: <gap> — open → working`). A later charter version declares `NEW`
+   only for criteria it adds; criteria it drops are named in the body so the
+   maintainer can mark them superseded.
+2. **The horizon ladder becomes the `plan` view.** Ouroboros declares the view
+   (`hypergraph views add plan --md PLAN.md --reconcile`) at run start when
+   missing. The directive seeds three view nodes through impacts:
+   `plan/NEW now` (hour and day rungs), `plan/NEW soon` (week),
+   `plan/NEW later` (month and year). Each node's `## Current` is the ranked plan
+   at that horizon, with citations. The `now` node holds the next two or three
+   units, never a task list.
+3. **The planner writes bets.** A planner pass runs right after every maintainer
+   pass (about every five iterations), and after a `done_accepted` verdict. It
+   reads the charter, `STATE.md`, `PLAN.md`, the pending plan impacts, and the
+   night's record nodes. It writes exactly one `Bet:` decision record whose
+   impacts target the plan view, then, as the plan view's single writer, folds
+   them, advances the view's high-water mark, and commits `plan:`. When the
+   frontier is empty, the bet must propose three directions, pick one, and name
+   the mission item it serves. This replaces the `creative` exhaustion policy.
+4. **Single writer per view.** The maintainer writes the state graph and never
+   the plan view. The planner writes the plan view and never the state graph.
+   Actors write neither.
+5. **The overseer reads the frontier and the plan,** not the checklist. "Done"
+   means no charter-derived gap is open.
+6. **The morning report leads with the bets changed tonight,** each with its
+   why, then the current `PLAN.md`, then the decisions the overseer made for
+   you.
+
+### Planner authority
+
+- May re-rank and add freely.
+- May retire a charter-derived gap only by proposing status `blocked` or
+  `superseded` with a cited reason. Never delete.
+- At most three new directions per night. Each names the mission item it serves.
+- Every plan change is a record node with `## Why`. Every plan node cites its
+  bets. `hypergraph check` keeps that honest.
+
+### Without hypergraph
+
+Handoff repos get the same three horizons in `.ouroboros/PLAN.md` and a bets
+log in `.ouroboros/bets.md`, written by the same planner role every
+`plan.every` iterations. Same rules, less audit. Set `plan.enabled: false` to
+turn the self-evolving layer off in either memory.
+
+### Build order
+
+1. Directive declares `NEW` impacts for done criteria.
+2. Overseer prompt gets the frontier and `PLAN.md`.
+3. Plan view, planner role, morning report.
+4. `actor-critic` and `council` modes; a Codex critic on Claude work.
+5. `ouroboros-design` interview rewritten for the charter; `ouroboros-morning`.
+6. tmux backend.

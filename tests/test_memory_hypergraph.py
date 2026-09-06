@@ -163,3 +163,36 @@ def test_failed_iterations_do_not_trigger_reconcile(hg_repo):
     eng.goal_text = GOAL
     eng.run()
     assert maintainer.prompts == [] and mem.since_reconcile == 0
+
+
+GOAL_WITH_GAPS = GOAL + "\n## Done criteria\n\n- [ ] The build passes on a clean clone.\n- [ ] The README says how to run it.\n"
+
+
+def test_directive_declares_gap_impacts(hg_repo):
+    mem = HypergraphMemory(hg_repo)
+    mem.start(run="t", goal_text=GOAL_WITH_GAPS, run_dir=hg_repo / ".ouroboros" / "runs" / "t", branch="ouroboros/t")
+    body = mem.read_record(mem.directive_slug)
+    assert "NEW gap-build-passes-clean-clone" in body and "NEW gap-readme-says-how-run" in body
+    assert "- [gap] gap-build-passes-clean-clone: The build passes on a clean clone." in body
+    assert mem.needs_reconcile()   # the gaps must reach the frontier at the first chance
+    mem.mark_reconciled()
+    assert not mem.needs_reconcile()
+
+
+def test_second_charter_version_declares_only_new_gaps(hg_repo):
+    mem = HypergraphMemory(hg_repo)
+    mem.start(run="t", goal_text=GOAL_WITH_GAPS, run_dir=hg_repo / ".ouroboros" / "runs" / "t", branch="ouroboros/t")
+    v2 = GOAL + "\n## Done criteria\n\n- [ ] The build passes on a clean clone.\n- [ ] CI runs the tests.\n"
+    mem2 = HypergraphMemory(hg_repo)
+    mem2.start(run="t", goal_text=v2, run_dir=hg_repo / ".ouroboros" / "runs" / "t", branch="ouroboros/t")
+    body = mem2.read_record(mem2.directive_slug)
+    assert "NEW gap-ci-runs-tests" in body
+    assert "NEW gap-build-passes-clean-clone" not in body           # already declared by v1
+    assert "drops" in body and "gap-readme-says-how-run" in body   # named for the maintainer
+
+
+def test_directive_without_criteria_declares_none(hg_repo):
+    mem = HypergraphMemory(hg_repo)
+    mem.start(run="t", goal_text=GOAL, run_dir=hg_repo / ".ouroboros" / "runs" / "t", branch="ouroboros/t")
+    assert "none:" in mem.read_record(mem.directive_slug)
+    assert not mem.needs_reconcile()

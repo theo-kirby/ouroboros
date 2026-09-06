@@ -12,10 +12,12 @@ from pathlib import Path
 import yaml
 
 from .base import BaseMemory
+from .. import goal as charter
 
 _FM_TITLE = re.compile(r"^title:\s*(.+)$", re.MULTILINE)
 _FM_ROOT = re.compile(r"^parents:\s*\[\s*\]\s*$", re.MULTILINE)
 _UNREC = re.compile(r"(\d+) unreconciled record node")
+_GAP_LINE = re.compile(r"^- \[gap\] (\S+): (.*)$", re.MULTILINE)
 STATE_MD_LIMIT = 16000
 
 
@@ -66,6 +68,7 @@ class HypergraphMemory(BaseMemory):
         self.since_reconcile = 0
         self.run_dir: Path | None = None
         self.last_error: str | None = None
+        self.reconcile_due = False
 
     # -- CLI plumbing ----------------------------------------------------
     def hg(self, *args: str, timeout: float = 120) -> tuple[int, str]:
@@ -137,8 +140,15 @@ class HypergraphMemory(BaseMemory):
                 return f.stem
         return None
 
-    def new_record(self, *, title: str, body: str, parent: str | None, none_reason: str) -> str | None:
-        args = ["new", "record", *self._cfg(), "--title", title, "--body", "-", "--none", none_reason, "--repo-auto"]
+    def new_record(
+        self, *, title: str, body: str, parent: str | None, none_reason: str | None = None,
+        impacts: list[str] | None = None,
+    ) -> str | None:
+        args = ["new", "record", *self._cfg(), "--title", title, "--body", "-", "--repo-auto"]
+        for imp in impacts or []:
+            args += ["--impact", imp]
+        if not impacts:
+            args += ["--none", none_reason or "no state change"]
         if parent:
             args += ["--parent", parent]
         try:
@@ -152,6 +162,22 @@ class HypergraphMemory(BaseMemory):
         return proc.stdout.split()[0] if proc.stdout.split() else None
 
     # -- lifecycle -------------------------------------------------------
+    def read_record(self, slug: str) -> str:
+        f = self.record_dir() / f"{slug}.md"
+        return _strip_front_matter(f.read_text()) if f.exists() else ""
+
+    def charter_gaps(self, goal_text: str) -> list[tuple[str, str]]:
+        """(gap-name, criterion) for every done criterion, names made unique."""
+        seen: dict[str, int] = {}
+        out: list[tuple[str, str]] = []
+        for crit in charter.done_criteria(goal_text):
+            name = charter.gap_name(crit)
+            seen[name] = seen.get(name, 0) + 1
+            if seen[name] > 1:
+                name = f"{name}-{seen[name]}"
+            out.append((name, crit))
+        return out
+
     def start(self, *, run: str, goal_text: str, run_dir: Path, branch: str) -> None:
         self.branch, self.goal_text, self.run_dir = branch, goal_text, run_dir
         digest = hashlib.sha256(goal_text.encode()).hexdigest()[:8]
@@ -160,31 +186,56 @@ class HypergraphMemory(BaseMemory):
         self.directive_slug = self.find_record_by_title(versioned)
         if self.directive_slug is None:
             previous = self.find_record_by_title(title)  # an earlier goal version of this run, if any
+            known = dict(_GAP_LINE.findall(self.read_record(previous))) if previous else {}
+            gaps = self.charter_gaps(goal_text)
+            added = [(n, c) for n, c in gaps if n not in known]
+            dropped = [(n, c) for n, c in known.items() if n not in {g for g, _ in gaps}]
+            gap_lines = "\n".join(f"- [gap] {n}: {c}" for n, c in gaps) or "- (none declared)"
             supersedes = (
-                f"\n\nThis directive supersedes `{previous}`: the operator edited the goal and restarted the run."
+                f"\n\nThis directive supersedes `{previous}`: the operator edited the charter and restarted the run."
                 if previous else ""
             )
+            dropped_text = (
+                "\n\nCriteria this version drops (the maintainer marks their gaps superseded):\n"
+                + "\n".join(f"- {n}: {c}" for n, c in dropped)
+            ) if dropped else ""
             body = (
                 "## What\n\nOperator directive: an Ouroboros loop starts on this repo. Every work node of the run "
-                f"descends from this node.{supersedes}\n\n## Why\n\nThe goal document, verbatim:\n\n{goal_text.strip()}\n\n"
+                f"descends from this node.{supersedes}\n\n## Why\n\nThe charter (the operator's goal document), verbatim:\n\n"
+                f"{goal_text.strip()}\n\n**Done criteria as gaps** (one open state node each; work closes them through "
+                f"declared impacts):\n\n{gap_lines}{dropped_text}\n\n"
                 f"## Method\n\nOuroboros iterations on branch `{branch}`: orient, one dispatched unit, record, commit; "
-                "a maintainer pass reconciles on pressure.\n\n## Result\n\nDirective recorded. Work follows as child nodes.\n"
+                "a maintainer pass reconciles on pressure; a planner pass writes bets after each reconcile.\n\n"
+                "## Result\n\nDirective recorded. Work follows as child nodes.\n"
             )
+            impacts = [
+                f"NEW {n} — Charter gap, status open: {c[:300]}. Flip to working only when the criterion is verifiably met."
+                for n, c in added
+            ]
+            impacts += self.plan_seed_impacts(goal_text)
             self.directive_slug = self.new_record(
                 title=f"{versioned} — operator directive", body=body, parent=previous or self.find_record_root(),
-                none_reason="operator directive; impacts are declared by the work nodes that follow",
+                impacts=impacts,
+                none_reason="operator directive with no new gaps; impacts are declared by the work nodes that follow",
             )
+            if self.directive_slug is not None and impacts:
+                self.reconcile_due = True   # fold the gaps onto the frontier at the first chance
         if self.directive_slug is None:
             raise RuntimeError(f"could not record the run directive: {self.last_error}")
         files = self.record_files()
         newest = files[-1].stem if files else None
         self.last_record_slug = newest or self.directive_slug
 
+    def plan_seed_impacts(self, goal_text: str) -> list[str]:
+        """Impacts that seed the plan view from the charter's horizon ladder. Empty until the plan view exists."""
+        return []
+
     def mark_iteration(self) -> None:
         self.since_reconcile += 1
 
     def mark_reconciled(self) -> None:
         self.since_reconcile = 0
+        self.reconcile_due = False
 
     # -- adapter protocol ------------------------------------------------
     def orient_prompt(self) -> str:
@@ -246,6 +297,8 @@ class HypergraphMemory(BaseMemory):
         return True
 
     def needs_reconcile(self) -> bool:
+        if self.reconcile_due:
+            return True
         if self.reconcile_every and self.since_reconcile >= self.reconcile_every:
             return True
         count, _ = self.unreconciled()
