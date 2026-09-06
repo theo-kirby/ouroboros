@@ -73,6 +73,7 @@ class Signals:
     diff_stat: str = ""
     history: list[dict] = field(default_factory=list)
     memory: str = ""   # what the memory adapter says is true now: frontier, plan
+    critique: str = ""  # the critic's verdict this iteration, if a critic ran
 
     def describe(self) -> str:
         lines = [
@@ -83,6 +84,8 @@ class Signals:
         ]
         if self.error:
             lines.append(f"- harness error: {self.error[:300]}")
+        if self.critique:
+            lines.append(f"- critic: {self.critique[:400]}")
         if _QUESTION.search(self.text.strip()[-1500:]):
             lines.append("- the message looks like it ends with a question")
         if _DONE.search(self.text.strip()[-1500:]):

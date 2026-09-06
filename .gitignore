@@ -219,3 +219,6 @@ __marimo__/
 
 # ouroboros run state (machine-owned, local)
 .ouroboros/runs/
+
+# Local architecture diagram
+/ouroboros-diagram.html

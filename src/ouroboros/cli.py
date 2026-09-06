@@ -24,6 +24,7 @@ from .harness.pool import LimitBoard, PooledHarness
 from .memory import make_memory
 from .memory.handoff import HandoffMemory
 from .recorder import Recorder
+from .roles.critic import Council, Critic
 from .roles.overseer import AgentOverseer, RulesOverseer
 
 GOAL_TEMPLATE = """# Goal: {name}
@@ -153,7 +154,7 @@ def preflight(cfg: Config, repo: Path) -> str | None:
     goal_path = repo / cfg.goal
     if not goal_path.exists() or not goal_path.read_text().strip():
         return f"no goal at {goal_path}; run `ouroboros init` and fill it in"
-    for role_name in ("actor", "overseer", "maintainer", "planner"):
+    for role_name in ("actor", "overseer", "maintainer", "planner", "critic"):
         for harness_name, _model in cfg.role(role_name).chain:
             try:
                 make_harness(harness_name)
@@ -170,7 +171,7 @@ def _pools(cfg: Config, log) -> dict[str, PooledHarness]:
     )
     return {
         name: PooledHarness([(make_harness(h), m) for h, m in cfg.role(name).chain], board, log=log)
-        for name in ("actor", "overseer", "maintainer", "planner")
+        for name in ("actor", "overseer", "maintainer", "planner", "critic")
     }
 
 
@@ -255,8 +256,21 @@ def cmd_run(args: argparse.Namespace) -> int:
     else:
         overseer = RulesOverseer()
 
+    critic = None
+    if cfg.mode in ("actor-critic", "council"):
+        crole = cfg.role("critic")
+        critics = [Critic(pools["critic"], goal_text=goal_text, cwd=repo, timeout=crole.timeout_seconds, model=crole.model,
+                          transcript_path=lambda n, a: recorder.transcript_path(n, "critic", a), log=recorder.log)]
+        if cfg.mode == "council":
+            for i, extra in enumerate(cfg.council, start=1):
+                h = PooledHarness([(make_harness(extra.harness), extra.model)], pools["actor"].board, log=recorder.log)
+                critics.append(Critic(h, goal_text=goal_text, cwd=repo, timeout=crole.timeout_seconds, model=extra.model,
+                                      transcript_path=lambda n, a, i=i: recorder.transcript_path(n, f"critic{i}", a),
+                                      log=recorder.log, name=f"critic{i}:{extra.harness}"))
+        critic = critics[0] if len(critics) == 1 else Council(critics)
+
     engine = Engine(
-        config=cfg, repo=repo, harness=pools["actor"], memory=memory,
+        config=cfg, repo=repo, harness=pools["actor"], memory=memory, critic=critic,
         git=git, recorder=recorder, budget=BudgetClock(cfg.stop), goal_text=goal_text, overseer=overseer,
         maintainer=pools["maintainer"], planner=pools["planner"],
     )

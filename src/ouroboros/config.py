@@ -119,7 +119,8 @@ class Config(BaseModel):
     goal: str = ".ouroboros/goal.md"
     memory: str = "auto"  # auto | hypergraph | handoff
     backend: str = "headless"
-    mode: str = "single"
+    mode: str = "single"   # single | actor-critic | council
+    council: list[FallbackConfig] = Field(default_factory=list)   # council mode: extra critics beside roles.critic
     overseer: str = "agent"  # agent | rules
     idle_interval: str = "30m"  # sleep between iterations after done_accepted under report_done
     roles: dict[str, RoleConfig] = Field(
@@ -128,6 +129,7 @@ class Config(BaseModel):
             "overseer": RoleConfig(model="haiku", timeout="3m"),
             "maintainer": RoleConfig(timeout="20m"),
             "planner": RoleConfig(timeout="20m"),
+            "critic": RoleConfig(timeout="15m"),
         }
     )
     git: GitConfig = Field(default_factory=GitConfig)

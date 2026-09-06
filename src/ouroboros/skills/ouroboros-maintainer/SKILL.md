@@ -29,6 +29,9 @@ Follow the `hypergraph-reconcile` skill. If it is installed in this repo, read i
 
 Rules:
 
+- **Never touch the `plan` view** (`.hypergraph/graph/plan/`, `PLAN.md`, impacts that start
+  with `plan/`). The planner pass is that view's single writer and folds them itself.
+  Leave `plan/...` impacts pending; they are not yours.
 - Never edit a record node. A correction is a new child record node.
 - Never hand-edit STATE.md. It is generated.
 - If you learn something new during the pass, stop, record it as a record node

@@ -52,6 +52,7 @@ class IterationOutcome:
     commit: str | None
     changed: bool
     recorded: bool
+    critique: object | None = None
 
 
 @dataclass
@@ -66,6 +67,7 @@ class Engine:
     overseer: Overseer = field(default_factory=RulesOverseer)
     maintainer: Harness | None = None
     planner: Harness | None = None
+    critic: object | None = None   # Critic or Council; used in actor-critic and council modes
     sleeper: Sleeper = time.sleep
     goal_text: str = ""
     # loop state
@@ -148,12 +150,14 @@ class Engine:
             self.error_streak = 0
         self.last_error = result.error
 
+        critique = self._critique(n, result.text, head_before, commit) if (worked and changed) else None
         self._status("oversee", iteration=n)
         signals = Signals(
             result.text, changed, recorded, self.no_change_streak, self.error_streak, result.error,
             iteration=n, diff_stat=self.git.diff_stat(head_before, commit),
             history=self.recorder.read_jsonl(self.recorder.overseer)[-3:],
             memory=self._memory_context(),
+            critique=critique.describe() if critique else "",
         )
         try:
             verdict = self.overseer.judge(signals)
@@ -173,6 +177,12 @@ class Engine:
             verdict.reply = f"{nudge}\n\n{verdict.reply}".strip()
             idle = policy == "report_done"
 
+        if critique is not None and critique.rejected:
+            self.recorder.log(f"[{n}] critic rejected: {critique.describe()[:300]}")
+            if verdict.verdict != "revert":
+                verdict.verdict = "revert" if self.config.git.revert_on_reject else verdict.verdict
+                verdict.reason = f"critic rejected: {'; '.join(critique.reasons)[:200]} | overseer: {verdict.reason}"
+            verdict.reply = f"The critic rejected the last iteration. Fix this first:\n{critique.must_fix or '; '.join(critique.reasons)}\n\n{verdict.reply}".strip()
         if verdict.verdict == "revert" and self.config.git.revert_on_reject and self.last_ok_tag:
             sha = self.git.revert_to(self.last_ok_tag, patch_out=self.recorder.run_dir / "reverted" / f"{n:04d}.patch")
             self.recorder.step(iteration=n, step="revert", to=self.last_ok_tag, sha=sha[:10])
@@ -199,7 +209,7 @@ class Engine:
 
         self.budget.add(cost=result.cost_usd, iteration=True, done_accepted=(verdict.verdict == "done_accepted") if verdict.verdict.startswith("done") else None)
         self._status("idle", iteration=n, last_verdict=verdict.verdict)
-        out = IterationOutcome(n, result, verdict, commit, changed, recorded)
+        out = IterationOutcome(n, result, verdict, commit, changed, recorded, critique)
         self.outcomes.append(out)
         if idle and self.budget.should_stop() is None:
             self._sleep(parse_duration(self.config.idle_interval) or 1800.0, "done accepted; report_done policy")
@@ -347,6 +357,26 @@ class Engine:
             else:
                 self.session_id, self.session_uses = result.session_id, 1
         return result
+
+    def _critique(self, n: int, actor_text: str, head_before: str, commit: str):
+        if self.critic is None or self.config.mode not in ("actor-critic", "council"):
+            return None
+        self._status("critique", iteration=n)
+        try:
+            diff = self.git.diff(head_before, commit)
+        except Exception as exc:
+            self.recorder.log(f"diff for critic failed: {exc!r}")
+            diff = ""
+        try:
+            critique = self.critic.grade(iteration=n, actor_output=actor_text, diff=diff)
+        except Exception as exc:  # a critic bug must not stop the loop
+            self.recorder.log(f"critic raised {exc!r}; accepting")
+            return None
+        cost = float(getattr(self.critic, "last_cost", 0.0) or 0.0)
+        self.budget.add(cost=cost)
+        self.recorder.step(iteration=n, step="critique", verdict=critique.verdict, source=critique.source,
+                           reasons="; ".join(critique.reasons)[:300], must_fix=critique.must_fix[:300] or None, cost=cost)
+        return critique
 
     def _memory_context(self) -> str:
         try:

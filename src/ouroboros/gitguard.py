@@ -72,6 +72,11 @@ class GitGuard:
         self.git(*args)
         return self.head()
 
+    def diff(self, a: str, b: str, *, limit: int = 60000) -> str:
+        """The full diff between two refs, truncated."""
+        out = self.git("diff", "--no-color", f"{a}..{b}")
+        return out if len(out) <= limit else out[:limit] + "\n... (diff truncated)"
+
     def tag(self, name: str, *, force: bool = True) -> None:
         args = ["tag", name]
         if force:
