@@ -4,7 +4,7 @@
 It runs Claude Code, Codex, or Pi again and again, never blocks on a question,
 never believes "done" too early, and leaves a clean memory trail for the morning.
 
-Status: design v0. Phases 1 (walking skeleton), 2 (agent overseer), and 3 (hypergraph adapter) are built and smoke-tested.
+Status: design v0. Phases 1 (walking skeleton), 2 (agent overseer), 3 (hypergraph adapter), and 4 (Codex and Pi drivers, fallback chains) are built. Phases 1–3 ran a real night (cadex nt1).
 
 ---
 
@@ -255,6 +255,45 @@ roles:
 Different harnesses disagree in useful ways. A Codex critic on Claude work is
 a real second opinion.
 
+### Fallback chains (built)
+
+Every role can carry an ordered list of fallbacks. The loop uses the first
+harness that is not out of usage, and returns to the preferred one as soon as
+its limit resets:
+
+```yaml
+roles:
+  actor:
+    harness: claude
+    fallback:
+      - { harness: codex, model: gpt-5-codex }
+      - { harness: pi }
+limits:
+  cooldown: 30m          # block length when the harness does not say when it resets; doubles each repeat
+  max_cooldown: 3h
+  transient_strikes: 3   # this many 429/overloaded errors in a row count as a limit
+```
+
+Rules:
+
+- One **limit board** per run, shared by every role, because limits belong to
+  an account, not to a role. A limit seen by the overseer blocks that harness
+  for the actor too.
+- A result is classified as `ok | timeout | limit | auth | transient | error`.
+  A driver that knows the structured error (Codex `usage_limit_reached`, an
+  epoch in `resets_at`) sets the kind itself; otherwise the message text decides.
+- `limit` and `auth` block the harness on the board and the pool moves to the
+  next entry in the same call. `transient` returns to the engine, which backs
+  off and calls again on the same harness; the third strike in a row turns
+  into a block.
+- The block ends one minute after the parsed reset time. When no reset time is
+  known, the cooldown doubles on every repeat up to `max_cooldown`.
+- When every entry is blocked, the engine sleeps until the earliest block ends
+  (capped at 6 h), then tries again.
+- Session ids are remembered per harness; a resume only happens on the harness
+  that minted the session.
+- `ouroboros status` shows `limited: claude for 112m (...)`.
+
 ## 10. Modes
 
 A mode is a pipeline of roles run per iteration. Built-ins:
@@ -300,10 +339,17 @@ none set, the loop runs until you kill it.
 stop:
   after: 10h              # wall clock
   max_iterations: 200
-  max_cost_usd: 50        # best effort; harnesses that do not report cost are estimated
+  max_cost_usd: 50        # API-equivalent dollars; see the note below
   until: "2026-09-06T07:30"
   on_done_accepted: 3     # overseer accepted "done" this many times in a row
 ```
+
+**What "cost" means.** Claude Code prints `total_cost_usd` in its JSON result.
+It computes that number from token counts at API list prices, even when you
+are logged in with a subscription and nothing is billed per call. Ouroboros
+sums it and labels it *API-equivalent cost*: a measure of how much work the
+run did, and a cap you can set, not a bill. Codex and Pi report tokens rather
+than dollars; their cost stays at zero until a price table exists.
 
 Resilience. These are not stop conditions. The loop absorbs them:
 
@@ -311,8 +357,9 @@ Resilience. These are not stop conditions. The loop absorbs them:
 |---|---|
 | Harness exits non-zero | Log it. Retry once. Then continue to the next iteration with the error in the prompt. |
 | Timeout (default 45 min per call) | Kill the process group. Commit whatever landed. Continue. |
-| Rate limit / 429 / "overloaded" | Backoff: 1m, 2m, 5m, 10m, then 10m forever. Never exit. Log every wait. |
-| Auth expired | Backoff 10m and retry forever. Write `NEEDS_HUMAN.md` so the morning read shows it first. |
+| Rate limit / 429 / "overloaded" | Backoff: 1m, 2m, 5m, 10m, then 10m forever. Never exit. Log every wait. Three in a row count as a usage limit. |
+| Usage limit ("session limit · resets 2:50am (Europe/Madrid)", `usage_limit_reached`) | Switch to the next harness in the chain. With no chain, sleep until one minute past the reset (capped at 6 h) or a growing cooldown when the message has no time. |
+| Auth expired | Block the harness on the limit board and use the next one. With no chain, backoff 10m and retry forever. Write `NEEDS_HUMAN.md` so the morning read shows it first. |
 | Context exhausted mid-call | The call ends. The recorder notices no record. Next prompt starts with "record first". |
 | Disk / git error | Log, wait 1m, retry. After 5 failures, freeze WORK and run only ORIENT+OVERSEE every 10m so the run stays alive and visible. |
 | Ouroboros itself crashes | `ouroboros run` writes a pid file and a checkpoint every step. `ouroboros resume <run>` picks up at the last step. The tmux session is named `ouroboros-<run>` so you can find it. |

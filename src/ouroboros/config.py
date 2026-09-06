@@ -34,15 +34,42 @@ def parse_duration(value: str | int | float | None) -> float | None:
     return total
 
 
+class FallbackConfig(BaseModel):
+    """One alternative harness for a role, used while the ones before it are limited."""
+    harness: str
+    model: str | None = None
+
+
 class RoleConfig(BaseModel):
     harness: str = "claude"
     model: str | None = None
     timeout: str = "45m"
     resume_for: int = 1
+    fallback: list[FallbackConfig] = Field(default_factory=list)
 
     @property
     def timeout_seconds(self) -> float:
         return parse_duration(self.timeout) or 2700.0
+
+    @property
+    def chain(self) -> list[tuple[str, str | None]]:
+        """(harness, model) in preference order: the role's own harness first, then its fallbacks."""
+        return [(self.harness, self.model)] + [(f.harness, f.model) for f in self.fallback]
+
+
+class LimitConfig(BaseModel):
+    """What to do when a harness says its usage limit is reached and does not say when it resets."""
+    cooldown: str = "30m"        # first block; doubles on every repeat
+    max_cooldown: str = "3h"     # cap for the doubling
+    transient_strikes: int = 3   # this many transient errors in a row count as a limit
+
+    @property
+    def cooldown_seconds(self) -> float:
+        return parse_duration(self.cooldown) or 1800.0
+
+    @property
+    def max_cooldown_seconds(self) -> float:
+        return parse_duration(self.max_cooldown) or 10800.0
 
 
 class GitConfig(BaseModel):
@@ -97,6 +124,7 @@ class Config(BaseModel):
     stop: StopConfig = Field(default_factory=StopConfig)
     handoff: HandoffConfig = Field(default_factory=HandoffConfig)
     hypergraph: HypergraphConfig = Field(default_factory=HypergraphConfig)
+    limits: LimitConfig = Field(default_factory=LimitConfig)
 
     @property
     def branch(self) -> str:

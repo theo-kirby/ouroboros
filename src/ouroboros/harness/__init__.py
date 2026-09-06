@@ -2,8 +2,10 @@
 
 from .base import Harness, Result
 from .claude import ClaudeHarness
+from .codex import CodexHarness
+from .pi import PiHarness
 
-REGISTRY: dict[str, type] = {"claude": ClaudeHarness}
+REGISTRY: dict[str, type] = {"claude": ClaudeHarness, "codex": CodexHarness, "pi": PiHarness}
 
 
 def make_harness(name: str) -> Harness:
@@ -13,4 +15,4 @@ def make_harness(name: str) -> Harness:
         raise ValueError(f"unknown harness {name!r}; known: {sorted(REGISTRY)}") from None
 
 
-__all__ = ["Harness", "Result", "ClaudeHarness", "make_harness", "REGISTRY"]
+__all__ = ["Harness", "Result", "ClaudeHarness", "CodexHarness", "PiHarness", "make_harness", "REGISTRY"]

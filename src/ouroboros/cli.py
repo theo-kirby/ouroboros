@@ -20,6 +20,7 @@ from .engine import Engine
 from .gitguard import GitError, GitGuard
 from .harness import make_harness
 from .harness.backend_headless import kill_active
+from .harness.pool import LimitBoard, PooledHarness
 from .memory import make_memory
 from .memory.handoff import HandoffMemory
 from .recorder import Recorder
@@ -152,11 +153,25 @@ def preflight(cfg: Config, repo: Path) -> str | None:
     goal_path = repo / cfg.goal
     if not goal_path.exists() or not goal_path.read_text().strip():
         return f"no goal at {goal_path}; run `ouroboros init` and fill it in"
-    try:
-        make_harness(cfg.role("actor").harness)
-    except ValueError as exc:
-        return str(exc)
+    for role_name in ("actor", "overseer", "maintainer"):
+        for harness_name, _model in cfg.role(role_name).chain:
+            try:
+                make_harness(harness_name)
+            except ValueError as exc:
+                return f"{role_name}: {exc}"
     return None
+
+
+def _pools(cfg: Config, log) -> dict[str, PooledHarness]:
+    """One harness chain per role, all sharing one limit board (limits belong to accounts, not roles)."""
+    board = LimitBoard(
+        cooldown=cfg.limits.cooldown_seconds, max_cooldown=cfg.limits.max_cooldown_seconds,
+        transient_strikes=cfg.limits.transient_strikes,
+    )
+    return {
+        name: PooledHarness([(make_harness(h), m) for h, m in cfg.role(name).chain], board, log=log)
+        for name in ("actor", "overseer", "maintainer")
+    }
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -225,10 +240,11 @@ def cmd_run(args: argparse.Namespace) -> int:
     (recorder.run_dir / "run.yml").write_text(cfg.dump() + f"\nstarted: {datetime.now().isoformat(timespec='seconds')}\nversion: {__version__}\n")
     (recorder.run_dir / "pid").write_text(str(os.getpid()))
 
+    pools = _pools(cfg, recorder.log)
     if cfg.overseer == "agent":
         orole = cfg.role("overseer")
         overseer = AgentOverseer(
-            make_harness(orole.harness), goal_text=goal_text, cwd=repo, timeout=orole.timeout_seconds,
+            pools["overseer"], goal_text=goal_text, cwd=repo, timeout=orole.timeout_seconds,
             model=orole.model, transcript_path=lambda n, a: recorder.transcript_path(n, "overseer", a),
             log=recorder.log,
         )
@@ -236,9 +252,9 @@ def cmd_run(args: argparse.Namespace) -> int:
         overseer = RulesOverseer()
 
     engine = Engine(
-        config=cfg, repo=repo, harness=make_harness(cfg.role("actor").harness), memory=memory,
+        config=cfg, repo=repo, harness=pools["actor"], memory=memory,
         git=git, recorder=recorder, budget=BudgetClock(cfg.stop), goal_text=goal_text, overseer=overseer,
-        maintainer=make_harness(cfg.role("maintainer").harness),
+        maintainer=pools["maintainer"],
     )
     # a re-run of the same run name continues where the last one stopped
     prior = recorder.read_jsonl(recorder.iterations)
@@ -302,7 +318,9 @@ def cmd_status(args: argparse.Namespace) -> int:
             pid, alive = _pid_alive(rec.run_dir)
             proc = f"pid {pid} alive" if alive else "process NOT running"
             print(f"run {st['run']}  state={st['state']}  iteration={st['iteration']}  branch={st['branch']}  memory={st.get('memory', '?')}  [{proc}]")
-            print(f"harness={st['harness']}  cost=${st.get('cost_usd', 0):.2f}  elapsed={st.get('elapsed_s', 0) // 60}m  updated {age}s ago")
+            print(f"harness={st['harness']}  api-equivalent cost=${st.get('cost_usd', 0):.2f}  elapsed={st.get('elapsed_s', 0) // 60}m  updated {age}s ago")
+            if st.get("limited"):
+                print("limited: " + "  ".join(f"{k} for {v}" for k, v in st["limited"].items()))
             for k in ("last_verdict", "last_ok_tag", "why", "seconds", "stop_reason"):
                 if st.get(k) is not None:
                     print(f"{k}={st[k]}")
@@ -329,7 +347,7 @@ def cmd_report(args: argparse.Namespace) -> int:
     lines = [f"# Ouroboros report: {cfg.run}", ""]
     lines += [f"- state: {st.get('state', '?')}  (stop reason: {st.get('stop_reason', '-')})",
               f"- iterations: {len(commits)}   changed: {sum(1 for c in commits if c.get('changed'))}   recorded: {sum(1 for c in commits if c.get('recorded'))}",
-              f"- reverts: {len(reverts)}", f"- cost: ~${cost:.2f}", f"- branch: {cfg.branch}", ""]
+              f"- reverts: {len(reverts)}", f"- api-equivalent cost: ~${cost:.2f} (what the tokens would cost at API list price; a subscription is not billed per call)", f"- branch: {cfg.branch}", ""]
     lines += ["## Overseer verdicts", ""] + [f"- {k}: {v}" for k, v in sorted(counts.items())] + [""]
     answered = [d for d in decisions if d["verdict"] in ("answer", "done_rejected", "stuck", "revert")]
     if answered:
@@ -382,7 +400,7 @@ def build_parser() -> argparse.ArgumentParser:
     r = sub.add_parser("run", parents=[common], help="start the loop (inside tmux by default)")
     r.add_argument("--for", dest="for_", help="wall clock budget, e.g. 8h, 90m")
     r.add_argument("--max-iterations", type=int)
-    r.add_argument("--max-cost", type=float)
+    r.add_argument("--max-cost", type=float, help="stop at this API-equivalent cost in USD (informational on subscriptions)")
     r.add_argument("--mode")
     r.add_argument("--harness", choices=["claude", "codex", "pi"])
     r.add_argument("--model")

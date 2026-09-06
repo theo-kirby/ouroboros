@@ -82,7 +82,8 @@ class Engine:
     # ------------------------------------------------------------------
     def run(self) -> str:
         """Run until a stop condition. Returns the stop reason. Never raises for harness trouble."""
-        self.recorder.log(f"run {self.config.run}: branch={self.git.branch} harness={self.harness.name} memory={self.memory.name} mode={self.config.mode}")
+        chain = " -> ".join(getattr(self.harness, "names", [self.harness.name]))
+        self.recorder.log(f"run {self.config.run}: branch={self.git.branch} harness={chain} memory={self.memory.name} mode={self.config.mode}")
         self._status("starting")
         try:
             self.memory.start(run=self.config.run, goal_text=self.goal_text, run_dir=self.recorder.run_dir, branch=self.git.branch)
@@ -123,7 +124,7 @@ class Engine:
         worked = result.ok or result.timed_out  # the actor ran; a timeout still may have landed work
         changed = self.git.has_changes() or self.git.head() != head_before  # the actor may commit on its own
         summary = self.memory.last_summary() if recorded else (result.error or "no record")[:60]
-        commit = self.git.commit(f"ouroboros #{n}: {summary}", allow_empty=worked)
+        commit = self.git.commit(f"ouroboros #{n}: {summary}", allow_empty=False)  # no marker commits; the ok tag marks the iteration
         self.recorder.step(iteration=n, step="commit", sha=commit[:10], changed=changed, recorded=recorded, cost=result.cost_usd)
         if worked:
             self.memory.mark_iteration()
@@ -252,17 +253,22 @@ class Engine:
             if result.ok or result.timed_out:
                 self.recorder.clear_needs_human()
                 break
-            if result.auth_failure:
+            kind = result.kind
+            if kind == "auth":
                 self.recorder.needs_human(f"Harness {self.harness.name} reports an auth failure:\n\n{result.error}\n\nThe loop keeps retrying every 10 minutes.")
                 self._sleep(backoff_seconds(99), "auth failure")
                 retriable_attempts += 1
                 continue
-            if result.retriable:
+            if kind == "limit":
                 wait = result.reset_wait_seconds()
                 if wait is not None:
-                    self._sleep(min(wait + 60.0, MAX_RESET_WAIT), f"limit resets in {int(wait) // 60} min: {(result.error or result.text)[:80]}")
+                    self._sleep(min(wait + 60.0, MAX_RESET_WAIT), f"limit resets in {int(wait) // 60} min: {(result.error or result.text)[-80:]}")
                 else:
-                    self._sleep(backoff_seconds(retriable_attempts), "rate limit / transient")
+                    self._sleep(backoff_seconds(retriable_attempts + 2), "usage limit, reset time unknown")
+                retriable_attempts += 1
+                continue
+            if kind == "transient":
+                self._sleep(backoff_seconds(retriable_attempts), "rate limit / transient")
                 retriable_attempts += 1
                 continue
             if plain_attempts < 1:
@@ -288,5 +294,8 @@ class Engine:
             harness=self.harness.name, memory=self.memory.name, cost_usd=round(self.budget.cost_usd, 4),
             elapsed_s=int(self.budget.elapsed), last_ok_tag=self.last_ok_tag,
         )
+        board = getattr(self.harness, "board", None)
+        if board is not None and board.snapshot():
+            fields["limited"] = board.snapshot()
         fields.update(extra)
         self.recorder.status(**fields)
