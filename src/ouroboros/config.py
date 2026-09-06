@@ -105,6 +105,15 @@ class HypergraphConfig(BaseModel):
     budget_units: int = 1      # dispatch budget per iteration
 
 
+class PlanConfig(BaseModel):
+    """The self-evolving plan layer (DESIGN.md section 20)."""
+    enabled: bool | None = None   # None = on for every memory adapter that supports it
+    every: int = 5                # handoff repos: planner pass every N work iterations (hypergraph: after each reconcile)
+    view: str = "plan"
+    md: str = "PLAN.md"
+    max_new_directions: int = 3
+
+
 class Config(BaseModel):
     run: str = "run"
     goal: str = ".ouroboros/goal.md"
@@ -118,6 +127,7 @@ class Config(BaseModel):
             "actor": RoleConfig(),
             "overseer": RoleConfig(model="haiku", timeout="3m"),
             "maintainer": RoleConfig(timeout="20m"),
+            "planner": RoleConfig(timeout="20m"),
         }
     )
     git: GitConfig = Field(default_factory=GitConfig)
@@ -125,6 +135,7 @@ class Config(BaseModel):
     handoff: HandoffConfig = Field(default_factory=HandoffConfig)
     hypergraph: HypergraphConfig = Field(default_factory=HypergraphConfig)
     limits: LimitConfig = Field(default_factory=LimitConfig)
+    plan: PlanConfig = Field(default_factory=PlanConfig)
 
     @property
     def branch(self) -> str:

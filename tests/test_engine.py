@@ -8,6 +8,7 @@ from ouroboros.engine import Engine
 from ouroboros.gitguard import GitGuard
 from ouroboros.memory.handoff import HandoffMemory
 from ouroboros.recorder import Recorder
+from ouroboros.harness.base import Result
 
 from conftest import git
 from fake_harness import (FakeHarness, asks_question, claims_done, crashes, no_record, nothing,
@@ -15,7 +16,7 @@ from fake_harness import (FakeHarness, asks_question, claims_done, crashes, no_r
 
 
 def make_engine(repo: Path, harness: FakeHarness, *, max_iterations=5, resume_for=1, sleeps=None,
-                overseer=None, goal_text=None, stop=None):
+                overseer=None, goal_text=None, stop=None, planner=None):
     cfg = Config(run="t", stop=stop or StopConfig(max_iterations=max_iterations))
     cfg.roles["actor"].resume_for = resume_for
     git_ = GitGuard(repo, cfg.branch)
@@ -30,6 +31,8 @@ def make_engine(repo: Path, harness: FakeHarness, *, max_iterations=5, resume_fo
             raise KeyboardInterrupt("too many backoffs in a test")
 
     kw = {"overseer": overseer} if overseer is not None else {}
+    # a planner of its own, so actor scripts are not consumed by planner passes
+    kw["planner"] = planner if planner is not None else FakeHarness([], default=nothing())
     eng = Engine(config=cfg, repo=repo, harness=harness, memory=mem, git=git_, recorder=rec,
                  budget=BudgetClock(cfg.stop), sleeper=fake_sleep,
                  goal_text=goal_text if goal_text is not None else (repo / ".ouroboros" / "goal.md").read_text(), **kw)
@@ -216,3 +219,33 @@ def test_failed_iteration_makes_no_empty_commit(repo):
     eng.run()
     after = len(git(repo, "log", "--oneline").splitlines())
     assert after == before
+
+
+def test_handoff_planner_runs_every_n_iterations(repo: Path):
+    def plans(cwd: Path, prompt: str) -> Result:
+        root = cwd / ".ouroboros"
+        (root / "plan.md").write_text("# Plan\n\n## now\n\n- unit A [handoff/0001.md]\n\n## soon\n\n- B\n\n## later\n\n- C\n")
+        with (root / "bets.md").open("a") as f:
+            f.write("# Bets\n\n## Bet 2026-09-06: A before B\n\n### Why\n\nevidence\n\n### Changed\n\nA moved up\n")
+        return Result(text="planned", cost_usd=0.05)
+
+    planner = FakeHarness([], default=plans)
+    h = FakeHarness([works()] * 4)
+    eng = make_engine(repo, h, max_iterations=4, planner=planner)
+    eng.config.plan.every = 2
+    eng.run()
+    assert len(planner.prompts) == 2 and "You are the planner" in planner.prompts[0]
+    assert "handoff/0001.md" in planner.prompts[1]           # recent handoffs are in the prompt
+    steps = eng.recorder.read_jsonl(eng.recorder.iterations)
+    bets = [s for s in steps if s.get("step") == "plan"]
+    assert [b["iteration"] for b in bets] == [2, 4] and "A before B" in bets[0]["bet"]
+    assert "unit A" in h.prompts[2]                          # the actor reads the plan next iteration
+
+
+def test_plan_disabled_skips_planner(repo: Path):
+    planner = FakeHarness([], default=nothing())
+    eng = make_engine(repo, FakeHarness([works()] * 2), max_iterations=2, planner=planner)
+    eng.config.plan.enabled = False
+    eng.config.plan.every = 1
+    eng.run()
+    assert planner.prompts == []

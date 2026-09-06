@@ -65,6 +65,7 @@ class Engine:
     budget: BudgetClock
     overseer: Overseer = field(default_factory=RulesOverseer)
     maintainer: Harness | None = None
+    planner: Harness | None = None
     sleeper: Sleeper = time.sleep
     goal_text: str = ""
     # loop state
@@ -75,6 +76,7 @@ class Engine:
     last_error: str | None = None
     last_ok_tag: str | None = None
     session_id: str | None = None
+    since_plan: int = 0
     session_uses: int = 0
     failed_iterations: int = 0
     outcomes: list[IterationOutcome] = field(default_factory=list)
@@ -188,7 +190,12 @@ class Engine:
         self.injected = verdict.reply or None
 
         if worked and verdict.verdict != "revert":
+            self.since_plan += 1
             self._maybe_reconcile(n)
+            if verdict.verdict == "done_accepted":
+                self._maybe_plan(n, "done accepted: plan the next directions")
+            elif not self.memory.reconcile_prompt() and self.config.plan.every and self.since_plan >= self.config.plan.every:
+                self._maybe_plan(n, f"every {self.config.plan.every} iterations")
 
         self.budget.add(cost=result.cost_usd, iteration=True, done_accepted=(verdict.verdict == "done_accepted") if verdict.verdict.startswith("done") else None)
         self._status("idle", iteration=n, last_verdict=verdict.verdict)
@@ -231,8 +238,65 @@ class Engine:
                            error=(result.error or None) and result.error[:200], sha=sha[:10], cost=result.cost_usd)
         if result.ok:
             self.memory.mark_reconciled()
+            self._maybe_plan(n, "after reconcile")
         else:
             self.injected = f"{self.injected or ''}\n\nThe last reconcile pass failed ({result.error or 'timeout'}). Record only; a maintainer will retry.".strip()
+
+    # ------------------------------------------------------------------
+    @property
+    def plan_enabled(self) -> bool:
+        enabled = self.config.plan.enabled
+        return True if enabled is None else bool(enabled)
+
+    def _plan_signals(self) -> str:
+        outs = self.outcomes[-self.config.plan.every :]
+        lines = [f"- iterations so far: {self.iteration}; api-equivalent cost so far: ${self.budget.cost_usd:.2f}"]
+        for o in outs:
+            lines.append(f"- #{o.iteration}: {o.verdict.verdict} ({o.verdict.reason[:100]}); changed={o.changed} recorded={o.recorded}")
+        if self.no_change_streak:
+            lines.append(f"- iterations in a row with no change: {self.no_change_streak}")
+        return "\n".join(lines)
+
+    def _maybe_plan(self, n: int, why: str) -> None:
+        """One planner pass: a Bet record folded into the plan. Never raises."""
+        if not self.plan_enabled:
+            return
+        try:
+            prompt = self.memory.planner_prompt(self._plan_signals())
+        except Exception as exc:
+            self.recorder.log(f"planner_prompt raised {exc!r}")
+            return
+        if not prompt:
+            return
+        role = self.config.role("planner")
+        harness = self.planner or self.harness
+        before = self._bet_marker()
+        self._status("plan", iteration=n)
+        self.recorder.log(f"[{n}] plan: planner pass ({harness.name}, {why})")
+        try:
+            result = harness.run(
+                prompt, cwd=self.repo, timeout=role.timeout_seconds, model=role.model,
+                log_path=self.recorder.transcript_path(n, "planner"),
+            )
+        except Exception as exc:
+            result = Result(exit_code=-1, error=f"harness raised {exc!r}")
+        bet = None
+        try:
+            bet = self.memory.verify_bet(before)
+        except Exception as exc:
+            self.recorder.log(f"verify_bet raised {exc!r}")
+        sha = self.git.commit(f"ouroboros #{n}: plan — {(bet or 'no bet')[:60]}", allow_empty=False)
+        self.budget.add(cost=result.cost_usd)
+        self.recorder.step(iteration=n, step="plan", why=why, bet=bet, exit=result.exit_code, timed_out=result.timed_out,
+                           error=(result.error or None) and result.error[:200], sha=sha[:10], cost=result.cost_usd)
+        self.since_plan = 0
+        if not result.ok or not bet:
+            self.recorder.log(f"[{n}] plan: no bet landed ({result.error or 'planner wrote nothing'})")
+
+    def _bet_marker(self):
+        if hasattr(self.memory, "bets_size"):
+            return self.memory.bets_size()
+        return self.memory.snapshot()
 
     def _call_actor(self, prompt: str, timeout: float, model: str | None) -> Result:
         """Call the harness. Retry on retriable errors with backoff, forever. One retry on other errors."""

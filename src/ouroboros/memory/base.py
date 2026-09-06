@@ -39,6 +39,12 @@ class MemoryAdapter(Protocol):
     def overseer_context(self) -> str:
         """Short text for the overseer: the frontier and the current plan."""
 
+    def planner_prompt(self, signals: str) -> str | None:
+        """The planner role prompt, or None when this memory has no plan layer."""
+
+    def verify_bet(self, before: Any) -> str | None:
+        """The bet the planner wrote since `before` (a slug or title), or None."""
+
 
 class BaseMemory:
     """No-op lifecycle defaults."""
@@ -65,3 +71,9 @@ class BaseMemory:
 
     def overseer_context(self) -> str:
         return ""
+
+    def planner_prompt(self, signals: str) -> str | None:
+        return None
+
+    def verify_bet(self, before) -> str | None:
+        return None

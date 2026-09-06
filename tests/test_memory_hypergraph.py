@@ -206,4 +206,79 @@ def test_overseer_context_has_frontier_and_tail(hg_repo):
     assert "Gap A" in ctx and "Unreconciled record nodes" in ctx and "Architecture" not in ctx
     assert frontier_of("# x\n\n## Frontier\n\n(empty)\n") == "(empty)"
     (hg_repo / "PLAN.md").write_text("# plan\n\n## now\n\n- do A\n")
-    assert "PLAN.md" in mem.overseer_context() and "do A" in mem.overseer_context()
+    assert "Plan (agent-owned" in mem.overseer_context() and "do A" in mem.overseer_context()
+
+
+GOAL_WITH_LADDER = GOAL_WITH_GAPS + (
+    "\n## Horizon ladder\n\n- **the next hour:** fix the build.\n- **the next day:** write the README.\n"
+    "- **the next week:** add CI.\n- **the next month:** a second platform.\n- **the next year:** keep it green.\n"
+)
+
+
+def test_plan_view_is_declared_and_seeded(hg_repo):
+    mem = HypergraphMemory(hg_repo)
+    mem.start(run="t", goal_text=GOAL_WITH_LADDER, run_dir=hg_repo / ".ouroboros" / "runs" / "t", branch="ouroboros/t")
+    assert mem.plan_root_slug and (hg_repo / ".hypergraph" / "graph" / "plan").exists()
+    body = mem.read_record(mem.directive_slug)
+    assert "plan/NEW now" in body and "fix the build. write the README." in body
+    assert "plan/NEW soon" in body and "plan/NEW later" in body and "keep it green" in body
+    # a second start does not re-declare the view or re-seed
+    mem2 = HypergraphMemory(hg_repo)
+    mem2.start(run="t", goal_text=GOAL_WITH_LADDER, run_dir=hg_repo / ".ouroboros" / "runs" / "t", branch="ouroboros/t")
+    assert mem2.plan_root_slug == mem.plan_root_slug and mem2.directive_slug == mem.directive_slug
+    assert subprocess.run(["git", "status", "--porcelain"], cwd=hg_repo, capture_output=True, text=True).stdout.count(".hypergraph/config.yml") == 1
+
+
+def test_planner_prompt_and_verify_bet(hg_repo):
+    mem = HypergraphMemory(hg_repo)
+    mem.start(run="t", goal_text=GOAL_WITH_LADDER, run_dir=hg_repo / ".ouroboros" / "runs" / "t", branch="ouroboros/t")
+    prompt = mem.planner_prompt("- iterations so far: 3")
+    assert "You are the planner" in prompt and "plan/NEW now" in prompt   # pending impacts listed
+    assert f"--parent {mem.plan_root_slug}" in prompt and "hypergraph new plan" in prompt
+    assert "keep the graph honest" in prompt and "iterations so far: 3" in prompt
+    before = mem.snapshot()
+    assert mem.verify_bet(before) is None
+    slug = mint(hg_repo, "Bet: build first, README second", mem.directive_slug)
+    assert mem.verify_bet(before).startswith(slug)
+    assert "Bet: build first" in mem.plan_text() or mem.plan_text() == ""   # no plan nodes yet: falls back to PLAN.md text
+
+
+def test_plan_disabled_declares_nothing(hg_repo):
+    mem = HypergraphMemory(hg_repo, plan=False)
+    mem.start(run="t", goal_text=GOAL_WITH_LADDER, run_dir=hg_repo / ".ouroboros" / "runs" / "t", branch="ouroboros/t")
+    assert mem.plan_root_slug is None and mem.planner_prompt("x") is None
+    assert "plan/NEW" not in mem.read_record(mem.directive_slug)
+
+
+def test_engine_runs_planner_after_reconcile(hg_repo):
+    mem = HypergraphMemory(hg_repo, reconcile_every=2, pressure=99)
+
+    def records(cwd: Path, prompt: str) -> Result:
+        parent = re.search(r"--parent (\S+)", prompt).group(1)
+        (cwd / "work.txt").open("a").write("x\n")
+        mint(cwd, "unit", parent)
+        return Result(text="did a unit", session_id="s", cost_usd=0.1)
+
+    def bets(cwd: Path, prompt: str) -> Result:
+        parent = re.search(r"--parent (\S+)", prompt).group(1)
+        mint(cwd, "Bet: README before CI", parent)
+        return Result(text="planned", cost_usd=0.05)
+
+    actor = FakeHarness([], default=records)
+    maintainer = FakeHarness([], default=lambda cwd, p: Result(text="reconciled", cost_usd=0.2))
+    planner = FakeHarness([], default=bets)
+    eng = make_engine(hg_repo, actor, overseer=FakeHarnessOverseer(), max_iterations=3, planner=planner)
+    eng.memory = mem
+    eng.maintainer = maintainer
+    eng.goal_text = GOAL_WITH_LADDER
+    eng.run()
+    # the directive's gap impacts force a reconcile after #1; cadence 2 brings another after #3; a plan follows each
+    assert len(maintainer.prompts) == 2 and len(planner.prompts) == 2
+    assert "You are the planner" in planner.prompts[0]
+    log = git(hg_repo, "log", "--oneline")
+    assert "ouroboros #1: plan" in log and "Bet: README before CI" in log
+    steps = eng.recorder.read_jsonl(eng.recorder.iterations)
+    plan_steps = [s for s in steps if s.get("step") == "plan"]
+    assert [p["iteration"] for p in plan_steps] == [1, 3] and plan_steps[0]["why"] == "after reconcile"
+    assert "Bet: README" in plan_steps[0]["bet"]
+    assert git(hg_repo, "status", "--porcelain") == ""

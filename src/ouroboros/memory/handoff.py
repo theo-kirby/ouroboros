@@ -13,14 +13,69 @@ _NUM = re.compile(r"^(\d{4})\.md$")
 class HandoffMemory(BaseMemory):
     name = "handoff"
 
-    def __init__(self, root: Path, *, recent: int = 3, hypergraph_hint: bool = False) -> None:
+    def __init__(self, root: Path, *, recent: int = 3, hypergraph_hint: bool = False, plan: bool = True,
+                 max_new_directions: int = 3) -> None:
         self.root = root
         self.recent = recent
         self.hypergraph_hint = hypergraph_hint
         self.goal = root / "goal.md"
         self.plan = root / "plan.md"
+        self.bets = root / "bets.md"
         self.journal = root / "journal.md"
         self.handoffs = root / "handoff"
+        self.plan_enabled = plan
+        self.max_new_directions = max_new_directions
+        self.goal_text = ""
+
+    def start(self, *, run: str, goal_text: str, run_dir: Path, branch: str) -> None:
+        self.goal_text = goal_text
+        self.ensure()
+
+    # -- the plan layer (file-backed parity with the hypergraph plan view) --
+    def planner_prompt(self, signals: str) -> str | None:
+        if not self.plan_enabled:
+            return None
+        from importlib import resources
+        tpl = resources.files("ouroboros.skills").joinpath("ouroboros-planner/SKILL.md").read_text()
+        tpl = tpl.split("\n---\n", 1)[1] if tpl.startswith("---") else tpl
+        recent = self.handoff_files()[-3:]
+        recent_text = "\n\n".join(f"### {self._rel(f)}\n\n{f.read_text().strip()[:2500]}" for f in recent) or "(none)"
+        last_next = ""
+        if recent:
+            t = recent[-1].read_text()
+            last_next = t.split("## Next", 1)[1].strip()[:1500] if "## Next" in t else ""
+        fold = (
+            f"1. Rewrite `{self._rel(self.plan)}` in full with exactly three sections: `## now` (the next two or three "
+            f"units, ranked), `## soon` (this week's gaps in order, with why), `## later` (this month and beyond: bets and "
+            f"directions). Cite the handoff file that motivates each line, like `[handoff/0007.md]`.\n"
+            f"2. Append ONE entry to `{self._rel(self.bets)}` (create it with a `# Bets` heading if missing): "
+            f"`## Bet <ISO date>: <summary>` followed by `### Why` (the reasoning and the evidence) and `### Changed` "
+            f"(what moved between horizons; or `plan holds: <reason>` when nothing changes).\n"
+            f"3. Write nothing else. Do not commit; the loop commits for you."
+        )
+        goal = self.goal_text or (self.goal.read_text() if self.goal.exists() else "")
+        return (
+            tpl.replace("{max_new}", str(self.max_new_directions))
+            .replace("{charter}", goal.strip()[:12000] or "(none)")
+            .replace("{frontier}", (f"Last handoff's `## Next`:\n\n{last_next}" if last_next else "(no handoffs yet)"))
+            .replace("{plan}", self.plan.read_text().strip()[:6000] if self.plan.exists() else "(no plan yet)")
+            .replace("{pending}", "(not tracked without hypergraph)")
+            .replace("{recent}", recent_text)
+            .replace("{signals}", signals.strip() or "(none)")
+            .replace("{fold}", fold)
+        )
+
+    def verify_bet(self, before: int) -> str | None:
+        if not self.bets.exists():
+            return None
+        text = self.bets.read_text()
+        if len(text) <= before:
+            return None
+        heads = [l for l in text[before:].splitlines() if l.startswith("## Bet")]
+        return (heads[-1][3:].strip() if heads else "bet appended")[:120]
+
+    def bets_size(self) -> int:
+        return len(self.bets.read_text()) if self.bets.exists() else 0
 
     # -- files ---------------------------------------------------------
     def ensure(self) -> None:

@@ -153,7 +153,7 @@ def preflight(cfg: Config, repo: Path) -> str | None:
     goal_path = repo / cfg.goal
     if not goal_path.exists() or not goal_path.read_text().strip():
         return f"no goal at {goal_path}; run `ouroboros init` and fill it in"
-    for role_name in ("actor", "overseer", "maintainer"):
+    for role_name in ("actor", "overseer", "maintainer", "planner"):
         for harness_name, _model in cfg.role(role_name).chain:
             try:
                 make_harness(harness_name)
@@ -170,7 +170,7 @@ def _pools(cfg: Config, log) -> dict[str, PooledHarness]:
     )
     return {
         name: PooledHarness([(make_harness(h), m) for h, m in cfg.role(name).chain], board, log=log)
-        for name in ("actor", "overseer", "maintainer")
+        for name in ("actor", "overseer", "maintainer", "planner")
     }
 
 
@@ -203,7 +203,11 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 2
 
     try:
-        memory = make_memory(cfg.memory, repo, recent=cfg.handoff.recent, **cfg.hypergraph.model_dump())
+        memory = make_memory(
+            cfg.memory, repo, recent=cfg.handoff.recent, plan=(True if cfg.plan.enabled is None else cfg.plan.enabled),
+            plan_view=cfg.plan.view, plan_md=cfg.plan.md, max_new_directions=cfg.plan.max_new_directions,
+            **cfg.hypergraph.model_dump(),
+        )
     except ValueError as exc:
         print(f"ouroboros: {exc}", file=sys.stderr)
         return 2
@@ -254,7 +258,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     engine = Engine(
         config=cfg, repo=repo, harness=pools["actor"], memory=memory,
         git=git, recorder=recorder, budget=BudgetClock(cfg.stop), goal_text=goal_text, overseer=overseer,
-        maintainer=pools["maintainer"],
+        maintainer=pools["maintainer"], planner=pools["planner"],
     )
     # a re-run of the same run name continues where the last one stopped
     prior = recorder.read_jsonl(recorder.iterations)
@@ -348,7 +352,14 @@ def cmd_report(args: argparse.Namespace) -> int:
     lines += [f"- state: {st.get('state', '?')}  (stop reason: {st.get('stop_reason', '-')})",
               f"- iterations: {len(commits)}   changed: {sum(1 for c in commits if c.get('changed'))}   recorded: {sum(1 for c in commits if c.get('recorded'))}",
               f"- reverts: {len(reverts)}", f"- api-equivalent cost: ~${cost:.2f} (what the tokens would cost at API list price; a subscription is not billed per call)", f"- branch: {cfg.branch}", ""]
-    lines += ["## Overseer verdicts", ""] + [f"- {k}: {v}" for k, v in sorted(counts.items())] + [""]
+    bets = [s for s in steps if s.get("step") == "plan"]
+    lines += ["## Bets changed tonight (the planner's decisions; overrule by editing the charter)", ""]
+    lines += [f"- #{b.get('iteration')} ({b.get('why')}): {b.get('bet') or 'no bet landed' + (' — ' + b['error'] if b.get('error') else '')}" for b in bets] or ["- (no planner pass ran)"]
+    plan_md = repo / cfg.plan.md
+    plan_file = plan_md if plan_md.exists() else repo / ".ouroboros" / "plan.md"
+    if plan_file.exists() and plan_file.read_text().strip():
+        lines += ["", f"## The plan now (`{plan_file.relative_to(repo)}`)", "", plan_file.read_text().strip()[:6000]]
+    lines += ["", "## Overseer verdicts", ""] + [f"- {k}: {v}" for k, v in sorted(counts.items())] + [""]
     answered = [d for d in decisions if d["verdict"] in ("answer", "done_rejected", "stuck", "revert")]
     if answered:
         lines += ["## Decisions made for you (overrule in the morning)", ""]
