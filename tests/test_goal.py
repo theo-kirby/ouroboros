@@ -37,9 +37,10 @@ maintain
 
 def test_done_criteria_join_continuations():
     crits = goal.done_criteria(CHARTER)
-    assert len(crits) == 3
+    assert len(crits) == 2                                   # the ticked Save-As box declares no gap
     assert crits[0].startswith("Opening a `.blend`") and "model_objects_on_open > 0" in crits[0]
-    assert crits[2] == "**Iterate works.** Change a part, retrain, compare."
+    assert crits[1] == "**Iterate works.** Change a part, retrain, compare."
+    assert len(goal.done_criteria(CHARTER, include_checked=True)) == 3
 
 
 def test_gap_names_are_stable_kebab():

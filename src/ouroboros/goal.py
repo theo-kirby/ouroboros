@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 
 _H2 = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
-_CHECK = re.compile(r"^\s*-\s*\[[ xX]\]\s*(.*)$")
+_CHECK = re.compile(r"^\s*-\s*\[([ xX])\]\s*(.*)$")
 _RUNG = re.compile(r"^\s*-\s*\*\*(?:the\s+)?next\s+(hour|day|week|month|year)[:*]*\*\*:?\s*(.*)$", re.IGNORECASE)
 _WORD = re.compile(r"[a-z0-9]+")
 _STOP = {"a", "an", "the", "and", "or", "of", "to", "in", "on", "is", "are", "with", "for", "by", "at", "its", "it"}
@@ -30,17 +30,21 @@ def section(goal_text: str, name: str) -> str:
     return ""
 
 
-def done_criteria(goal_text: str) -> list[str]:
-    """Every checkbox line under `## Done criteria`, continuation lines joined, in order."""
+def done_criteria(goal_text: str, *, include_checked: bool = False) -> list[str]:
+    """Unchecked checkbox lines under `## Done criteria`, continuation lines joined, in order.
+
+    A ticked box is the human saying "this is met": it declares no gap.
+    """
     body = section(goal_text, "done criteria")
-    items: list[str] = []
+    items: list[tuple[bool, str]] = []
     for line in body.splitlines():
         m = _CHECK.match(line)
         if m:
-            items.append(m.group(1).strip())
+            items.append((m.group(1) != " ", m.group(2).strip()))
         elif items and line.startswith((" ", "\t")) and line.strip():
-            items[-1] = f"{items[-1]} {line.strip()}"
-    return [re.sub(r"\s+", " ", i) for i in items if i]
+            done, text = items[-1]
+            items[-1] = (done, f"{text} {line.strip()}")
+    return [re.sub(r"\s+", " ", t) for done, t in items if t and (include_checked or not done)]
 
 
 def gap_name(criterion: str, *, prefix: str = "gap") -> str:
