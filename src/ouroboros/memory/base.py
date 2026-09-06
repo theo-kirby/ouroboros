@@ -36,6 +36,9 @@ class MemoryAdapter(Protocol):
     def check_report(self) -> str | None:
         """Problems the memory's own checker sees after a commit, or None."""
 
+    def overseer_context(self) -> str:
+        """Short text for the overseer: the frontier and the current plan."""
+
 
 class BaseMemory:
     """No-op lifecycle defaults."""
@@ -59,3 +62,6 @@ class BaseMemory:
 
     def reconcile_prompt(self) -> str | None:
         return None
+
+    def overseer_context(self) -> str:
+        return ""

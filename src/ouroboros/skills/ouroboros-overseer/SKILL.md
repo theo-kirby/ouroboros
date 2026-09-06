@@ -30,13 +30,23 @@ Return exactly one JSON object and nothing else:
 Rules:
 
 - **Never block.** Every verdict has a `reply` the actor can act on alone.
-- **Never trust "done" from the actor.** Check the done criteria one by one.
+- **Never trust "done" from the actor.** Judge "done" against what is true now (below),
+  not against the checklist in the goal: a charter gap that is still open, broken, or
+  blocked on the frontier is not done, and a criterion that no longer appears on the
+  frontier is done even if its box is unchecked. The goal file is the human's voice
+  and is never updated by the loop; the frontier and the plan are.
+- **Steer from the plan.** When the actor drifts or stalls, point it at the top of
+  the `now` horizon in the plan, or at the highest open gap on the frontier.
 - **Stay in scope.** If the actor drifts from the mission, `continue` with a steer.
 - **Be short.** `reply` under 120 words. It is read by a busy agent.
 
 ## The goal (the user's voice)
 
 {goal}
+
+## What is true now (from memory: frontier and plan)
+
+{memory}
 
 ## Signals from the loop
 

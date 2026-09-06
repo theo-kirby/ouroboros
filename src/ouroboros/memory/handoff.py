@@ -63,6 +63,17 @@ class HandoffMemory(BaseMemory):
             )
         return "\n\n".join(parts)
 
+    def overseer_context(self) -> str:
+        parts = []
+        if self.plan.exists() and self.plan.read_text().strip():
+            parts.append(f"### Plan (`{self._rel(self.plan)}`)\n\n{self.plan.read_text().strip()[:4000]}")
+        recent = self.handoff_files()[-1:]
+        if recent:
+            text = recent[0].read_text()
+            nxt = text.split("## Next", 1)[1].strip() if "## Next" in text else text.strip()
+            parts.append(f"### Last handoff, `## Next`\n\n{nxt[:1500]}")
+        return "\n\n".join(parts)
+
     def record_prompt(self) -> str:
         path = self._rel(self.next_path())
         return (

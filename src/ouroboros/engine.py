@@ -151,6 +151,7 @@ class Engine:
             result.text, changed, recorded, self.no_change_streak, self.error_streak, result.error,
             iteration=n, diff_stat=self.git.diff_stat(head_before, commit),
             history=self.recorder.read_jsonl(self.recorder.overseer)[-3:],
+            memory=self._memory_context(),
         )
         try:
             verdict = self.overseer.judge(signals)
@@ -282,6 +283,13 @@ class Engine:
             else:
                 self.session_id, self.session_uses = result.session_id, 1
         return result
+
+    def _memory_context(self) -> str:
+        try:
+            return self.memory.overseer_context() or ""
+        except Exception as exc:
+            self.recorder.log(f"overseer_context raised {exc!r}")
+            return ""
 
     def _sleep(self, seconds: float, why: str) -> None:
         self.recorder.log(f"backoff {seconds:.0f}s ({why})")

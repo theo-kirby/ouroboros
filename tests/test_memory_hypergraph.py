@@ -196,3 +196,14 @@ def test_directive_without_criteria_declares_none(hg_repo):
     mem.start(run="t", goal_text=GOAL, run_dir=hg_repo / ".ouroboros" / "runs" / "t", branch="ouroboros/t")
     assert "none:" in mem.read_record(mem.directive_slug)
     assert not mem.needs_reconcile()
+
+
+def test_overseer_context_has_frontier_and_tail(hg_repo):
+    from ouroboros.memory.hypergraph import frontier_of
+    mem = HypergraphMemory(hg_repo)
+    (hg_repo / "STATE.md").write_text("# t\n\n## Frontier\n\n- [open] **Gap A** (`a-1`) — todo\n\n## Architecture\n\n- root\n")
+    ctx = mem.overseer_context()
+    assert "Gap A" in ctx and "Unreconciled record nodes" in ctx and "Architecture" not in ctx
+    assert frontier_of("# x\n\n## Frontier\n\n(empty)\n") == "(empty)"
+    (hg_repo / "PLAN.md").write_text("# plan\n\n## now\n\n- do A\n")
+    assert "PLAN.md" in mem.overseer_context() and "do A" in mem.overseer_context()

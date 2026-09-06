@@ -19,6 +19,13 @@ _FM_ROOT = re.compile(r"^parents:\s*\[\s*\]\s*$", re.MULTILINE)
 _UNREC = re.compile(r"(\d+) unreconciled record node")
 _GAP_LINE = re.compile(r"^- \[gap\] (\S+): (.*)$", re.MULTILINE)
 STATE_MD_LIMIT = 16000
+PLAN_MD_LIMIT = 4000
+_FRONTIER = re.compile(r"^## Frontier\s*$(.*?)(?=^## |\Z)", re.MULTILINE | re.DOTALL)
+
+
+def frontier_of(state_md: str) -> str:
+    m = _FRONTIER.search(state_md)
+    return m.group(1).strip() if m else ""
 
 
 def _strip_front_matter(text: str) -> str:
@@ -314,6 +321,24 @@ class HypergraphMemory(BaseMemory):
             .replace("{tail}", f"```\n{tail.strip()[-4000:]}\n```")
             .replace("{goal}", (self.goal_text or "").strip()[:4000] or "(none)")
         )
+
+    def plan_md_text(self) -> str:
+        p = self.repo / "PLAN.md"
+        return p.read_text().strip() if p.exists() else ""
+
+    def overseer_context(self) -> str:
+        parts = []
+        if self.state_md.exists():
+            frontier = frontier_of(self.state_md.read_text())
+            parts.append("### Frontier (open, broken, blocked state nodes)\n\n" + (frontier or "(empty: no open gaps)"))
+        else:
+            parts.append("### Frontier\n\n(STATE.md missing)")
+        count, _ = self.unreconciled()
+        parts.append(f"Unreconciled record nodes past the high-water mark: {count} (their declared impacts are not on the frontier yet).")
+        plan = self.plan_md_text()
+        if plan:
+            parts.append("### PLAN.md (agent-owned bets: now / soon / later)\n\n" + plan[:PLAN_MD_LIMIT])
+        return "\n\n".join(parts)
 
     def check_report(self) -> str | None:
         code, out = self.check()

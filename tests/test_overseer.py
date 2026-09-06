@@ -111,3 +111,11 @@ def test_overseer_bug_does_not_stop_loop(repo):
     eng = make_engine(repo, FakeHarness([works(), works()]), overseer=Broken(), max_iterations=2)
     eng.run()
     assert eng.iteration == 2 and eng.outcomes[0].verdict.source == "rules"
+
+
+def test_prompt_carries_memory_context():
+    from ouroboros.roles.overseer import build_overseer_prompt
+    s = sig(memory="### Frontier\n\n- [open] **gap-build** (`x-1`)")
+    prompt = build_overseer_prompt(goal_text="# g", s=s)
+    assert "## What is true now" in prompt and "gap-build" in prompt
+    assert "(no memory context)" in build_overseer_prompt(goal_text="# g", s=sig())

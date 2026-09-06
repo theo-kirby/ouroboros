@@ -72,6 +72,7 @@ class Signals:
     iteration: int = 0
     diff_stat: str = ""
     history: list[dict] = field(default_factory=list)
+    memory: str = ""   # what the memory adapter says is true now: frontier, plan
 
     def describe(self) -> str:
         lines = [
@@ -143,6 +144,7 @@ def build_overseer_prompt(*, goal_text: str, s: Signals, template: str | None = 
         .replace("{actor_output}", (s.text.strip() or "(empty)")[-6000:])
         .replace("{diff_stat}", s.diff_stat.strip() or "(no changes)")
         .replace("{history}", hist)
+        .replace("{memory}", s.memory.strip() or "(no memory context)")
     )
 
 
