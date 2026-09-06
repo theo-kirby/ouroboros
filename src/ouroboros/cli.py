@@ -14,6 +14,7 @@ from importlib import resources
 from pathlib import Path
 
 from . import __version__, tmux
+from .banner import render as render_banner
 from .budget import BudgetClock
 from .config import DEFAULT_CONFIG_PATH, Config
 from .engine import Engine
@@ -464,8 +465,31 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def interactive_menu(parser: argparse.ArgumentParser) -> int:
+    print("1. init\n2. monitor\n")
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return 0
+
+    choices = {"1": ["init"], "2": ["status", "--watch"]}
+    try:
+        while True:
+            choice = input("").strip()
+            if choice in choices:
+                args = parser.parse_args(choices[choice])
+                print()
+                return args.fn(args)
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return 0
+
+
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    argv = sys.argv[1:] if argv is None else argv
+    parser = build_parser()
+    if not argv:
+        render_banner()
+        return interactive_menu(parser)
+    args = parser.parse_args(argv)
     return args.fn(args)
 
 

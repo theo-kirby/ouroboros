@@ -38,6 +38,7 @@ One `uv` tool plus a small set of skills.
 
 ```
 uv tool install --editable .  # from this repo; edits are live for new processes
+ouroboros                    # ASCII banner and interactive init / monitor menu
 ouroboros skills install      # → ./.claude/skills, ./.agents/skills (--user for ~/.claude/skills)
 ouroboros init                # → .ouroboros/config.yml + goal.md (the charter)
 ouroboros run --for 10h       # runs inside tmux session ouroboros-<run>
@@ -48,6 +49,21 @@ ouroboros report              # REPORT.md: bets, plan, verdicts, cost
 
 A second `ouroboros run` with the same run name continues the run: iteration
 numbers, the ok tag, and the branch carry over.
+
+With no arguments, the CLI prints the ASCII serpent with `OUROBOROS` centered
+inside the coil, followed by `an infinite loop` with a blank line before and
+after the tagline, then a numbered menu: `1. init` and `2. monitor`.
+In an interactive terminal, entering `1` runs the existing `init` command;
+entering `2` runs `status --watch`. Only the options are shown, with no selection
+prompt; invalid selections retry silently. Ctrl-C or EOF
+exits the menu cleanly; Ctrl-C also exits the selected monitor without stopping
+the agent run. When stdin or stdout is not a terminal, the CLI prints the menu
+and exits without reading input. Use `ouroboros --help` for command help.
+The banner prints once as static text, without delays or terminal control
+sequences, in both terminals and pipes.
+The artwork lives in `src/ouroboros/banner.py`, which can also be run directly
+with Python to print the same artwork and description. Explicit commands and flags keep their
+normal output without the banner.
 
 Python 3.12+, `uv`, no daemon, no database. All state is files in the repo.
 
