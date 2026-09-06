@@ -29,11 +29,17 @@ from .roles.overseer import AgentOverseer, RulesOverseer
 
 GOAL_TEMPLATE = """# Goal: {name}
 
+<!-- This is the charter: the one document the human owns. No agent role edits it.
+     The agents write the plan (now / soon / later) and their bets; you overrule them
+     by editing this file and restarting. /ouroboros-design writes it by interview. -->
+
 ## Mission
 
-(one paragraph. what and why.)
+(one paragraph. what and why. priorities in order.)
 
 ## Done criteria
+
+(claims about the world, not tasks; each becomes an open gap on the frontier)
 
 - [ ] ...
 
@@ -64,7 +70,7 @@ How to decide for me when I am not here:
 
 creative
 
-(creative | maintain | report_done)
+(creative | maintain | report_done; with the planner on, an empty frontier gets new directions either way)
 
 ## Quality bar
 

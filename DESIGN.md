@@ -402,8 +402,9 @@ Claude Code, Codex, and Pi (Pi gets `--skill` on every call).
 
 | Skill | What it does |
 |---|---|
-| `ouroboros-design` | The interview. Reads the repo first. Then asks, in rounds: mission, done criteria, each rung of the horizon ladder, constraints, question policy, exhaustion policy, quality bar. Refuses to finish until every rung has at least 3 concrete items. Writes `goal.md` and a matching `config.yml`. |
-| `ouroboros-morning` | The morning read. Summarizes the run: iterations, accepted vs reverted, open questions the overseer answered for you (so you can overrule), what the critic kept rejecting, cost, and a merge recommendation. |
+| `ouroboros-design` | The interview (built). Reads the repo first. Then asks, in rounds: mission, done criteria as claims, each rung of the horizon ladder, constraints, question policy, exhaustion policy, quality bar, run shape. Refuses to finish until every rung has at least 3 concrete items. Writes the charter `goal.md` and a matching `config.yml`; never the plan. |
+| `ouroboros-morning` | The morning read (built). Blockers first, then what landed, the bets the planner changed (so you can overrule), decisions the overseer made for you, critic rejects and reverts, how the frontier moved, what to review hardest, a merge recommendation, and charter changes to consider. |
+| `ouroboros-planner` | Internal. The planner role: one `Bet:` record per pass, folded into the `plan` view (section 20). |
 | `ouroboros-actor` | Internal. The role prompt for WORK. Includes the memory adapter's orient and record instructions. |
 | `ouroboros-critic` | Internal. The role prompt for CRITIC. Grades against the quality bar, returns strict JSON. |
 | `ouroboros-overseer` | Internal. The sleeping user. Returns strict JSON (section 8). |
