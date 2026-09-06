@@ -10,7 +10,8 @@ from typing import Optional, Set
 
 from .layout import MIN_COLS, MIN_LINES, Rect, col, compute_layout, leaf, row
 from .panels import (
-    LoadHistory, Painter, draw_feed, draw_iterations, draw_load, draw_log, draw_loop, draw_overseer, draw_plan, draw_run, draw_stages,
+    LoadHistory, Painter, draw_cost, draw_feed, draw_frontier, draw_iterations, draw_load, draw_log, draw_loop, draw_overseer,
+    draw_plan, draw_run, draw_stages, draw_time, draw_verdicts,
 )
 from .state import Snapshot, load_snapshot
 from .theme import PAIR_DIM, PAIR_TITLE, PAIR_YELLOW, Theme
@@ -20,13 +21,18 @@ RUN_STRIP_H = 5
 
 # hotkey number → panel id; the superscript on each box names it. The first three are
 # on by default: what is it saying, where is the loop, what did the overseer decide.
-PANELS = ["messages", "loop", "overseer", "plan", "stages", "iterations", "load", "log"]
-DEFAULT_ON = {"messages", "loop", "overseer"}
+PANELS = ["iterations", "activity", "time", "verdicts", "frontier", "messages", "overseer", "cost", "plan"]
+DEFAULT_ON = {"iterations", "activity", "time", "verdicts", "frontier", "messages", "overseer"}
 VIEW = col(
-    row(leaf("messages", 3), col(leaf("loop", 4), leaf("overseer", 3), leaf("plan", 3), weight=2), weight=6),
-    row(leaf("stages", 1), leaf("iterations", 1), leaf("load", 1), weight=3),
-    leaf("log", 2),
+    row(leaf("iterations", 3), leaf("activity", 2), leaf("cost", 2), weight=5),
+    row(leaf("time", 1), leaf("verdicts", 1), leaf("frontier", 1), weight=3),
+    row(leaf("messages", 3), col(leaf("overseer", 1), leaf("plan", 1), weight=2), weight=6),
 )
+DRAW = {
+    "iterations": draw_iterations, "activity": draw_load, "time": draw_time, "verdicts": draw_verdicts,
+    "frontier": draw_frontier, "overseer": draw_overseer, "cost": draw_cost, "plan": draw_plan,
+    "loop": draw_loop, "stages": draw_stages, "log": draw_log,
+}
 
 
 class Poller(threading.Thread):
@@ -140,22 +146,12 @@ class App:
         placed = compute_layout(Rect(RUN_STRIP_H, 0, lines - RUN_STRIP_H, cols), VIEW, self.enabled)
         for pid, rect in placed.items():
             num = PANELS.index(pid) + 1
-            if pid == "loop":
-                draw_loop(p, rect, s, num)
-            elif pid == "stages":
-                draw_stages(p, rect, s, num)
-            elif pid == "iterations":
-                draw_iterations(p, rect, s, num)
-            elif pid == "load":
+            if pid == "activity":
                 draw_load(p, rect, s, num, self.hist)
             elif pid == "messages":
                 draw_feed(p, rect, s, num, self.show_output)
-            elif pid == "overseer":
-                draw_overseer(p, rect, s, num)
-            elif pid == "plan":
-                draw_plan(p, rect, s, num)
-            elif pid == "log":
-                draw_log(p, rect, s, num)
+            else:
+                DRAW[pid](p, rect, s, num)
         if self.poller.error:
             p.text(lines - 1, 1, clip_err(self.poller.error, cols - 2), self.theme.attr(PAIR_YELLOW))
         if self.show_help:
@@ -168,8 +164,8 @@ class App:
             "ouroboros status — keys",
             "",
             "  q / Esc    quit (the run keeps going)",
-            "  1 - 8      toggle a panel: " + " ".join(f"{i + 1} {n}" for i, n in enumerate(PANELS)),
-            "             (default: messages, loop, overseer; the rest are one key away)",
+            "  1 - 9      toggle a panel: " + " ".join(f"{i + 1} {n}" for i, n in enumerate(PANELS)),
+            "             (cost and plan are off by default)",
             "  o          show tool output lines in messages",
             "  + / -      faster / slower refresh",
             "  h / ?      this help",

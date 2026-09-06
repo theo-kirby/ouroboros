@@ -537,11 +537,17 @@ is a btop-style curses monitor in `tui/`, ported from the author's vllmtop. It
 reads only the run directory and the repo, never the loop process, on a poller
 thread every two seconds. A run strip on top: state, iteration, time in stage,
 elapsed and left with a gradient bar, the harness chain with the active one
-green and limited ones red, cost, pid alive. Then eight panels, each toggled by
-its superscript number. Three are on by default, so the screen stays quiet:
-**messages**, **loop** (the pipeline with the active stage lit, the outcome
-strip, counts, the current stage's clock, the last iteration), and
-**overseer**. The rest are one key away: **stages** (the pipeline with the active stage lit and
+green and limited ones red, cost, pid alive; the pipeline
+`actor→critic→overseer→maintainer→planner` sits in the strip with the active
+stage lit. Below it the default view is chart-first, an overview and not an
+analysis: **iterations** (outcome strip over a braille chart of actor minutes),
+**activity** (harness CPU over time), three meter panels, **time by stage**,
+**verdicts**, and **frontier** (charter gaps done, and the state graph's
+working / open / blocked split), then **messages** and a compact **overseer**
+(verdict history strip, the last verdict, its reason and reply). **cost** (per
+iteration) and **plan** are off by default; the text panels **loop**,
+**stages**, and **log** are reachable through the help. Panels toggle by their
+superscript number. Details: **stages** (the pipeline with the active stage lit and
 per-stage run counts, last, average, total durations from `iterations.jsonl`),
 **iterations** (an outcome strip, ■ changed and recorded, ▪ changed, · empty,
 ✗ reverted, ◆ bet, ! error, over a braille chart of actor minutes per

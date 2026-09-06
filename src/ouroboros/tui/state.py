@@ -218,6 +218,7 @@ class Snapshot:
     reconciles: int = 0
     plans: int = 0
     cost_series: list[float] = field(default_factory=list)
+    frontier: dict[str, int] = field(default_factory=dict)
 
     @property
     def elapsed(self) -> float:
@@ -399,14 +400,51 @@ def _plan_short(repo: Path, plan_md: str) -> list[str]:
     return []
 
 
+def frontier_counts(repo: Path) -> dict[str, int]:
+    """Counts from STATE.md: frontier nodes by status, charter gaps still on it, charter gaps total."""
+    out: dict[str, int] = {}
+    state = repo / "STATE.md"
+    if not state.exists():
+        return out
+    try:
+        text = state.read_text()
+    except OSError:
+        return out
+    m = re.search(r"^## Frontier\s*$([\s\S]*?)(?=^## |\Z)", text, re.M)
+    body = m.group(1) if m else ""
+    for line in body.splitlines():
+        mm = re.match(r"^\s*-\s*\[(\w+)\]", line)
+        if mm:
+            out[mm.group(1)] = out.get(mm.group(1), 0) + 1
+            if "charter criterion" in line.lower() or "charter gap" in line.lower():
+                out["gaps_open"] = out.get("gaps_open", 0) + 1
+    arch = re.search(r"^## Architecture\s*$([\s\S]*?)(?=^## |\Z)", text, re.M)
+    for line in (arch.group(1) if arch else "").splitlines():
+        mm = re.match(r"^\s*-\s*\[(\w+)\]", line)
+        if mm:
+            out["all_" + mm.group(1)] = out.get("all_" + mm.group(1), 0) + 1
+    out["nodes"] = sum(v for k, v in out.items() if k.startswith("all_"))
+    goal = repo / ".ouroboros" / "goal.md"
+    if goal.exists():
+        try:
+            from .. import goal as charter
+            out["gaps_total"] = len(charter.done_criteria(goal.read_text(), include_checked=True))
+            out["gaps_unchecked"] = len(charter.done_criteria(goal.read_text()))
+        except Exception:
+            pass
+    return out
+
+
 def _newest_transcript(run_dir: Path) -> Path | None:
+    """The newest transcript with content; an empty file just opened by the next call does not win."""
     d = run_dir / "transcripts"
     if not d.exists():
         return None
-    files = [f for f in d.glob("*.json")]
-    if not files:
-        return None
-    return max(files, key=lambda f: f.stat().st_mtime)
+    files = sorted(d.glob("*.json"), key=lambda f: f.stat().st_mtime, reverse=True)
+    for f in files[:4]:
+        if f.stat().st_size > 200:
+            return f
+    return files[0] if files else None
 
 
 def load_snapshot(run_dir: Path, *, repo: Path, plan_md: str = "PLAN.md", stop_after_s: float | None = None,
@@ -454,4 +492,5 @@ def load_snapshot(run_dir: Path, *, repo: Path, plan_md: str = "PLAN.md", stop_a
         log_tail=log_tail, plan_short=_plan_short(repo, plan_md), needs_human=needs_human, loadavg=loadavg,
         procs=procs, cpu_pct=cpu, rss_mb=rss, stop_after_s=stop_after_s, max_iterations=max_iterations,
         chains=chains or {}, mode=mode, switches=switches, reconciles=reconciles, plans=plans, cost_series=cost_series,
+        frontier=frontier_counts(repo),
     )

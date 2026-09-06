@@ -73,6 +73,42 @@ class Painter:
         return Rect(y + 1, x + 1, h - 2, w - 2)
 
 
+def meter(p: Painter, y: int, x: int, w: int, label: str, value: float, vmax: float, text: str,
+          pair: int | None = None, label_w: int = 11) -> None:
+    """`label ████░░░░ text`: a btop-style meter, gradient by fill unless `pair` is given."""
+    t = p.theme
+    bar_w = max(4, w - label_w - len(text) - 2)
+    p.text(y, x, f"{label:<{label_w}}", t.attr(PAIR_DIM), width=label_w)
+    frac = 0.0 if vmax <= 0 else max(0.0, min(1.0, value / vmax))
+    filled = int(round(frac * bar_w))
+    for i in range(bar_w):
+        if i < filled:
+            attr = t.attr(pair, bold=True) if pair is not None else t.grad_attr(i / max(1, bar_w - 1))
+            p.text(y, x + label_w + i, "█", attr)
+        else:
+            p.text(y, x + label_w + i, "░", t.attr(PAIR_INACTIVE))
+    p.text(y, x + label_w + bar_w + 1, text, t.attr(PAIR_TITLE))
+
+
+def _pipeline(p: Painter, y: int, x: int, w: int, s: Snapshot) -> int:
+    """actor→critic→overseer→maintainer→planner with the active stage lit; returns the width used."""
+    t = p.theme
+    cx = x
+    for name in ("actor", "critic", "overseer", "maintainer", "planner"):
+        if cx > x:
+            p.text(y, cx, "→", t.attr(PAIR_INACTIVE)); cx += 1
+        active = name == s.stage
+        pair = STATE_PAIR.get({"actor": "work", "critic": "critique", "overseer": "oversee",
+                               "maintainer": "reconcile", "planner": "plan"}[name], PAIR_DIM)
+        p.text(y, cx, name, t.attr(pair if active else PAIR_INACTIVE, bold=active), width=max(0, x + w - cx))
+        cx += len(name)
+    if s.stage not in ("actor", "critic", "overseer", "maintainer", "planner"):
+        word = f" {s.stage}"
+        p.text(y, cx, word, t.attr(STATE_PAIR.get(s.stage, PAIR_DIM), bold=True), width=max(0, x + w - cx))
+        cx += len(word)
+    return cx - x
+
+
 # ---------------------------------------------------------------- run strip
 def draw_run(p: Painter, rect: Rect, s: Snapshot) -> None:
     t = p.theme
@@ -87,14 +123,14 @@ def draw_run(p: Painter, rect: Rect, s: Snapshot) -> None:
     left = fmt_duration(s.stop_after_s - s.elapsed) + " left" if s.stop_after_s else "no wall-clock cap"
     it = st.get("iteration", 0)
     cap = f"/{s.max_iterations}" if s.max_iterations else ""
+    used = _pipeline(p, y, x, w, s)
     line1 = [
-        ("state ", PAIR_DIM), (f"{state:<9}", STATE_PAIR.get(state, PAIR_DIM)),
-        ("  iteration ", PAIR_DIM), (f"{it}{cap}", PAIR_TITLE),
+        ("   iteration ", PAIR_DIM), (f"{it}{cap}", PAIR_TITLE),
         ("  elapsed ", PAIR_DIM), (fmt_duration(s.elapsed), PAIR_TITLE),
         ("  ", PAIR_DIM), (left, PAIR_DIM),
         ("  pid ", PAIR_DIM), (f"{s.pid or '-'} {proc}", PAIR_GREEN if s.alive else PAIR_RED),
     ]
-    cx = x
+    cx = x + used
     for text, pair in line1:
         p.text(y, cx, text, t.attr(pair, bold=pair == PAIR_TITLE), width=max(0, x + w - cx))
         cx += len(text)
@@ -295,7 +331,7 @@ class LoadHistory:
 
 def draw_load(p: Painter, rect: Rect, s: Snapshot, num: int, hist: LoadHistory) -> None:
     t = p.theme
-    inner = p.box(rect, "load", num, PAIR_BOX_LOAD)
+    inner = p.box(rect, "activity · harness cpu", num, PAIR_BOX_LOAD)
     if inner.h <= 0:
         return
     y, x, w = inner.y, inner.x + 1, inner.w - 2
@@ -311,15 +347,14 @@ def draw_load(p: Painter, rect: Rect, s: Snapshot, num: int, hist: LoadHistory) 
     sx = x + chart_w + 1
     cost_rate = (s.cost / (s.elapsed / 3600)) if s.elapsed > 600 else 0.0
     lines = [
-        ("harness cpu", f"{s.cpu_pct:5.0f}%", t.threshold_pair(s.cpu_pct, 100, 300) if hasattr(t, "threshold_pair") else PAIR_TITLE),
-        ("procs / rss", f"{s.procs}  {s.rss_mb:,.0f} MB", PAIR_TITLE),
-        ("loadavg", f"{s.loadavg[0]:.1f} {s.loadavg[1]:.1f} {s.loadavg[2]:.1f}", PAIR_DIM),
-        ("cost / h", f"${cost_rate:.2f}", PAIR_DIM),
-        ("cost", f"${s.cost:.2f} api-eq", PAIR_DIM),
+        ("cpu", f"{s.cpu_pct:5.0f}%", PAIR_TITLE),
+        ("procs", f"{s.procs}  {s.rss_mb:,.0f} MB", PAIR_DIM),
+        ("loadavg", f"{s.loadavg[0]:.1f} {s.loadavg[1]:.1f}", PAIR_DIM),
+        ("cost/h", f"${cost_rate:.2f}", PAIR_DIM),
     ]
     limited = (s.status or {}).get("limited") or {}
     for name, until in limited.items():
-        lines.append((f"limit {name}", str(until), PAIR_RED))
+        lines.append((f"limit {name}", str(until).split(" (")[0], PAIR_RED))
     for i, (k, v, pair) in enumerate(lines[:ch_h]):
         p.text(y + i, sx, f"{k:<12}", t.attr(PAIR_INACTIVE), width=stat_w)
         p.text(y + i, sx + 12, v, t.attr(pair, bold=pair == PAIR_TITLE), width=max(0, stat_w - 12))
@@ -370,23 +405,25 @@ def draw_overseer(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
     x, w = inner.x + 1, inner.w - 2
     y = inner.y
     last = s.decisions[-1] if s.decisions else None
-    rows: list[tuple[str, int]] = []
-    for d in s.decisions[-8:]:
-        v = d.get("verdict", "?")
-        rows.append((clip(f"#{d.get('iteration', '?'):<4}{v:<14}{d.get('reason', '')}", w), VERDICT_PAIR.get(v, PAIR_DIM)))
-    if last and last.get("reply"):
-        rows.append(("reply → " + " ".join(str(last["reply"]).split()), PAIR_PROMPT))
-    if not rows:
+    if last is None:
         p.text(y, x, "no verdicts yet", t.attr(PAIR_INACTIVE))
         return
-    out: list[tuple[str, int]] = []
-    for text, pair in rows:
-        if pair == PAIR_PROMPT:
-            out.extend((l, pair) for l in wrap(text, w, 4))
-        else:
-            out.append((text, pair))
-    for i, (text, pair) in enumerate(out[-inner.h:]):
-        p.text(y + i, x, text, t.attr(pair), width=w)
+    # a strip of the last verdicts, newest right, then the last one in words
+    glyph = {"continue": "·", "answer": "?", "done_rejected": "d", "done_accepted": "D", "stuck": "s", "revert": "✗"}
+    strip = s.decisions[-(w - 8):]
+    p.text(y, x, "history ", t.attr(PAIR_DIM))
+    for i, d in enumerate(strip):
+        v = d.get("verdict", "?")
+        p.text(y, x + 8 + i, glyph.get(v, "?"), t.attr(VERDICT_PAIR.get(v, PAIR_DIM), bold=True))
+    v = last.get("verdict", "?")
+    p.text(y + 1, x, f"#{last.get('iteration', '?')} {v}", t.attr(VERDICT_PAIR.get(v, PAIR_DIM), bold=True), width=w)
+    reason = " ".join(str(last.get("reason", "")).split())
+    lines = wrap(reason, w, 2) if reason else []
+    reply = " ".join(str(last.get("reply") or "").split())
+    if reply:
+        lines += [("→ " + l if i == 0 else "  " + l) for i, l in enumerate(wrap(reply, w - 2, max(1, inner.h - 2 - len(lines))))]
+    for i, l in enumerate(lines[: max(0, inner.h - 2)]):
+        p.text(y + 2 + i, x, l, t.attr(PAIR_PROMPT if l.startswith(("→", "  ")) else PAIR_DIM), width=w)
 
 
 # ---------------------------------------------------------------- plan
@@ -405,6 +442,81 @@ def draw_plan(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
             lines.append((f"{i + 1}. " if j == 0 else "   ") + l)
     for i, l in enumerate(lines[: inner.h]):
         p.text(inner.y + i, x, l, t.attr(PAIR_DIM if l.startswith("   ") else PAIR_TITLE), width=w)
+
+
+# ---------------------------------------------------------------- time by stage (meters)
+def draw_time(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
+    inner = p.box(rect, "time by stage", num, PAIR_BOX_STAGES)
+    if inner.h <= 0:
+        return
+    x, w = inner.x + 1, inner.w - 2
+    total = sum(st.total for n, st in s.stages.items() if n != "commit") or 1.0
+    rows = [(n, s.stages[n].total) for n in ("actor", "critic", "overseer", "maintainer", "planner")]
+    for i, (name, secs) in enumerate(rows[: inner.h]):
+        meter(p, inner.y + i, x, w, name, secs, total, f"{secs / total * 100:3.0f}% {fmt_duration(secs):>7}")
+
+
+# ---------------------------------------------------------------- verdicts (meters)
+def draw_verdicts(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
+    inner = p.box(rect, "verdicts", num, PAIR_BOX_ITER)
+    if inner.h <= 0:
+        return
+    x, w = inner.x + 1, inner.w - 2
+    counts: Dict[str, int] = {}
+    for d in s.decisions:
+        counts[d.get("verdict", "?")] = counts.get(d.get("verdict", "?"), 0) + 1
+    if not counts:
+        p.text(inner.y, x, "no verdicts yet", p.theme.attr(PAIR_INACTIVE))
+        return
+    total = sum(counts.values()) or 1
+    order = ["continue", "answer", "done_rejected", "done_accepted", "stuck", "revert"]
+    rows = [(v, counts.get(v, 0)) for v in order if counts.get(v)] or []
+    for i, (v, n) in enumerate(rows[: inner.h]):
+        meter(p, inner.y + i, x, w, v, n, total, f"{n:>3}", pair=VERDICT_PAIR.get(v, PAIR_DIM))
+
+
+# ---------------------------------------------------------------- frontier (meters)
+def draw_frontier(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
+    inner = p.box(rect, "frontier", num, PAIR_BOX_RUN)
+    if inner.h <= 0:
+        return
+    x, w = inner.x + 1, inner.w - 2
+    f = s.frontier
+    if not f:
+        p.text(inner.y, x, "no STATE.md (handoff memory)", p.theme.attr(PAIR_INACTIVE), width=w)
+        return
+    rows = []
+    total_gaps = f.get("gaps_total", 0)
+    if total_gaps:
+        closed = total_gaps - f.get("gaps_open", f.get("gaps_unchecked", 0))
+        rows.append(("gaps done", closed, total_gaps, f"{closed}/{total_gaps}", PAIR_GREEN))
+    nodes = f.get("nodes") or 1
+    for status, pair in (("working", PAIR_CYAN), ("open", PAIR_YELLOW), ("blocked", PAIR_RED), ("broken", PAIR_RED)):
+        n = f.get("all_" + status, 0)
+        if n:
+            rows.append((status, n, nodes, f"{n:>3}", pair))
+    for i, (label, v, vmax, text, pair) in enumerate(rows[: inner.h]):
+        meter(p, inner.y + i, x, w, label, v, vmax, text, pair=pair)
+
+
+# ---------------------------------------------------------------- cost (chart)
+def draw_cost(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
+    t = p.theme
+    inner = p.box(rect, "cost · api-eq", num, PAIR_BOX_LOAD, title2=f"${s.cost:.2f}")
+    if inner.h <= 0:
+        return
+    x, w = inner.x + 1, inner.w - 2
+    per = [it.cost for it in s.iterations]
+    if not per:
+        p.text(inner.y, x, "no iterations yet", t.attr(PAIR_INACTIVE))
+        return
+    vmax = max(per) or 1.0
+    rows = braille_chart(per, max(1, w - 7), inner.h, 0.0, vmax)
+    for i, row in enumerate(rows):
+        p.text(inner.y + i, x + 7, row, t.attr(PAIR_PURPLE))
+    p.text(inner.y, x, f"${vmax:5.2f}", t.attr(PAIR_INACTIVE))
+    if inner.h > 1:
+        p.text(inner.y + inner.h - 1, x, "  /iter", t.attr(PAIR_INACTIVE))
 
 
 # ---------------------------------------------------------------- log
