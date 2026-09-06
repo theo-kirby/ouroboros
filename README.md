@@ -1,90 +1,80 @@
 # Ouroboros
 
-A loop runner for agent harnesses: Claude Code, Codex, and Pi.
+Run Claude Code, Codex, or Pi on a repo indefinitely. You set the goal; agents
+make changes, check the work, and update the plan. Ouroboros keeps a record.
 
-You write a **charter** (a goal with a horizon ladder). Ouroboros runs an agent
-on it again and again, overnight, in tmux. It never blocks on a question, never
-believes "done" too early, never stops for a rate limit or a usage limit, and
-leaves a memory trail plus a plan the agents wrote for the morning.
-
-[DESIGN.md](DESIGN.md) is the full design and is kept true to the code.
-Section 20 (charter and plan) and section 21 (what the first night taught) are
-the parts to read first.
+![Ouroboros loop: orient, work, prove, verify, judge, and adapt](docs/ouroboros.png)
 
 ## Install
 
-```bash
-git clone <this repo> ~/src/ouroboros
-uv tool install --editable ~/src/ouroboros      # the `ouroboros` command; edits are live
-ouroboros skills install --user                 # the skills, into every harness you have: claude, codex, pi
-```
-
-You need one harness installed and logged in: `claude`, `codex`, or `pi`.
-`ouroboros run` checks the logins before it starts and says what is missing.
-
-Optional but recommended: [hypergraph-protocol](https://github.com/theo-kirby/hypergraph-protocol)
-(`uv tool install hypergraph-protocol`). A repo with `.hypergraph/config.yml`
-gets graph memory, the frontier, and the self-evolving plan; any other repo
-gets handoff files with the same plan layer.
-
-## Run a night
+You need Python 3.12+, `uv`, `tmux`, and at least one agent CLI installed
+and logged in: `claude`, `codex`, or `pi`.
 
 ```bash
-cd your-repo
-ouroboros                      # the menu: init / design / run / monitor
-ouroboros init                 # .ouroboros/config.yml + goal.md
-ouroboros design               # interview → charter + config, in claude, codex, or pi
-ouroboros run                  # refuses a dirty tree, a template charter, or no login; then tmux session ouroboros-<run>
-ouroboros status --watch       # the live TUI: stages, iterations, load, messages, overseer, plan (or `ouroboros top`)
-ouroboros stop                 # kills the loop and its children
-ouroboros report               # REPORT.md; or /ouroboros-morning in Claude Code
+git clone https://github.com/theo-kirby/ouroboros.git
+cd ouroboros
+uv tool install --editable .
+ouroboros skills install --user
 ```
 
-Merge the run branch with a merge commit. Record nodes cite commit SHAs, so a
-squash or rebase dangles them.
+## Run
 
-## What runs each iteration
+From the repo you want the agents to work on:
 
+```bash
+ouroboros init                 # create the config and goal template
+ouroboros design               # work through your goal with an agent
+ouroboros run --for 8h         # start in tmux
+ouroboros top                 # watch progress
+ouroboros stop                # stop early if needed
+ouroboros report              # write a run report
 ```
-actor (orient → one unit of work → record) → commit → critic? → overseer → reconcile? → plan?
-```
 
-| Role | Job |
-|---|---|
-| actor | one bounded unit from the plan's `short` horizon, then a record node or handoff |
-| critic | `actor-critic` / `council` modes: grades the diff; a reject reverts the iteration |
-| overseer | the sleeping user: answers questions, rejects false "done", unsticks; judges against the frontier |
-| maintainer | hypergraph reconcile pass: folds record impacts into the state graph |
-| planner | after each reconcile: one `Bet:` record folded into the `plan` view (`short` / `medium` / `long`) |
+Start with a clean working tree and a completed goal. Run `ouroboros` with
+no arguments for an interactive menu.
 
-Every role can carry a fallback chain. On a usage limit the loop switches
-harness in the same call and comes back when the limit resets.
+Your goal lives in `.ouroboros/goal.md`, called the **charter**. It defines
+what to build, the constraints, and what counts as done. Agents adapt their
+plan as they learn, but cannot edit the charter.
+
+## The loop
+
+- **Actor:** picks one task, does the work, tests it, and records the result.
+- **Critic:** reviews the change in `actor-critic` or `council` mode.
+  Rejected changes are reverted by default.
+- **Overseer:** answers the actor’s questions, gets it unstuck, and checks
+  whether claims of completion hold up.
+- **Maintainer:** periodically updates shared project state from the records.
+- **Planner:** revises the next steps after that update.
+
+If an agent hits a usage limit, Ouroboros switches to a configured fallback
+or waits for access to return. Set roles and limits in `.ouroboros/config.yml`:
 
 ```yaml
 roles:
-  actor:   { harness: claude, timeout: 90m, fallback: [{ harness: codex }] }
-  critic:  { harness: codex,  timeout: 15m }
+  actor: { harness: claude, timeout: 90m, fallback: [{ harness: codex }] }
+  critic: { harness: codex, timeout: 15m }
 mode: actor-critic
-stop: { after: 15h }
+stop: { after: 8h }
 ```
 
-## The charter
+## Memory and review
 
-`.ouroboros/goal.md` is the one document the human owns. No agent role edits
-it. Its done criteria become open gaps on the frontier; its horizon ladder
-(short, medium, long: granularity, not time) seeds the plan; the agents re-plan from there and record their bets. You
-overrule them by editing the charter and running again.
+By default, agents leave handoff files. Repos with `.hypergraph/config.yml`
+use [hypergraph-protocol](https://github.com/theo-kirby/hypergraph-protocol)
+for shared state and planning. Install it with `uv tool install hypergraph-protocol`.
 
-## Cost
+Review the report and run branch before merging. Use a merge commit for
+hypergraph runs: their records reference commit IDs, which squash and rebase change.
 
-Claude Code reports dollars computed from tokens at API list prices even on a
-subscription. Ouroboros sums that and calls it API-equivalent cost. It is a
-measure of work, not a bill. Time and iterations are the real caps.
+Reported dollars are **API-equivalent cost**: an estimate based on token
+prices, not your subscription bill.
 
 ## Development
 
 ```bash
-uv run pytest -q     # 104 tests; hypergraph and tmux tests skip when the tools are missing
+uv run pytest -q
 ```
 
-Role prompts are skills under `src/ouroboros/skills/`. Edit them there.
+Role prompts live in `src/ouroboros/skills/`. See [DESIGN.md](DESIGN.md) for
+the design, decisions, and lessons from real runs.
