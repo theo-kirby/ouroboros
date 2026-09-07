@@ -12,7 +12,7 @@ from .budget import BudgetClock, backoff_seconds
 import re
 
 from .config import Config, parse_duration
-from .gitguard import GitGuard
+from .gitguard import GitError, GitGuard
 from .harness.backend_headless import kill_active
 from .harness.base import Harness, Result
 from .memory.base import MemoryAdapter
@@ -184,8 +184,19 @@ class Engine:
                 verdict.reason = f"critic rejected: {'; '.join(critique.reasons)[:200]} | overseer: {verdict.reason}"
             verdict.reply = f"The critic rejected the last iteration. Fix this first:\n{critique.must_fix or '; '.join(critique.reasons)}\n\n{verdict.reply}".strip()
         if verdict.verdict == "revert" and self.config.git.revert_on_reject and self.last_ok_tag:
-            sha = self.git.revert_to(self.last_ok_tag, patch_out=self.recorder.run_dir / "reverted" / f"{n:04d}.patch")
-            self.recorder.step(iteration=n, step="revert", to=self.last_ok_tag, sha=sha[:10])
+            try:
+                sha = self.git.revert_to(self.last_ok_tag, patch_out=self.recorder.run_dir / "reverted" / f"{n:04d}.patch")
+            except GitError as exc:
+                # A revert that cannot undo the reject is the one failure the loop
+                # must not sleep through: rejected work would ride on to the merge.
+                self.recorder.log(f"[{n}] revert FAILED, rejected work is still on the branch: {exc}")
+                self.recorder.needs_human(
+                    f"Iteration {n} was rejected, but reverting to `{self.last_ok_tag}` failed:\n\n    {exc}\n\n"
+                    f"The rejected commit is still on `{self.config.run}`. Undo it by hand before merging."
+                )
+                self.recorder.step(iteration=n, step="revert", to=self.last_ok_tag, sha=self.git.head()[:10], error=str(exc)[:200])
+            else:
+                self.recorder.step(iteration=n, step="revert", to=self.last_ok_tag, sha=sha[:10])
             self.error_streak = 0
         elif verdict.verdict in ("continue", "answer", "done_rejected", "done_accepted") and self.config.git.tag_on_accept:
             tag = f"ouroboros/{self.config.run}/ok-{n:04d}"

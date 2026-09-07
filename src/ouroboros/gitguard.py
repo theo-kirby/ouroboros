@@ -24,6 +24,10 @@ class GitGuard:
             raise GitError(f"git {' '.join(args)}: {proc.stderr.strip() or proc.stdout.strip()}")
         return proc.stdout.strip()
 
+    def git_code(self, *args: str) -> int:
+        """Run git for its exit status. Use where failure is a branch, not an error."""
+        return subprocess.run(["git", *args], cwd=str(self.repo), capture_output=True).returncode
+
     def is_repo(self) -> bool:
         return subprocess.run(["git", "rev-parse", "--git-dir"], cwd=str(self.repo), capture_output=True).returncode == 0
 
@@ -38,6 +42,27 @@ class GitGuard:
 
     def has_changes(self) -> bool:
         return self.is_dirty()
+
+    def _git_path(self, name: str) -> Path:
+        """Resolve a path inside the git dir, which is not always `<repo>/.git`."""
+        return self.repo / self.git("rev-parse", "--git-path", name)
+
+    def sequencer_in_progress(self) -> bool:
+        """True while git holds revert/cherry-pick state, finished or abandoned."""
+        return any(self._git_path(n).exists() for n in ("sequencer", "REVERT_HEAD", "CHERRY_PICK_HEAD"))
+
+    def clear_sequencer(self) -> bool:
+        """Drop leftover revert/cherry-pick state so a fresh revert can start.
+
+        A `.git/sequencer` left by an abandoned revert -- including one from an
+        earlier run -- makes git refuse every later revert outright.
+        """
+        if not self.sequencer_in_progress():
+            return False
+        self.git_code("revert", "--quit")
+        if self.sequencer_in_progress():
+            self.git_code("cherry-pick", "--quit")
+        return True
 
     def diff_stat(self, a: str, b: str = "HEAD") -> str:
         return self.git("diff", "--stat", a, b, check=False)
@@ -86,7 +111,8 @@ class GitGuard:
     def revert_to(self, ref: str, *, patch_out: Path | None = None) -> str:
         """Add revert commits that bring the tree back to `ref`. Never rewrites history."""
         before = self.head()
-        if self.git("rev-parse", ref) == before:
+        target = self.git("rev-parse", f"{ref}^{{commit}}")
+        if target == before:
             return before
         if patch_out is not None:
             patch_out.parent.mkdir(parents=True, exist_ok=True)
@@ -94,11 +120,20 @@ class GitGuard:
         if self.is_dirty():
             self.commit("ouroboros: snapshot before revert")
             before = self.head()
-        self.git("revert", "--no-edit", f"{ref}..{before}", check=False)
-        # if revert stopped on a conflict, resolve by taking `ref` wholesale
-        if (self.repo / ".git" / "REVERT_HEAD").exists() or self.git("status", "--porcelain"):
-            self.git("revert", "--abort", check=False)
-            self.git("checkout", ref, "--", ".")
-            self.git("clean", "-fd", "-e", ".ouroboros/runs", check=False)
-            self.commit(f"ouroboros: revert to {ref}")
-        return self.head()
+        self.clear_sequencer()
+        code = self.git_code("revert", "--no-edit", f"{ref}..{before}")
+        # A refused or conflicted revert leaves the tree short of `ref`. Never infer
+        # success from a clean tree: git refuses outright -- writing no REVERT_HEAD
+        # and touching nothing -- when sequencer state is already present.
+        if code != 0 or self.sequencer_in_progress() or self.is_dirty():
+            self.git_code("revert", "--abort")
+            self.clear_sequencer()
+            # Take `ref` wholesale. read-tree sets index and work tree to exactly
+            # that commit's tree, dropping files added since, and commits without
+            # `add -A` so untracked run state is neither swept up nor deleted.
+            self.git("read-tree", "-u", "--reset", ref)
+            self.git("commit", "-q", "-m", f"ouroboros: revert to {ref}", "--no-verify", "--allow-empty")
+        head = self.head()
+        if self.git("rev-parse", f"{head}^{{tree}}") != self.git("rev-parse", f"{target}^{{tree}}"):
+            raise GitError(f"revert to {ref} left HEAD at {head[:10]}, whose tree still differs from {ref}")
+        return head
