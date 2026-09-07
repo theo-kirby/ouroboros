@@ -88,7 +88,7 @@ roles:
   overseer:   { harness: claude, model: haiku, timeout: 5m, fallback: [{ harness: codex }] }
   maintainer: { harness: claude, timeout: 30m, fallback: [{ harness: codex }] }
   planner:    { harness: claude, timeout: 20m, fallback: [{ harness: codex }] }
-stop: { after: 10h }
+stop: { after: 10h, max_usage: 0.8 }   # 0.8 = stop at 80% of a subscription's weekly window
 hypergraph: { reconcile_every: 5, pressure: 3, budget_units: 1 }
 plan: { enabled: true, every: 5, max_new_directions: 1 }   # new directions per planner pass
 ```

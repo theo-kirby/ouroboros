@@ -55,8 +55,15 @@ roles:
   actor: { harness: claude, timeout: 90m, fallback: [{ harness: codex }] }
   critic: { harness: codex, timeout: 15m }
 mode: actor-critic
-stop: { after: 8h }
+stop: { after: 8h, max_usage: 0.8 }
 ```
+
+Dollars are the wrong meter for a subscription, which charges a flat fee and then
+rations by window. So a run meters whatever its harnesses actually report: windows
+for Claude Code and Codex, dollars for a harness on an API key. `max_usage` is a
+fraction of a subscription's **weekly** window, because a five-hour window refills
+on its own and the fallback covers the wait. `ouroboros status` and the report show
+where each window sits and how far the run moved it.
 
 ## Memory and review
 

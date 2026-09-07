@@ -166,7 +166,7 @@ class Engine:
             verdict = RulesOverseer().judge(signals)
             verdict.reason = f"rules fallback (overseer raised): {verdict.reason}"
         overseer_cost = float(getattr(self.overseer, "last_cost", 0.0) or 0.0)
-        self.budget.add(cost=overseer_cost)
+        self.budget.add(cost=overseer_cost, usage=getattr(self.overseer, "last_usage", None))
         self.recorder.decision(iteration=n, verdict=verdict.verdict, reason=verdict.reason, reply=verdict.reply, overseer=verdict.source, cost=overseer_cost)
         self.recorder.step(iteration=n, step="oversee", verdict=verdict.verdict, source=verdict.source, reason=verdict.reason)
 
@@ -218,7 +218,7 @@ class Engine:
             elif not self.memory.reconcile_prompt() and self.config.plan.every and self.since_plan >= self.config.plan.every:
                 self._maybe_plan(n, f"every {self.config.plan.every} iterations")
 
-        self.budget.add(cost=result.cost_usd, iteration=True, done_accepted=(verdict.verdict == "done_accepted") if verdict.verdict.startswith("done") else None)
+        self.budget.add(cost=result.cost_usd, usage=result.usage, iteration=True, done_accepted=(verdict.verdict == "done_accepted") if verdict.verdict.startswith("done") else None)
         self._status("idle", iteration=n, last_verdict=verdict.verdict)
         out = IterationOutcome(n, result, verdict, commit, changed, recorded, critique)
         self.outcomes.append(out)
@@ -254,7 +254,7 @@ class Engine:
         except Exception as exc:
             result = Result(exit_code=-1, error=f"harness raised {exc!r}")
         sha = self.git.commit(f"ouroboros #{n}: reconcile")
-        self.budget.add(cost=result.cost_usd)
+        self.budget.add(cost=result.cost_usd, usage=result.usage)
         self.recorder.step(iteration=n, step="reconcile", exit=result.exit_code, timed_out=result.timed_out,
                            error=(result.error or None) and result.error[:200], sha=sha[:10], cost=result.cost_usd)
         if result.ok:
@@ -276,7 +276,8 @@ class Engine:
         elapsed = self.budget.elapsed / 3600
         left = f"{max(stop.after_seconds / 3600 - elapsed, 0):.1f}h left" if stop.after_seconds else "no wall-clock cap"
         lines = [
-            f"- iterations so far: {self.iteration} {cap}; api-equivalent cost so far: ${self.budget.cost_usd:.2f}",
+            f"- iterations so far: {self.iteration} {cap}; api-equivalent cost so far: ${self.budget.cost_usd:.2f}"
+            + (f"; subscription usage: {'; '.join(self.budget.usage.lines())}" if self.budget.usage else ""),
             f"- run budget: {elapsed:.1f}h elapsed, {left}. Size the short horizon to what fits; the charter has no clock.",
         ]
         for o in outs:
@@ -314,7 +315,7 @@ class Engine:
         except Exception as exc:
             self.recorder.log(f"verify_bet raised {exc!r}")
         sha = self.git.commit(f"ouroboros #{n}: plan — {(bet or 'no bet')[:60]}", allow_empty=False)
-        self.budget.add(cost=result.cost_usd)
+        self.budget.add(cost=result.cost_usd, usage=result.usage)
         self.recorder.step(iteration=n, step="plan", why=why, bet=bet, exit=result.exit_code, timed_out=result.timed_out,
                            error=(result.error or None) and result.error[:200], sha=sha[:10], cost=result.cost_usd)
         self.since_plan = 0
@@ -391,7 +392,7 @@ class Engine:
             self.recorder.log(f"critic raised {exc!r}; accepting")
             return None
         cost = float(getattr(self.critic, "last_cost", 0.0) or 0.0)
-        self.budget.add(cost=cost)
+        self.budget.add(cost=cost, usage=getattr(self.critic, "last_usage", None))
         self.recorder.step(iteration=n, step="critique", verdict=critique.verdict, source=critique.source,
                            reasons="; ".join(critique.reasons)[:300], must_fix=critique.must_fix[:300] or None, cost=cost)
         return critique
@@ -414,6 +415,9 @@ class Engine:
             harness=self.harness.name, memory=self.memory.name, cost_usd=round(self.budget.cost_usd, 4),
             elapsed_s=int(self.budget.elapsed), last_ok_tag=self.last_ok_tag,
         )
+        if self.budget.usage:
+            fields["usage"] = self.budget.usage.to_dict()
+            fields["usage_lines"] = self.budget.usage.lines()
         board = getattr(self.harness, "board", None)
         if board is not None and board.snapshot():
             fields["limited"] = board.snapshot()

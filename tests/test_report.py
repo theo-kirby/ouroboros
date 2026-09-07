@@ -1,5 +1,8 @@
 """The morning report must not flatter the run."""
 
+import json
+
+from ouroboros.cli import main
 from ouroboros.cli import _cost_by_role, _cost_split, _unverified_reverts
 from ouroboros.gitguard import GitGuard
 
@@ -60,3 +63,37 @@ def test_unverifiable_reverts_are_not_guessed_at(repo):
     """A tag that no longer exists is not evidence of failure."""
     assert _unverified_reverts(repo, "ouroboros/x", [{"iteration": 1, "to": "gone", "sha": "gone"}]) == []
     assert _unverified_reverts(repo, "ouroboros/x", [{"iteration": 2}]) == []
+
+
+def _run_dir(repo, run="r1", **status):
+    d = repo / ".ouroboros" / "runs" / run
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "status.json").write_text(json.dumps({"state": "killed", "run": run, **status}))
+    (d / "iterations.jsonl").write_text("\n".join(json.dumps(s) for s in [
+        {"iteration": 1, "step": "commit", "changed": True, "recorded": True},
+        {"iteration": 1, "step": "critique"},
+        {"iteration": 2, "step": "commit", "changed": True, "recorded": True, "cost": 1.5},
+    ]) + "\n")
+    return d
+
+
+def test_report_shows_the_windows_a_subscription_run_consumed(repo, monkeypatch, capsys):
+    _run_dir(repo, usage_lines=["claude seven_day 13% -> 33% (+20 this run)",
+                                "codex seven_day 24% -> 98% (+74 this run)"])
+    monkeypatch.chdir(repo)
+    assert main(["report", "--run", "r1"]) == 0
+    out = capsys.readouterr().out
+    assert "- usage: claude seven_day 13% -> 33% (+20 this run)" in out
+    assert "         codex seven_day 24% -> 98% (+74 this run)" in out
+    # A subscription bills a flat fee, so silence about dollars is expected, not alarming.
+    assert "metered by window above" in out
+    assert "the real spend is higher" not in out
+
+
+def test_report_still_warns_when_nothing_meters_the_run_at_all(repo, monkeypatch, capsys):
+    _run_dir(repo)  # no usage_lines: no harness reported windows either
+    monkeypatch.chdir(repo)
+    assert main(["report", "--run", "r1"]) == 0
+    out = capsys.readouterr().out
+    assert "- usage:" not in out
+    assert "the real spend is higher" in out

@@ -9,6 +9,8 @@ from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Protocol
 
+from ..usage import UsageSnapshot
+
 _RETRIABLE = re.compile(
     r"rate.?limit|429|overloaded|too many requests|529|503|temporarily unavailable|"
     r"ECONNRESET|ETIMEDOUT|connection (reset|refused)|"
@@ -43,6 +45,7 @@ class Result:
     raw_path: Path | None = None
     timed_out: bool = False
     error: str | None = None
+    usage: UsageSnapshot | None = None   # subscription windows, where the harness reports them
     extra: dict = field(default_factory=dict)
 
     @property

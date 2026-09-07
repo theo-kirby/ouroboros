@@ -6,6 +6,7 @@ import time
 from datetime import datetime
 
 from .config import StopConfig
+from .usage import UsageLedger, UsageSnapshot
 
 BACKOFF_STEPS = [60.0, 120.0, 300.0, 600.0]
 
@@ -16,12 +17,16 @@ class BudgetClock:
         self.now = now
         self.started_at = now()
         self.cost_usd = 0.0
+        self.usage = UsageLedger()
         self.iterations = 0
         self.done_streak = 0
 
-    def add(self, *, cost: float | None = None, iteration: bool = False, done_accepted: bool | None = None) -> None:
+    def add(self, *, cost: float | None = None, usage: UsageSnapshot | None = None,
+            iteration: bool = False, done_accepted: bool | None = None) -> None:
         if cost:
             self.cost_usd += cost
+        if usage:
+            self.usage.record(usage)
         if iteration:
             self.iterations += 1
         if done_accepted is True:
@@ -41,6 +46,11 @@ class BudgetClock:
             return f"max_iterations {s.max_iterations} reached"
         if s.max_cost_usd is not None and self.cost_usd >= s.max_cost_usd:
             return f"max_cost_usd {s.max_cost_usd} reached (~${self.cost_usd:.2f})"
+        if s.max_usage is not None:
+            hit = self.usage.exceeded(s.max_usage)
+            if hit:
+                harness, w = hit
+                return f"max_usage {s.max_usage:.0%} reached ({harness} {w.name} at {w.percent:.0f}%)"
         if s.until_dt is not None and datetime.fromtimestamp(self.now()) >= s.until_dt:
             return f"until {s.until} reached"
         if s.on_done_accepted is not None and self.done_streak >= s.on_done_accepted:

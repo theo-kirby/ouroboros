@@ -140,6 +140,8 @@ def load_config(args: argparse.Namespace, repo: Path) -> Config:
         cfg.stop.max_iterations = args.max_iterations
     if getattr(args, "max_cost", None) is not None:
         cfg.stop.max_cost_usd = args.max_cost
+    if getattr(args, "max_usage", None) is not None:
+        cfg.stop.max_usage = args.max_usage
     if getattr(args, "allow_dirty", False):
         cfg.git.allow_dirty = True
     if getattr(args, "overseer", None):
@@ -369,6 +371,8 @@ def cmd_status(args: argparse.Namespace) -> int:
             proc = f"pid {pid} alive" if alive else "process NOT running"
             print(f"run {st['run']}  state={st['state']}  iteration={st['iteration']}  branch={st['branch']}  memory={st.get('memory', '?')}  [{proc}]")
             print(f"harness={st['harness']}  api-equivalent cost=${st.get('cost_usd', 0):.2f}  elapsed={st.get('elapsed_s', 0) // 60}m  updated {age}s ago")
+            for u in (st.get("usage_lines") or []):
+                print(f"  usage: {u}")
             if st.get("limited"):
                 print("limited: " + "  ".join(f"{k} for {v}" for k, v in st["limited"].items()))
             for k in ("last_verdict", "last_ok_tag", "why", "seconds", "stop_reason"):
@@ -455,10 +459,16 @@ def cmd_report(args: argparse.Namespace) -> int:
     lines = [f"# Ouroboros report: {cfg.run}", ""]
     lines += [f"- state: {st.get('state', '?')}  (stop reason: {st.get('stop_reason', '-')})",
               f"- iterations: {len(commits)}   changed: {sum(1 for c in commits if c.get('changed'))}   recorded: {sum(1 for c in commits if c.get('recorded'))}",
-              f"- reverts: {len(reverts)}" + (f"   **{len(failed_reverts)} did not take**" if failed_reverts else ""),
-              f"- api-equivalent cost: ~${cost:.2f} ({_cost_split(by_role)})",
+              f"- reverts: {len(reverts)}" + (f"   **{len(failed_reverts)} did not take**" if failed_reverts else "")]
+    usage_lines = [str(u) for u in (st.get("usage_lines") or [])]
+    if usage_lines:
+        lines += [f"- usage: {usage_lines[0]}"] + [f"         {u}" for u in usage_lines[1:]]
+    lines += [f"- api-equivalent cost: ~${cost:.2f} ({_cost_split(by_role)})",
               f"- branch: {cfg.branch}", ""]
-    if uncosted:
+    if uncosted and usage_lines:
+        lines += [f"> {uncosted} role call(s) ran on a subscription, which bills a flat fee rather than"
+                  " per call. They cost no dollars and are metered by window above.", ""]
+    elif uncosted:
         lines += [f"> Cost covers only the roles whose harness reports it. {uncosted} completed role call(s)"
                   " reported nothing, so the real spend is higher than the figure above.", ""]
     if failed_reverts:
@@ -544,6 +554,8 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--for", dest="for_", help="wall clock budget, e.g. 8h, 90m")
     r.add_argument("--max-iterations", type=int)
     r.add_argument("--max-cost", type=float, help="stop at this API-equivalent cost in USD (informational on subscriptions)")
+    r.add_argument("--max-usage", type=float, metavar="FRACTION",
+                   help="stop when a subscription's weekly window passes this fraction, e.g. 0.8 for 80%%")
     r.add_argument("--mode")
     r.add_argument("--harness", choices=["claude", "codex", "pi"])
     r.add_argument("--model")

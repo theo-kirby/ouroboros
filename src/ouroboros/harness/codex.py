@@ -20,6 +20,7 @@ import time
 from pathlib import Path
 
 from . import backend_headless as backend
+from ..usage import UsageSnapshot, find_codex_rollout, from_codex_rollout
 from .base import Result
 
 _LIMIT = re.compile(
@@ -111,6 +112,7 @@ class CodexHarness:
             if schema_path:
                 schema_path.unlink(missing_ok=True)
         result = self.parse(proc.stdout, proc.stderr, proc.exit_code, proc.timed_out, log_path)
+        result.usage = self.usage_for(result.session_id)
         if result.kind == "limit" and result.reset_at() is None:
             at = self.limit_reset_from_rollouts()
             if at:
@@ -171,6 +173,21 @@ class CodexHarness:
             exit_code=exit_code if (exit_code != 0 or not error) else 1,
             raw_path=raw_path, timed_out=timed_out, error=error, extra=extra,
         )
+
+    def usage_for(self, session_id: str | None, *, now: float | None = None) -> UsageSnapshot | None:
+        """The subscription windows for this turn, from the thread's rollout log.
+
+        `exec --json` never carries them. The limits are account-wide, so a thread
+        whose file has not been flushed yet falls back to the newest rollout -- but
+        only a fresh one, or the run would report last week's numbers as today's.
+        """
+        path = find_codex_rollout(self.home, session_id or "")
+        if path is None:
+            now = now or time.time()
+            recent = [f for f in self.home.glob("sessions/**/rollout-*.jsonl")
+                      if now - f.stat().st_mtime <= 3600]
+            path = max(recent, key=lambda f: f.stat().st_mtime, default=None)
+        return from_codex_rollout(path) if path else None
 
     def limit_reset_from_rollouts(self, *, now: float | None = None) -> float | None:
         """The reset epoch of the exhausted window, from the newest rollout's last token_count event."""

@@ -228,6 +228,11 @@ class Snapshot:
     def cost(self) -> float:
         return float((self.status or {}).get("cost_usd") or 0)
 
+    @property
+    def usage(self) -> dict:
+        """Per-harness subscription windows, as the engine last wrote them."""
+        return (self.status or {}).get("usage") or {}
+
 
 def _ts(s: str) -> float:
     try:

@@ -93,10 +93,12 @@ class Critic:
         self.log = log or (lambda line: None)
         self.name = name or f"critic:{harness.name}"
         self.last_cost: float = 0.0
+        self.last_usage = None
 
     def grade(self, *, iteration: int, actor_output: str, diff: str) -> Critique:
         prompt = build_critic_prompt(goal_text=self.goal_text, iteration=iteration, actor_output=actor_output, diff=diff)
         self.last_cost = 0.0
+        self.last_usage = None
         for attempt in range(2):
             try:
                 result: Result = self.harness.run(
@@ -108,6 +110,7 @@ class Critic:
                 self.log(f"{self.name} attempt {attempt}: harness raised {exc!r}")
                 continue
             self.last_cost += result.cost_usd or 0.0
+            self.last_usage = result.usage or self.last_usage
             if not result.text.strip():
                 self.log(f"{self.name} attempt {attempt}: {result.error or 'no output'}")
                 continue
@@ -134,6 +137,7 @@ class Council:
     def grade(self, *, iteration: int, actor_output: str, diff: str) -> Critique:
         self.last = [c.grade(iteration=iteration, actor_output=actor_output, diff=diff) for c in self.critics]
         self.last_cost = sum(c.last_cost for c in self.critics)
+        self.last_usage = next((c.last_usage for c in reversed(self.critics) if c.last_usage), None)
         rejects = [c for c in self.last if c.rejected]
         if len(rejects) * 2 > len(self.last):
             reasons = [r for c in rejects for r in c.reasons][:5]

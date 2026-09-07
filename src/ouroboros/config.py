@@ -83,6 +83,7 @@ class StopConfig(BaseModel):
     after: str | None = None
     max_iterations: int | None = None
     max_cost_usd: float | None = None
+    max_usage: float | None = None   # 0..1 of a subscription window; 0.8 = stop at 80%
     until: str | None = None
     on_done_accepted: int | None = None
 

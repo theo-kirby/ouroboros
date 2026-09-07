@@ -352,6 +352,14 @@ def draw_load(p: Painter, rect: Rect, s: Snapshot, num: int, hist: LoadHistory) 
         ("loadavg", f"{s.loadavg[0]:.1f} {s.loadavg[1]:.1f}", PAIR_DIM),
         ("cost/h", f"${cost_rate:.2f}", PAIR_DIM),
     ]
+    for harness, snap in sorted(s.usage.items()):
+        windows = (snap.get("windows") or {}).items()
+        for name, w in sorted(windows, key=lambda kv: -(kv[1].get("minutes") or 0)):
+            if name.endswith("overage_included"):
+                continue  # a different meter: what you would be billed past the plan
+            pct = float(w.get("utilization") or 0) * 100
+            short = {"seven_day": "7d", "five_hour": "5h", "daily": "24h"}.get(name, name)
+            lines.append((f"{harness} {short}", f"{pct:3.0f}%", PAIR_RED if pct >= 90 else PAIR_DIM))
     limited = (s.status or {}).get("limited") or {}
     for name, until in limited.items():
         lines.append((f"limit {name}", str(until).split(" (")[0], PAIR_RED))

@@ -199,10 +199,12 @@ class AgentOverseer:
         self.rules = rules or RulesOverseer()
         self.retries = retries
         self.last_cost: float = 0.0
+        self.last_usage = None
 
     def judge(self, s: Signals) -> Verdict:
         prompt = build_overseer_prompt(goal_text=self.goal_text, s=s)
         self.last_cost = 0.0
+        self.last_usage = None
         for attempt in range(self.retries + 1):
             try:
                 result: Result = self.harness.run(
@@ -215,6 +217,7 @@ class AgentOverseer:
                 self.log(f"overseer attempt {attempt}: harness raised {exc!r}")
                 continue
             self.last_cost += result.cost_usd or 0.0
+            self.last_usage = result.usage or self.last_usage
             if not result.ok and not result.text.strip():
                 self.log(f"overseer attempt {attempt}: {result.error or 'no output'}")
                 continue

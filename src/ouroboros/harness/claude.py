@@ -7,6 +7,7 @@ import shutil
 from pathlib import Path
 
 from . import backend_headless as backend
+from ..usage import from_claude_stream
 from .base import Result
 
 
@@ -90,6 +91,7 @@ class ClaudeHarness:
                 raw_path=raw_path,
                 timed_out=timed_out,
                 error=(stderr.strip() or text or "claude reported is_error") if (is_error or exit_code != 0) else None,
+                usage=from_claude_stream(stdout),
                 extra={"subtype": data.get("subtype")},
             )
         return Result(
@@ -97,5 +99,6 @@ class ClaudeHarness:
             exit_code=exit_code,
             raw_path=raw_path,
             timed_out=timed_out,
+            usage=from_claude_stream(stdout),
             error=(stderr.strip() or "no JSON output") if (exit_code != 0 or timed_out or not stdout.strip()) else None,
         )
