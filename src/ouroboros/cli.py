@@ -381,6 +381,62 @@ def cmd_status(args: argparse.Namespace) -> int:
         time.sleep(5)
 
 
+# The report is the only thing the user reads in the morning, so it must not
+# flatter the run: cost covers every role, and a revert counts only if git agrees.
+ROLE_OF_STEP = {"commit": "actor", "critique": "critic", "oversee": "overseer",
+                "reconcile": "maintainer", "plan": "planner"}
+
+
+def _cost_by_role(steps: list[dict], decisions: list[dict]) -> tuple[dict[str, float], int]:
+    """Cost per role, and how many completed role calls reported no cost at all."""
+    by_role: dict[str, float] = {}
+    uncosted = 0
+    for s in steps:
+        role = ROLE_OF_STEP.get(s.get("step", ""))
+        if role is None:
+            continue
+        if s.get("cost"):
+            by_role[role] = by_role.get(role, 0.0) + s["cost"]
+        elif not s.get("error"):
+            uncosted += 1
+    for d in decisions:
+        if d.get("cost"):
+            by_role["overseer"] = by_role.get("overseer", 0.0) + d["cost"]
+    return by_role, uncosted
+
+
+def _cost_split(by_role: dict[str, float]) -> str:
+    if not by_role:
+        return "no harness reported a cost"
+    parts = ", ".join(f"{r} ${c:.2f}" for r, c in sorted(by_role.items(), key=lambda kv: -kv[1]))
+    return parts
+
+
+def _unverified_reverts(repo: Path, branch: str, reverts: list[dict]) -> list[dict]:
+    """Reverts git cannot confirm: the recorded head's tree still differs from the tag.
+
+    A revert that silently no-ops still writes its log line, so counting log lines
+    overstates what was undone. Ask git instead.
+    """
+    git = GitGuard(repo, branch)
+    if not git.is_repo():
+        return []
+    failed = []
+    for r in reverts:
+        if r.get("error"):
+            failed.append(r)
+            continue
+        tag, sha = r.get("to"), r.get("sha")
+        if not tag or not sha:
+            continue
+        try:
+            if git.git("rev-parse", f"{sha}^{{tree}}") != git.git("rev-parse", f"{tag}^{{tree}}"):
+                failed.append(r)
+        except GitError:
+            continue  # tag or commit is gone; not something the report can judge
+    return failed
+
+
 def cmd_report(args: argparse.Namespace) -> int:
     repo = repo_root()
     cfg = load_config(args, repo)
@@ -389,7 +445,9 @@ def cmd_report(args: argparse.Namespace) -> int:
     decisions = rec.read_jsonl(rec.overseer)
     commits = [s for s in steps if s.get("step") == "commit"]
     reverts = [s for s in steps if s.get("step") == "revert"]
-    cost = sum(s.get("cost") or 0 for s in commits)
+    by_role, uncosted = _cost_by_role(steps, decisions)
+    cost = sum(by_role.values())
+    failed_reverts = _unverified_reverts(repo, cfg.branch, reverts)
     counts: dict[str, int] = {}
     for d in decisions:
         counts[d["verdict"]] = counts.get(d["verdict"], 0) + 1
@@ -397,7 +455,17 @@ def cmd_report(args: argparse.Namespace) -> int:
     lines = [f"# Ouroboros report: {cfg.run}", ""]
     lines += [f"- state: {st.get('state', '?')}  (stop reason: {st.get('stop_reason', '-')})",
               f"- iterations: {len(commits)}   changed: {sum(1 for c in commits if c.get('changed'))}   recorded: {sum(1 for c in commits if c.get('recorded'))}",
-              f"- reverts: {len(reverts)}", f"- api-equivalent cost: ~${cost:.2f} (what the tokens would cost at API list price; a subscription is not billed per call)", f"- branch: {cfg.branch}", ""]
+              f"- reverts: {len(reverts)}" + (f"   **{len(failed_reverts)} did not take**" if failed_reverts else ""),
+              f"- api-equivalent cost: ~${cost:.2f} ({_cost_split(by_role)})",
+              f"- branch: {cfg.branch}", ""]
+    if uncosted:
+        lines += [f"> Cost covers only the roles whose harness reports it. {uncosted} completed role call(s)"
+                  " reported nothing, so the real spend is higher than the figure above.", ""]
+    if failed_reverts:
+        lines += ["## Reverts that did not take (rejected work is still on the branch)", ""]
+        lines += [f"- #{r.get('iteration')}: `{r.get('sha')}` never reached `{r.get('to')}`"
+                  + (f" — {r['error']}" if r.get("error") else "") for r in failed_reverts]
+        lines += ["", "Undo each by hand before merging, or the critic's rejections ship with the run.", ""]
     bets = [s for s in steps if s.get("step") == "plan"]
     lines += ["## Bets the planner changed this run (overrule by editing the charter)", ""]
     lines += [f"- #{b.get('iteration')} ({b.get('why')}): {b.get('bet') or 'no bet landed' + (' — ' + b['error'] if b.get('error') else '')}" for b in bets] or ["- (no planner pass ran)"]
