@@ -11,25 +11,33 @@ from typing import Optional, Set
 from .layout import MIN_COLS, MIN_LINES, Rect, col, compute_layout, leaf, row
 from .panels import (
     LoadHistory, Painter, draw_cost, draw_feed, draw_frontier, draw_iterations, draw_load, draw_log, draw_loop, draw_overseer,
-    draw_harnesses, draw_plan, draw_run, draw_stages, draw_time,
+    draw_plan, draw_run, draw_stages, draw_time,
 )
 from .state import Snapshot, load_snapshot
 from .theme import PAIR_DIM, PAIR_TITLE, PAIR_YELLOW, Theme
 
 RENDER_TICK = 0.25
-RUN_STRIP_H = 5
+RUN_STRIP_H = 6
 
-# hotkey number → panel id; the superscript on each box names it. The first three are
-# on by default: what is it saying, where is the loop, what did the overseer decide.
-PANELS = ["iterations", "activity", "time", "harnesses", "frontier", "messages", "overseer", "cost", "plan"]
-DEFAULT_ON = {"iterations", "activity", "time", "harnesses", "frontier", "messages", "overseer"}
+# hotkey number → panel id; the superscript on each box names it. The four on by
+# default answer the four questions a night raises, in the order they get asked:
+# is it moving, will the subscription last, what is it saying, what was decided.
+#
+# The panels are sized by how often what they hold changes. `messages` changes every
+# few seconds and gets the most room; the charter and the stage split change a few
+# times a night and are now two lines in the run strip rather than two panels.
+PANELS = ["iterations", "activity", "messages", "overseer", "time", "frontier", "cost", "plan", "log"]
+DEFAULT_ON = {"iterations", "activity", "messages", "overseer"}
+# `messages` is placed last on purpose: the weighted split gives the remainder to the
+# final child, and the live feed is the one panel that is always worth another row.
 VIEW = col(
-    row(leaf("iterations", 3), leaf("activity", 2), leaf("cost", 2), weight=5),
-    row(leaf("time", 1), leaf("harnesses", 1), leaf("frontier", 1), weight=3),
-    row(leaf("messages", 3), col(leaf("overseer", 1), leaf("plan", 1), weight=2), weight=6),
+    row(leaf("iterations", 3), leaf("activity", 3), leaf("cost", 2), weight=10),
+    row(leaf("time", 1), leaf("frontier", 1), weight=6),
+    leaf("overseer", weight=4, min_h=4),   # 2 borders + the strip + one line of reason
+    row(leaf("messages", 3), leaf("plan", 1), leaf("log", 2), weight=16),
 )
 DRAW = {
-    "iterations": draw_iterations, "activity": draw_load, "time": draw_time, "harnesses": draw_harnesses,
+    "iterations": draw_iterations, "activity": draw_load, "time": draw_time,
     "frontier": draw_frontier, "overseer": draw_overseer, "cost": draw_cost, "plan": draw_plan,
     "loop": draw_loop, "stages": draw_stages, "log": draw_log,
 }
@@ -165,12 +173,12 @@ class App:
             "",
             "  q / Esc    quit (the run keeps going)",
             "  1 - 9      toggle a panel: " + " ".join(f"{i + 1} {n}" for i, n in enumerate(PANELS)),
-            "             (cost and plan are off by default)",
+            "             (5 - 9 are off by default)",
             "  o          show tool output lines in messages",
             "  + / -      faster / slower refresh",
             "  h / ?      this help",
             "",
-            "  outcome strip: ■ changed+recorded  ▪ changed  · empty  ✗ reverted  ◆ bet  ! error",
+            "  overseer history: · continue  ? answer  ✗ revert  s stuck  d/D done rejected/accepted",
             "",
             "press any key to close",
         ]

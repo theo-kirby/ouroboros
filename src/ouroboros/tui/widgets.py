@@ -9,13 +9,39 @@ _DOT_BITS = ((0x01, 0x02, 0x04, 0x40), (0x08, 0x10, 0x20, 0x80))
 _BRAILLE_BASE = 0x2800
 
 
+def resample(series: Sequence[float], n: int) -> List[float]:
+    """Exactly `n` samples: bucket peaks when there are too many, hold when too few.
+
+    A bucket reports its largest value rather than its mean, because on a duration or
+    load series the spike is the thing worth seeing; averaging it away is how a chart
+    ends up saying a night went smoothly when it did not.
+    """
+    vals = [float(v) for v in series]
+    if n <= 0 or not vals:
+        return []
+    if len(vals) == n:
+        return vals
+    if len(vals) > n:
+        return [max(vals[i * len(vals) // n: max(i * len(vals) // n + 1, (i + 1) * len(vals) // n)])
+                for i in range(n)]
+    return [vals[i * len(vals) // n] for i in range(n)]
+
+
 def braille_chart(series: Sequence[float], width: int, height: int, vmin: float, vmax: float,
-                  baseline: bool = True) -> List[str]:
-    """`height` rows of `width` braille glyphs; the newest samples sit on the right."""
+                  baseline: bool = True, fill: bool = False) -> List[str]:
+    """`height` rows of `width` braille glyphs; the newest samples sit on the right.
+
+    A series longer than the panel is always resampled rather than cropped: dropping
+    the head silently would hide most of a long run. `fill` also stretches a short
+    series across the full width, which is what a per-iteration chart wants and a
+    rolling history -- which should grow in from the right -- does not.
+    """
     if width <= 0 or height <= 0:
         return []
     dot_cols, dot_rows = 2 * width, 4 * height
-    vals = list(series)[-dot_cols:]
+    vals = list(series)
+    if len(vals) > dot_cols or (fill and vals):
+        vals = resample(vals, dot_cols)
     pad = dot_cols - len(vals)
     span = (vmax - vmin) or 1.0
     cells = [[0] * width for _ in range(height)]
@@ -32,6 +58,32 @@ def braille_chart(series: Sequence[float], width: int, height: int, vmin: float,
             gr = dot_rows - 1 - k
             cells[gr // 4][cell_col] |= _DOT_BITS[sub_col][gr % 4]
     return ["".join(chr(_BRAILLE_BASE + bits) for bits in row) for row in cells]
+
+
+def chart_bounds(series: Sequence[float]) -> tuple[List[float], float, float, str]:
+    """Pick a scale that shows variation, and say which one it picked.
+
+    A run's per-iteration numbers usually cluster: charted from zero they all reach
+    the same height and the panel becomes a solid block. Two fixes, and which one
+    applies depends on the spread. When the largest value dwarfs the smallest, use a
+    log scale so the small ones stay legible beside an outlier. Otherwise keep it
+    linear but lift the floor to just under the minimum, so the band fills the panel.
+
+    Returns the values to plot (already transformed for log), the bounds to plot them
+    against, and a note for the axis label -- empty when the scale is plain linear.
+    """
+    vals = [float(v) for v in series if v is not None]
+    positive = [v for v in vals if v > 0]
+    if not positive:
+        return vals, 0.0, 1.0, ""
+    lo, hi = min(positive), max(vals)
+    # The floor comes from the smallest real value, not the smallest number: a run's
+    # first iteration has no previous step to measure from and reads as zero, and one
+    # such artefact must not decide the scale for everything after it.
+    if hi / lo >= 8:
+        return [math.log10(max(v, lo)) for v in vals], math.log10(lo), math.log10(hi), "log"
+    span = hi - lo
+    return vals, (max(0.0, lo - span * 0.25) if span > 0 else 0.0), hi, ""
 
 
 def hbar(value: float, vmax: float, width: int) -> str:

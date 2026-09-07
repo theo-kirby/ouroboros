@@ -4,7 +4,7 @@ import pytest
 
 from ouroboros.tui.layout import Rect, col, compute_layout, leaf, row
 from ouroboros.tui.state import derive_iterations, harness_roster, parse_events, load_snapshot
-from ouroboros.tui.widgets import braille_chart, fmt_duration, hbar, wrap
+from ouroboros.tui.widgets import braille_chart, chart_bounds, fmt_duration, hbar, wrap
 
 
 def jl(*objs):
@@ -180,3 +180,146 @@ def test_roster_survives_a_bare_chain_with_no_models():
     rows = harness_roster({"actor": ["claude"], "critic": ["codex"]}, {})
     assert [(r.name, r.roles, r.models) for r in rows] == [
         ("claude", ["actor"], []), ("codex", ["critic"], [])]
+
+
+# ------------------------------------------------------------------ chart scale
+def test_a_clustered_series_lifts_its_floor_instead_of_starting_at_zero():
+    """Charted from zero these all reach the same height and the panel is a block."""
+    vals, lo, hi, note = chart_bounds([5.0, 5.4, 5.1, 5.8, 5.2])
+    assert note == ""
+    assert lo > 4.0 and hi == 5.8      # the band fills the panel rather than the top 5%
+    assert vals == [5.0, 5.4, 5.1, 5.8, 5.2]
+
+
+def test_a_wide_spread_goes_log_so_small_values_survive_an_outlier():
+    vals, lo, hi, note = chart_bounds([2.0, 2.5, 2.0, 60.0])
+    assert note == "log"
+    assert 10 ** lo == pytest.approx(2.0) and 10 ** hi == pytest.approx(60.0)
+    # The median sits well up the panel instead of being flattened by the outlier.
+    assert 0.2 < (vals[0] - lo) / (hi - lo) < 0.5 or vals[0] == lo
+
+
+def test_a_leading_zero_does_not_decide_the_scale():
+    """The first iteration has no previous step to measure from and reads as zero."""
+    vals, lo, hi, note = chart_bounds([0.0, 5.0, 5.4, 5.1])
+    assert note == ""                   # not log: the real spread is narrow
+    assert lo >= 0.0 and hi == 5.4
+    wide, lo2, hi2, note2 = chart_bounds([0.0, 2.0, 2.5, 60.0])
+    assert note2 == "log"
+    assert 10 ** lo2 == pytest.approx(2.0)   # floor is the smallest real value, not the zero
+    assert wide[0] == lo2                    # the artefact is clamped to the floor, not dropped
+
+
+def test_degenerate_series_do_not_explode():
+    assert chart_bounds([]) == ([], 0.0, 1.0, "")
+    assert chart_bounds([0.0, 0.0]) == ([0.0, 0.0], 0.0, 1.0, "")
+    vals, lo, hi, note = chart_bounds([3.0, 3.0, 3.0])
+    assert note == "" and lo == 0.0 and hi == 3.0
+
+
+# ---------------------------------------------------------------- charts fit their panel
+def test_a_long_series_is_resampled_rather_than_cropped():
+    """240 iterations in a 60-dot panel used to show only the last 60 and say nothing."""
+    from ouroboros.tui.widgets import resample
+    spike = [1.0] * 200 + [9.0] + [1.0] * 39
+    got = resample(spike, 20)
+    assert len(got) == 20
+    # The spike is at 200/240 of the run, and a bucket reports its peak, so it survives.
+    assert max(got) == 9.0
+    assert got.index(9.0) == 16
+
+
+def test_a_short_series_stretches_only_when_the_chart_asks():
+    from ouroboros.tui.widgets import braille_chart, resample
+    assert resample([1.0, 2.0], 6) == [1.0, 1.0, 1.0, 2.0, 2.0, 2.0]
+    # fill=False leaves the newest sample on the right and the rest of the panel empty,
+    # which is what a rolling history wants.
+    right = braille_chart([0.0, 1.0], 4, 1, 0.0, 1.0, fill=False)[0]
+    assert right.startswith("⠀⠀⠀")
+    assert braille_chart([0.0, 1.0], 4, 1, 0.0, 1.0, fill=True)[0][0] != "⠀"
+
+
+def test_resample_survives_the_degenerate_cases():
+    from ouroboros.tui.widgets import resample
+    assert resample([], 5) == []
+    assert resample([3.0], 0) == []
+    assert resample([3.0], 3) == [3.0, 3.0, 3.0]
+    assert resample([1.0, 2.0, 3.0], 3) == [1.0, 2.0, 3.0]
+
+
+def test_charter_gaps_are_counted_only_off_the_charter(tmp_path):
+    """`gaps_open` tallies STATE.md, which is a different list; mixing it read 0 done."""
+    from ouroboros.tui.state import frontier_counts
+    (tmp_path / ".ouroboros").mkdir()
+    (tmp_path / ".ouroboros" / "goal.md").write_text(
+        "# Goal\n\n## Done criteria\n\n- [x] **one**\n- [x] **two**\n- [ ] **three**\n")
+    (tmp_path / "STATE.md").write_text(
+        "## Frontier\n\n- [open] charter criterion one\n- [open] charter criterion two\n"
+        "- [open] charter criterion three\n\n## Architecture\n\n- [working] a\n")
+    f = frontier_counts(tmp_path)
+    assert f["gaps_total"] == 3 and f["gaps_unchecked"] == 1
+    assert f["gaps_total"] - f["gaps_unchecked"] == 2
+
+
+def _snap(**kw):
+    """A Snapshot with every required field filled, so a test names only what it tests."""
+    from ouroboros.tui.state import STAGES, Snapshot, StageStat
+    base = dict(now=1000.0, status={}, alive=True, pid=1, iterations=[],
+                stages={s: StageStat() for s in STAGES}, stage="actor", stage_since=0.0,
+                decisions=[], feed=[], feed_role="", feed_age=None, log_tail=[], plan_short=[],
+                needs_human=None, loadavg=(0.0, 0.0, 0.0), procs=0, cpu_pct=0.0, rss_mb=0.0,
+                stop_after_s=None, max_iterations=None, chains={}, mode="single")
+    stages = kw.pop("stages", None)
+    if stages:
+        base["stages"] = {**{s: StageStat() for s in STAGES}, **stages}
+    return Snapshot(**{**base, **kw})
+
+
+# ---------------------------------------------------------------- the new layout
+def test_a_panel_with_a_floor_is_never_squeezed_below_it():
+    """A box shorter than its own border holds nothing, which is worse than absent."""
+    from ouroboros.tui.layout import Rect, col, compute_layout, leaf
+    view = col(leaf("big", 10), leaf("strip", 1, min_h=4))
+    placed = compute_layout(Rect(0, 0, 18, 80), view, {"big", "strip"})
+    assert placed["strip"].h >= 4
+    assert placed["big"].h + placed["strip"].h == 18
+    # The floor only binds when it has to; weight still decides the share when it fits.
+    tall = compute_layout(Rect(0, 0, 110, 80), view, {"big", "strip"})
+    assert tall["strip"].h == 10
+
+
+def test_a_floor_that_cannot_be_paid_for_does_not_starve_a_sibling():
+    from ouroboros.tui.layout import Rect, col, compute_layout, leaf
+    view = col(leaf("a", 1, min_h=40), leaf("b", 1, min_h=40))
+    placed = compute_layout(Rect(0, 0, 10, 80), view, {"a", "b"})
+    assert placed["a"].h + placed["b"].h == 10
+    assert placed["a"].h > 0 and placed["b"].h > 0
+
+
+def test_every_harness_keeps_its_meter_however_short_the_panel():
+    from ouroboros.tui.panels import _block
+    from ouroboros.tui.state import HarnessRow
+    rows = [HarnessRow(name="claude", roles=["actor"], utilization=0.4, short_utilization=0.9),
+            HarnessRow(name="codex", roles=["critic"], utilization=0.2)]
+    assert all(_block(r, 1) == ["meter"] for r in rows)
+    # The short window is the first detail dropped, the roles the second.
+    assert _block(rows[0], 3) == ["meter", "short", "roles"]
+    assert _block(rows[0], 2) == ["meter", "roles"]
+    assert _block(rows[1], 3) == ["meter", "roles"]   # no short window to show
+
+
+def test_the_summary_row_carries_both_panels_it_replaced():
+    from ouroboros.tui.panels import _summary_line
+    from ouroboros.tui.state import StageStat
+    s = _snap(frontier={"gaps_total": 16, "gaps_unchecked": 9, "all_working": 10, "all_open": 18},
+              stages={"actor": StageStat(count=5, total=800.0), "critic": StageStat(count=5, total=200.0),
+                      "commit": StageStat(count=5, total=999.0)})
+    line = _summary_line(s)
+    assert "charter 7/16" in line and "10 working" in line and "18 open" in line
+    # `commit` is an event, not a stage that takes time, so it is out of the split.
+    assert "act 80%" in line and "crit 20%" in line
+
+
+def test_the_summary_row_says_nothing_when_there_is_nothing_to_say():
+    from ouroboros.tui.panels import _summary_line
+    assert _summary_line(_snap()) == ""

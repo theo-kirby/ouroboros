@@ -203,7 +203,12 @@ class HarnessRow:
     window: str = ""                                      # the window the numbers below describe
     utilization: float | None = None                      # 0..1 now
     delta: float | None = None                            # points added since the run began
+    resets_at: float | None = None                        # epoch the long window empties
+    short_window: str = ""                                # the sub-day window, when the harness reports one
+    short_utilization: float | None = None
+    short_resets_at: float | None = None
     limited: bool = False
+    limit_note: str = ""
 
     @property
     def idle(self) -> bool:
@@ -222,6 +227,24 @@ def _longest_window(snap: dict) -> tuple[str, dict] | None:
     return best
 
 
+def _shortest_window(snap: dict) -> tuple[str, dict] | None:
+    """The sub-day window, if the harness reports one.
+
+    It is the one that decides whether the run stalls in the next hour, while the long
+    window decides whether it finishes the week. Neither substitutes for the other.
+    """
+    best = None
+    for name, w in (snap.get("windows") or {}).items():
+        if name.endswith("overage_included"):
+            continue
+        minutes = w.get("minutes") or 0
+        if not 0 < minutes < 1440:
+            continue
+        if best is None or minutes < (best[1].get("minutes") or 0):
+            best = (name, w)
+    return best
+
+
 def harness_roster(roles: dict, usage: dict, limited: dict | None = None) -> list[HarnessRow]:
     """Invert the role config into one row per harness, joined to what it has used.
 
@@ -232,7 +255,8 @@ def harness_roster(roles: dict, usage: dict, limited: dict | None = None) -> lis
     rows: dict[str, HarnessRow] = {}
 
     def row(name: str) -> HarnessRow:
-        return rows.setdefault(name, HarnessRow(name=name, limited=name in limited))
+        return rows.setdefault(name, HarnessRow(name=name, limited=name in limited,
+                                                limit_note=str(limited.get(name, "")).split(" (")[0]))
 
     for role in ROLE_ORDER:
         chain = roles.get(role) or []
@@ -252,9 +276,15 @@ def harness_roster(roles: dict, usage: dict, limited: dict | None = None) -> lis
             continue
         r.window, w = best
         r.utilization = w.get("utilization")
+        r.resets_at = w.get("resets_at")
         first = ((snap or {}).get("first_windows") or {}).get(r.window)
         if first is not None and r.utilization is not None:
             r.delta = (r.utilization - first) * 100
+        short = _shortest_window(snap or {})
+        if short:
+            r.short_window, sw = short
+            r.short_utilization = sw.get("utilization")
+            r.short_resets_at = sw.get("resets_at")
 
     # Working harnesses first, then ones that only ever stood by.
     return sorted(rows.values(), key=lambda r: (r.idle, not r.roles, r.name))

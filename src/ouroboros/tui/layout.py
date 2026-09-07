@@ -23,10 +23,11 @@ class Node:
     panel: Optional[str] = None
     vertical: bool = False
     children: Tuple["Node", ...] = ()
+    min_h: int = 0
 
 
-def leaf(panel: str, weight: int = 1) -> Node:
-    return Node(weight=weight, panel=panel)
+def leaf(panel: str, weight: int = 1, min_h: int = 0) -> Node:
+    return Node(weight=weight, panel=panel, min_h=min_h)
 
 
 def row(*children: Node, weight: int = 1) -> Node:
@@ -37,14 +38,33 @@ def col(*children: Node, weight: int = 1) -> Node:
     return Node(weight=weight, vertical=True, children=tuple(children))
 
 
-def _split_weighted(start: int, total: int, weights: List[int]) -> List[Tuple[int, int]]:
+def _split_weighted(start: int, total: int, weights: List[int],
+                    mins: Optional[List[int]] = None) -> List[Tuple[int, int]]:
+    """Split `total` by weight, then raise any share below its minimum.
+
+    A box shorter than its own border holds nothing, so a panel that asks for a floor
+    gets it, paid for by whichever sibling has the most to spare. Weight decides the
+    share; the minimum only decides whether the share is usable.
+    """
+    mins = list(mins or [0] * len(weights))
     tw = sum(weights) or 1
-    out, pos, used = [], start, 0
+    segs, used = [], 0
     for i, wt in enumerate(weights):
         seg = (total - used) if i == len(weights) - 1 else (total * wt) // tw
+        segs.append(seg)
+        used += seg
+    if sum(mins) <= total:
+        for i, m in enumerate(mins):
+            while segs[i] < m:
+                j = max(range(len(segs)), key=lambda k: segs[k] - mins[k])
+                if j == i or segs[j] - mins[j] <= 0:
+                    break
+                segs[j] -= 1
+                segs[i] += 1
+    out, pos = [], start
+    for seg in segs:
         out.append((pos, seg))
         pos += seg
-        used += seg
     return out
 
 
@@ -57,7 +77,7 @@ def prune(node: Optional[Node], available: Set[str]) -> Optional[Node]:
     if not kids:
         return None
     if len(kids) == 1:
-        return replace(kids[0], weight=node.weight)
+        return replace(kids[0], weight=node.weight, min_h=max(node.min_h, kids[0].min_h))
     return replace(node, children=tuple(kids))
 
 
@@ -67,7 +87,8 @@ def _place(node: Node, rect: Rect, out: Dict[str, Rect]) -> None:
         return
     weights = [c.weight for c in node.children]
     if node.vertical:
-        for child, (ry, rh) in zip(node.children, _split_weighted(rect.y, rect.h, weights)):
+        mins = [c.min_h for c in node.children]
+        for child, (ry, rh) in zip(node.children, _split_weighted(rect.y, rect.h, weights, mins)):
             _place(child, Rect(ry, rect.x, rh, rect.w), out)
     else:
         for child, (rx, rw) in zip(node.children, _split_weighted(rect.x, rect.w, weights)):

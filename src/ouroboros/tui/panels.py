@@ -7,12 +7,12 @@ import time
 from typing import Callable, Dict
 
 from .layout import Rect
-from .state import STAGES, Snapshot, harness_roster
+from .state import ROLE_ORDER, STAGES, Snapshot, harness_roster
 from .theme import (
     PAIR_BOX_FEED, PAIR_BOX_ITER, PAIR_BOX_LOAD, PAIR_BOX_RUN, PAIR_BOX_STAGES, PAIR_CYAN, PAIR_DIM, PAIR_DIV,
     PAIR_GREEN, PAIR_HI, PAIR_INACTIVE, PAIR_MAGENTA, PAIR_PROMPT, PAIR_PURPLE, PAIR_RED, PAIR_TITLE, PAIR_YELLOW, Theme,
 )
-from .widgets import braille_chart, clip, fmt_duration, hbar, wrap
+from .widgets import braille_chart, chart_bounds, clip, fmt_duration, hbar, wrap
 
 _ROUND = {"lu": "╭", "ru": "╮", "ld": "╰", "rd": "╯"}
 _H, _V = "─", "│"
@@ -109,6 +109,30 @@ def _pipeline(p: Painter, y: int, x: int, w: int, s: Snapshot) -> int:
     return cx - x
 
 
+def _summary_line(s: Snapshot) -> str:
+    """How far through the charter, and where the night went.
+
+    Both used to be panels. Neither earned one: the charter moves a few times a night,
+    and the stage split is ~80% actor in every run there has ever been. A constant does
+    not need a chart, it needs a line.
+    """
+    parts = []
+    f = s.frontier or {}
+    total = f.get("gaps_total", 0)
+    if total:
+        parts.append(f"charter {total - f.get('gaps_unchecked', total)}/{total}")
+    for status in ("working", "open", "blocked", "broken"):
+        n = f.get("all_" + status, 0)
+        if n:
+            parts.append(f"{n} {status}")
+    spent = sum(st.total for n, st in s.stages.items() if n != "commit")
+    if spent > 0:
+        parts.append("time " + " ".join(
+            f"{_ROLE_SHORT.get(n, n)} {s.stages[n].total / spent * 100:.0f}%"
+            for n in ROLE_ORDER if s.stages.get(n) and s.stages[n].count))
+    return "  ·  ".join(parts)
+
+
 # ---------------------------------------------------------------- run strip
 def draw_run(p: Painter, rect: Rect, s: Snapshot) -> None:
     t = p.theme
@@ -120,14 +144,12 @@ def draw_run(p: Painter, rect: Rect, s: Snapshot) -> None:
         return
     y, x, w = inner.y, inner.x + 1, inner.w - 2
     proc = "alive" if s.alive else "NOT RUNNING"
-    left = fmt_duration(s.stop_after_s - s.elapsed) + " left" if s.stop_after_s else "no wall-clock cap"
     it = st.get("iteration", 0)
     cap = f"/{s.max_iterations}" if s.max_iterations else ""
     used = _pipeline(p, y, x, w, s)
     line1 = [
         ("   iteration ", PAIR_DIM), (f"{it}{cap}", PAIR_TITLE),
         ("  elapsed ", PAIR_DIM), (fmt_duration(s.elapsed), PAIR_TITLE),
-        ("  ", PAIR_DIM), (left, PAIR_DIM),
         ("  pid ", PAIR_DIM), (f"{s.pid or '-'} {proc}", PAIR_GREEN if s.alive else PAIR_RED),
     ]
     cx = x + used
@@ -150,21 +172,31 @@ def draw_run(p: Painter, rect: Rect, s: Snapshot) -> None:
             else:
                 pair, mark = PAIR_INACTIVE, name
             p.text(y + 1, cx, mark, t.attr(pair, bold=name == active)); cx += len(mark)
-        tail = f"  ·  ${s.cost:.2f} api-eq" + (f"  ·  {s.switches} switches" if s.switches else "")
+        tail = (f"  ·  {s.switches} switches" if s.switches else "") + (f"  ·  ${s.cost:.2f} api-eq" if s.cost else "")
         p.text(y + 1, cx, tail, t.attr(PAIR_DIM), width=max(0, x + w - cx))
+    if inner.h >= 4:
+        p.text(y + 2, x, _summary_line(s), t.attr(PAIR_DIM), width=w)
     if inner.h >= 3:
-        if s.stop_after_s:
-            frac = min(1.0, s.elapsed / s.stop_after_s)
-            label = f"{frac * 100:3.0f}% of {fmt_duration(s.stop_after_s)}"
-            bw = max(10, w - len(label) - 2)
-            bar = hbar(s.elapsed, s.stop_after_s, bw)
-            for i, ch in enumerate(bar):
-                p.text(y + 2, x + i, ch, t.grad_attr(i / max(1, bw - 1)) if ch == "█" else t.attr(PAIR_INACTIVE))
-            p.text(y + 2, x + bw + 1, label, t.attr(PAIR_DIM))
+        # One row, three claimants, in the order a person needs them: a run asking for
+        # help, then a run that has stopped saying why, then the clock. They used to
+        # overprint each other, which left a banner with a progress bar behind its tail.
+        row = y + inner.h - 1
+        stopped = st.get("state") == "stopped"
+        reason = str(st.get("stop_reason") or "")
         if s.needs_human:
             first = s.needs_human.strip().splitlines()
             msg = next((l for l in first if l and not l.startswith("#") and not l[0].isdigit()), "see NEEDS_HUMAN.md")
-            p.text(y + 2, x, clip("!! NEEDS HUMAN: " + msg, w), t.attr(PAIR_RED, bold=True))
+            p.text(row, x, clip("!! NEEDS HUMAN: " + msg, w).ljust(w), t.attr(PAIR_RED, bold=True))
+        elif stopped:
+            p.text(row, x, clip("stopped: " + (reason or "no reason recorded"), w).ljust(w),
+                   t.attr(PAIR_YELLOW, bold=True))
+        elif s.stop_after_s:
+            label = f"{fmt_duration(s.stop_after_s - s.elapsed)} left of {fmt_duration(s.stop_after_s)}"
+            bw = max(10, w - len(label) - 2)
+            bar = hbar(s.elapsed, s.stop_after_s, bw)
+            for i, ch in enumerate(bar):
+                p.text(row, x + i, ch, t.grad_attr(i / max(1, bw - 1)) if ch == "█" else t.attr(PAIR_INACTIVE))
+            p.text(row, x + bw + 1, label, t.attr(PAIR_DIM))
 
 
 # ---------------------------------------------------------------- stages
@@ -292,26 +324,24 @@ def draw_iterations(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
     if inner.h <= 0:
         return
     y, x, w = inner.y, inner.x + 1, inner.w - 2
-    # outcome strip: one glyph per iteration, newest on the right
-    strip = its[-w:]
-    for i, it in enumerate(strip):
-        ch, pair = _outcome_glyph(it)
-        p.text(y, x + w - len(strip) + i, ch, t.attr(pair, bold=True))
     if not its:
         p.text(y, x, "no iterations yet", t.attr(PAIR_INACTIVE))
-    if inner.h < 3:
         return
-    # actor minutes per iteration as a braille chart, gradient by height
-    ch_h = inner.h - 2
-    series = [it.actor_seconds / 60 for it in its]
-    vmax = max(series or [1.0]) or 1.0
+    if inner.h < 2:
+        return
+    # actor minutes per iteration, on whatever scale shows the variation
+    ch_h = inner.h - 1
+    plot, vmin, vmax, note = chart_bounds([it.actor_seconds / 60 for it in its])
+    lo, hi = (10 ** vmin, 10 ** vmax) if note == "log" else (vmin, vmax)
     label_w = 7
-    rows = braille_chart(series, max(1, w - label_w), ch_h, 0.0, vmax)
+    rows = braille_chart(plot, max(1, w - label_w), ch_h, vmin, vmax, fill=True)
     for i, row in enumerate(rows):
-        p.text(y + 1 + i, x + label_w, row, t.grad_attr((len(rows) - i) / len(rows)))
-    p.text(y + 1, x, f"{vmax:5.1f}m", t.attr(PAIR_INACTIVE))
+        p.text(y + i, x + label_w, row, t.grad_attr((len(rows) - i) / len(rows)))
+    p.text(y, x, f"{hi:5.1f}m", t.attr(PAIR_INACTIVE))
     if ch_h > 1:
-        p.text(y + ch_h, x, "  0m", t.attr(PAIR_INACTIVE))
+        p.text(y + ch_h - 1, x, f"{lo:5.1f}m", t.attr(PAIR_INACTIVE))
+    if note and ch_h > 2:
+        p.text(y + ch_h - 2, x, f"{note:>6}", t.attr(PAIR_INACTIVE))
     last = its[-1] if its else None
     foot = (f"last #{last.n}: {fmt_duration(last.actor_seconds)} actor · {last.verdict or '…'}"
             + (f" · critic {last.critique}" if last.critique else "") + f" · ${last.cost:.2f}") if last else ""
@@ -330,34 +360,35 @@ class LoadHistory:
 
 
 def draw_load(p: Painter, rect: Rect, s: Snapshot, num: int, hist: LoadHistory) -> None:
+    """Who is doing the work, what it has cost their subscription, and what the box is doing.
+
+    The harnesses are the point of this panel and get the room; the machine is one
+    footer line, because a number nobody acts on does not deserve half the box.
+    """
     t = p.theme
-    inner = p.box(rect, "activity · harness cpu", num, PAIR_BOX_LOAD)
+    rows = harness_rows(s)
+    inner = p.box(rect, "activity · harnesses", num, PAIR_BOX_LOAD, title2=usage_window_label(rows))
     if inner.h <= 0:
         return
     y, x, w = inner.y, inner.x + 1, inner.w - 2
-    stat_w = min(26, max(18, w // 2))
-    chart_w = w - stat_w - 1
-    ch_h = inner.h
-    if chart_w > 4 and ch_h > 0:
-        vmax = max(100.0, max(hist.cpu or [0.0]))
-        rows = braille_chart(hist.cpu, chart_w, ch_h, 0.0, vmax)
-        for i, row in enumerate(rows):
-            p.text(y + i, x, row, t.grad_attr((len(rows) - i) / len(rows)))
-        p.text(y, x, f"{vmax:.0f}%", t.attr(PAIR_INACTIVE))
-    sx = x + chart_w + 1
-    cost_rate = (s.cost / (s.elapsed / 3600)) if s.elapsed > 600 else 0.0
-    lines = [
-        ("cpu", f"{s.cpu_pct:5.0f}%", PAIR_TITLE),
-        ("procs", f"{s.procs}  {s.rss_mb:,.0f} MB", PAIR_DIM),
-        ("loadavg", f"{s.loadavg[0]:.1f} {s.loadavg[1]:.1f}", PAIR_DIM),
-        ("cost/h", f"${cost_rate:.2f}", PAIR_DIM),
-    ]
-    limited = (s.status or {}).get("limited") or {}
-    for name, until in limited.items():
-        lines.append((f"limit {name}", str(until).split(" (")[0], PAIR_RED))
-    for i, (k, v, pair) in enumerate(lines[:ch_h]):
-        p.text(y + i, sx, f"{k:<12}", t.attr(PAIR_INACTIVE), width=stat_w)
-        p.text(y + i, sx + 12, v, t.attr(pair, bold=pair == PAIR_TITLE), width=max(0, stat_w - 12))
+
+    stats = f"cpu {s.cpu_pct:.0f}%  ·  {s.procs} proc {s.rss_mb:,.0f} MB  ·  load {s.loadavg[0]:.1f}"
+    if s.elapsed > 600 and s.cost:
+        stats += f"  ·  ${s.cost / (s.elapsed / 3600):.2f}/h"
+    # The harnesses come first: they may take every row if they need it, because a
+    # harness that silently vanishes is worse than no cpu trace. Whatever they leave
+    # goes to the trace, which is the one thing here that reads better the taller it is.
+    # The two reserved rows are for the trace and the stats, but never at the price of
+    # a harness: a short panel drops the trace first and the meters last.
+    budget = min(inner.h, max(len(rows), inner.h - 2)) if rows else inner.h
+    used = draw_harness_rows(p, y, x, w, budget, rows, s.now)
+    tail = inner.h - used
+    if tail >= 2:
+        spark = braille_chart(hist.cpu, w, min(4, tail - 1), 0.0, max(100.0, max(hist.cpu or [0.0])))
+        for i, line in enumerate(spark):
+            p.text(y + inner.h - 1 - len(spark) + i, x, line, t.grad_attr(0.5))
+    if tail >= 1:
+        p.text(y + inner.h - 1, x, stats, t.attr(PAIR_INACTIVE), width=w)
 
 
 # ---------------------------------------------------------------- feed
@@ -408,22 +439,29 @@ def draw_overseer(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
     if last is None:
         p.text(y, x, "no verdicts yet", t.attr(PAIR_INACTIVE))
         return
-    # a strip of the last verdicts, newest right, then the last one in words
+    # The shape of the night and its latest word share the top line, so the words the
+    # overseer actually wrote get the rest of a panel that is wide rather than tall.
     glyph = {"continue": "·", "answer": "?", "done_rejected": "d", "done_accepted": "D", "stuck": "s", "revert": "✗"}
-    strip = s.decisions[-(w - 8):]
+    v = last.get("verdict", "?")
+    tag = f"#{last.get('iteration', '?')} {v}"
+    strip_w = max(4, w - len(tag) - 12)
+    strip = s.decisions[-strip_w:]
     p.text(y, x, "history ", t.attr(PAIR_DIM))
     for i, d in enumerate(strip):
-        v = d.get("verdict", "?")
-        p.text(y, x + 8 + i, glyph.get(v, "?"), t.attr(VERDICT_PAIR.get(v, PAIR_DIM), bold=True))
-    v = last.get("verdict", "?")
-    p.text(y + 1, x, f"#{last.get('iteration', '?')} {v}", t.attr(VERDICT_PAIR.get(v, PAIR_DIM), bold=True), width=w)
+        vv = d.get("verdict", "?")
+        p.text(y, x + 8 + i, glyph.get(vv, "?"), t.attr(VERDICT_PAIR.get(vv, PAIR_DIM), bold=True))
+    p.text(y, x + w - len(tag), tag, t.attr(VERDICT_PAIR.get(v, PAIR_DIM), bold=True))
+    left = inner.h - 1
+    if left <= 0:
+        return
     reason = " ".join(str(last.get("reason", "")).split())
-    lines = wrap(reason, w, 2) if reason else []
     reply = " ".join(str(last.get("reply") or "").split())
-    if reply:
-        lines += [("→ " + l if i == 0 else "  " + l) for i, l in enumerate(wrap(reply, w - 2, max(1, inner.h - 2 - len(lines))))]
-    for i, l in enumerate(lines[: max(0, inner.h - 2)]):
-        p.text(y + 2 + i, x, l, t.attr(PAIR_PROMPT if l.startswith(("→", "  ")) else PAIR_DIM), width=w)
+    lines = wrap(reason, w, (1 if reply and left > 1 else left)) if reason else []
+    if reply and len(lines) < left:
+        lines += [("→ " + l if i == 0 else "  " + l)
+                  for i, l in enumerate(wrap(reply, w - 2, left - len(lines)))]
+    for i, l in enumerate(lines[:left]):
+        p.text(y + 1 + i, x, l, t.attr(PAIR_PROMPT if l.startswith(("→", "  ")) else PAIR_DIM), width=w)
 
 
 # ---------------------------------------------------------------- plan
@@ -456,7 +494,7 @@ def draw_time(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
         meter(p, inner.y + i, x, w, name, secs, total, f"{secs / total * 100:3.0f}% {fmt_duration(secs):>7}")
 
 
-# ---------------------------------------------------------------- harnesses (meters)
+# ---------------------------------------------------------------- harnesses
 _ROLE_SHORT = {"actor": "act", "critic": "crit", "overseer": "over", "maintainer": "maint", "planner": "plan"}
 
 
@@ -467,6 +505,7 @@ def _roles_line(r, width: int) -> str:
     dropped once the line stops fitting.
     """
     models = [m.replace("claude-", "") for m in r.models]
+    tail = [f"limited {r.limit_note}"] if r.limit_note else []
     for names, show_model in ((r.roles, True), ([_ROLE_SHORT.get(n, n) for n in r.roles], True),
                               ([_ROLE_SHORT.get(n, n) for n in r.roles], False)):
         parts = [" ".join(names) or "standby"]
@@ -474,49 +513,89 @@ def _roles_line(r, width: int) -> str:
             parts.append(f"backs {len(r.backs)}")
         if models and show_model:
             parts.append(" ".join(models))
-        line = " · ".join(parts)
+        line = " · ".join(parts + tail)
         if len(line) <= width:
             return line
     return line
 
 
-def draw_harnesses(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
-    """Who is doing which job, on what model, and what it has cost the subscription."""
-    rows = harness_roster(s.roles or {n: [(h, None) for h in c] for n, c in (s.chains or {}).items()},
+def harness_rows(s: Snapshot) -> list:
+    """One row per configured harness, joined to what it has used."""
+    return harness_roster(s.roles or {n: [(h, None) for h in c] for n, c in (s.chains or {}).items()},
                           s.usage, (s.status or {}).get("limited") or {})
-    # Name the window in the title: a bare percentage does not say what it is a share of.
+
+
+_SHORT_WINDOW_LABEL = {"five_hour": "5h", "hourly": "1h", "daily": "24h"}
+
+
+def _block(r, level: int) -> list[str]:
+    """The lines one harness gets at a level of detail, richest first.
+
+    Every harness keeps its meter at every level. What a short panel gives up is the
+    short window, then the roles, in that order: a harness that silently vanishes is
+    worse than a harness whose detail is missing.
+    """
+    kinds = ["meter"]
+    if level >= 3 and r.short_utilization is not None:
+        kinds.append("short")
+    if level >= 2:
+        kinds.append("roles")
+    return kinds
+
+
+def draw_harness_rows(p: Painter, y: int, x: int, w: int, h: int, rows: list, now: float = 0.0) -> int:
+    """Meters and detail lines, as detailed as the height allows. Returns the rows used.
+
+    Detail is handed out greedily rather than at one level for everyone: with room for
+    three lines and two harnesses, the first harness keeping its roles beats both of
+    them losing it and a row going blank.
+    """
+    t = p.theme
+    if h <= 0:
+        return 0
+    if not rows:
+        p.text(y, x, "no roles configured", t.attr(PAIR_INACTIVE), width=w)
+        return 1
+    plan = [_block(r, 1) for r in rows]
+    used = len(rows)
+    for level in (2, 3):   # roles first, then the short window: it is dropped first
+        for i, r in enumerate(rows):
+            want = _block(r, level)
+            if len(want) > len(plan[i]) and used + len(want) - len(plan[i]) <= h:
+                used, plan[i] = used + len(want) - len(plan[i]), want
+    top, bottom = y, y + h
+    for r, kinds in zip(rows, plan):
+        for kind in kinds:
+            if y >= bottom:
+                return y - top
+            if kind == "meter":
+                util = r.utilization
+                delta = f" {r.delta:+.0f}" if r.delta is not None and abs(r.delta) >= 0.5 else ""
+                text = ("  —" if r.idle else "  ·") if util is None else f"{util * 100:3.0f}%{delta}"
+                pair = PAIR_RED if (r.limited or (util is not None and util >= 0.9)) else None
+                label = r.name + (" !" if r.limited else "")
+                meter(p, y, x, w, label, (util or 0.0), 1.0, text, pair=pair,
+                      label_w=min(10, max(7, len(label) + 1)))
+            elif kind == "short":
+                # The long window says whether the week survives; this one says whether
+                # the next hour does, which is the question at three in the morning.
+                util = r.short_utilization or 0.0
+                left = (f"  resets {fmt_duration(r.short_resets_at - now)}"
+                        if r.short_resets_at and r.short_resets_at > now else "")
+                meter(p, y, x + 2, w - 2, _SHORT_WINDOW_LABEL.get(r.short_window, r.short_window),
+                      util, 1.0, f"{util * 100:3.0f}%{left}",
+                      pair=PAIR_RED if util >= 0.9 else None, label_w=5)
+            else:
+                p.text(y, x + 2, _roles_line(r, w - 2), t.attr(PAIR_INACTIVE), width=w - 2)
+            y += 1
+    return y - top
+
+
+def usage_window_label(rows: list) -> str:
+    """Name the window in the title: a bare percentage does not say what it is a share of."""
     windows = {r.window for r in rows if r.window}
     short = {"seven_day": "7d", "five_hour": "5h", "daily": "24h"}
-    title2 = short.get(next(iter(windows)), next(iter(windows))) if len(windows) == 1 else ""
-    inner = p.box(rect, "harnesses", num, PAIR_BOX_ITER, title2=title2)
-    if inner.h <= 0:
-        return
-    t = p.theme
-    x, w = inner.x + 1, inner.w - 2
-    if not rows:
-        p.text(inner.y, x, "no roles configured", t.attr(PAIR_INACTIVE), width=w)
-        return
-    # Two lines each where there is room: the meter, then the jobs beneath it. Every
-    # harness keeps its meter, so detail is dropped one row at a time, not all at once.
-    bottom = inner.y + inner.h
-    y = inner.y
-    for i, r in enumerate(rows):
-        if y >= bottom:
-            break
-        detailed = y + 1 + (len(rows) - i - 1) < bottom
-        util = r.utilization
-        delta = f" {r.delta:+.0f}" if r.delta is not None and abs(r.delta) >= 0.5 else ""
-        if util is None:
-            text = "  —" if r.idle else "  ·"
-        else:
-            text = f"{util * 100:3.0f}%{delta}"
-        pair = PAIR_RED if (r.limited or (util is not None and util >= 0.9)) else None
-        label = r.name + (" !" if r.limited else "")
-        meter(p, y, x, w, label, (util or 0.0), 1.0, text, pair=pair, label_w=min(10, max(7, len(label) + 1)))
-        y += 1
-        if detailed and y < inner.y + inner.h:
-            p.text(y, x + 2, _roles_line(r, w - 2), t.attr(PAIR_INACTIVE), width=w - 2)
-            y += 1
+    return short.get(next(iter(windows)), next(iter(windows))) if len(windows) == 1 else ""
 
 
 # ---------------------------------------------------------------- frontier (meters)
@@ -532,7 +611,10 @@ def draw_frontier(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
     rows = []
     total_gaps = f.get("gaps_total", 0)
     if total_gaps:
-        closed = total_gaps - f.get("gaps_open", f.get("gaps_unchecked", 0))
+        # Both counts have to come from the charter. `gaps_open` is a tally of STATE.md
+        # frontier lines, which is a different list of a different length, and mixing
+        # the two reported a closed count that was never right.
+        closed = total_gaps - f.get("gaps_unchecked", total_gaps)
         rows.append(("gaps done", closed, total_gaps, f"{closed}/{total_gaps}", PAIR_GREEN))
     nodes = f.get("nodes") or 1
     for status, pair in (("working", PAIR_CYAN), ("open", PAIR_YELLOW), ("blocked", PAIR_RED), ("broken", PAIR_RED)):
@@ -555,7 +637,7 @@ def draw_cost(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
         p.text(inner.y, x, "no iterations yet", t.attr(PAIR_INACTIVE))
         return
     vmax = max(per) or 1.0
-    rows = braille_chart(per, max(1, w - 7), inner.h, 0.0, vmax)
+    rows = braille_chart(per, max(1, w - 7), inner.h, 0.0, vmax, fill=True)
     for i, row in enumerate(rows):
         p.text(inner.y + i, x + 7, row, t.attr(PAIR_PURPLE))
     p.text(inner.y, x, f"${vmax:5.2f}", t.attr(PAIR_INACTIVE))
