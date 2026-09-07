@@ -1,7 +1,9 @@
 import json
 
+import pytest
+
 from ouroboros.tui.layout import Rect, col, compute_layout, leaf, row
-from ouroboros.tui.state import derive_iterations, parse_events, load_snapshot
+from ouroboros.tui.state import derive_iterations, harness_roster, parse_events, load_snapshot
 from ouroboros.tui.widgets import braille_chart, fmt_duration, hbar, wrap
 
 
@@ -102,3 +104,79 @@ def test_layout_and_widgets():
     assert len(rows) == 1 and len(rows[0]) == 2 and rows[0] != "  "
     assert hbar(5, 10, 4) == "██░░" and fmt_duration(3725) == "1h 02m" and fmt_duration(None) == "—"
     assert wrap("one two three four five", 9, 2) == ["one two", "three f …"] or wrap("one two three four five", 9, 2)[0] == "one two"
+
+
+# ------------------------------------------------------------------ harnesses
+def _roles():
+    """A night like cadex nt2: claude everywhere but the critic, codex behind it all."""
+    return {
+        "actor": [("claude", "claude-fable-5-1"), ("codex", "gpt-6-astra")],
+        "critic": [("codex", "gpt-6-astra")],
+        "overseer": [("claude", "claude-opus-5"), ("codex", "gpt-6-astra")],
+        "maintainer": [("claude", "claude-fable-5-1"), ("codex", "gpt-6-astra")],
+        "planner": [("claude", "claude-fable-5-1"), ("codex", "gpt-6-astra")],
+    }
+
+
+def _usage():
+    return {
+        "claude": {"windows": {"seven_day": {"utilization": 0.33, "minutes": 10080},
+                               "five_hour": {"utilization": 1.0, "minutes": 300},
+                               "seven_day_overage_included": {"utilization": 0.65, "minutes": 10080}},
+                   "first_windows": {"seven_day": 0.13}},
+        "codex": {"windows": {"seven_day": {"utilization": 0.98, "minutes": 10080}},
+                  "first_windows": {"seven_day": 0.24}},
+    }
+
+
+def test_roster_turns_roles_into_one_row_per_harness():
+    claude, codex = harness_roster(_roles(), _usage())
+    assert claude.name == "claude"
+    assert claude.roles == ["actor", "overseer", "maintainer", "planner"]
+    assert claude.backs == []
+    assert claude.models == ["claude-fable-5-1", "claude-opus-5"]
+    assert codex.roles == ["critic"]
+    # Codex stands behind every other role without being first choice for them.
+    assert codex.backs == ["actor", "overseer", "maintainer", "planner"]
+
+
+def test_roster_shows_the_long_window_and_the_rise_this_run_caused():
+    claude, codex = harness_roster(_roles(), _usage())
+    # The weekly window, not the five-hour one that happens to be full.
+    assert claude.window == "seven_day"
+    assert claude.utilization == 0.33
+    assert claude.delta == pytest.approx(20.0)
+    assert codex.delta == pytest.approx(74.0)
+
+
+def test_roster_ignores_the_overage_meter():
+    """Overage measures billing past the plan, so it must not be mistaken for the plan."""
+    rows = harness_roster({"actor": [("claude", "m")]}, {
+        "claude": {"windows": {"seven_day": {"utilization": 0.3, "minutes": 10080},
+                               "seven_day_overage_included": {"utilization": 0.9, "minutes": 10080}}}})
+    assert rows[0].window == "seven_day"
+    assert rows[0].utilization == 0.3
+
+
+def test_roster_marks_a_limited_harness():
+    claude, _ = harness_roster(_roles(), _usage(), {"claude": "223m (session limit)"})
+    assert claude.limited
+
+
+def test_a_harness_with_no_reading_yet_has_no_delta():
+    rows = harness_roster({"actor": [("claude", "m")]}, {})
+    assert rows[0].utilization is None and rows[0].delta is None
+
+
+def test_a_standby_harness_sorts_last_and_reads_as_idle():
+    rows = harness_roster({"actor": [("claude", "m"), ("pi", "p")]}, {
+        "claude": {"windows": {"seven_day": {"utilization": 0.4, "minutes": 10080}}}})
+    assert [r.name for r in rows] == ["claude", "pi"]
+    assert rows[1].idle and not rows[0].idle
+
+
+def test_roster_survives_a_bare_chain_with_no_models():
+    """`chains` carries harness names only; the panel falls back to it before a run starts."""
+    rows = harness_roster({"actor": ["claude"], "critic": ["codex"]}, {})
+    assert [(r.name, r.roles, r.models) for r in rows] == [
+        ("claude", ["actor"], []), ("codex", ["critic"], [])]

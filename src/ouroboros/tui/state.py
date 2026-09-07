@@ -189,6 +189,76 @@ class Iteration:
     error: str | None = None
 
 
+ROLE_ORDER = ("actor", "critic", "overseer", "maintainer", "planner")
+
+
+@dataclass
+class HarnessRow:
+    """One harness: the jobs it holds, what it drives them with, what it has used."""
+
+    name: str
+    roles: list[str] = field(default_factory=list)        # roles it is first choice for
+    backs: list[str] = field(default_factory=list)        # roles it only stands in for
+    models: list[str] = field(default_factory=list)       # distinct, in role order
+    window: str = ""                                      # the window the numbers below describe
+    utilization: float | None = None                      # 0..1 now
+    delta: float | None = None                            # points added since the run began
+    limited: bool = False
+
+    @property
+    def idle(self) -> bool:
+        """Configured only as a fallback and never called on."""
+        return not self.roles and self.utilization is None
+
+
+def _longest_window(snap: dict) -> tuple[str, dict] | None:
+    """The window worth showing: the longest real one, ignoring overage meters."""
+    best = None
+    for name, w in (snap.get("windows") or {}).items():
+        if name.endswith("overage_included"):
+            continue
+        if best is None or (w.get("minutes") or 0) > (best[1].get("minutes") or 0):
+            best = (name, w)
+    return best
+
+
+def harness_roster(roles: dict, usage: dict, limited: dict | None = None) -> list[HarnessRow]:
+    """Invert the role config into one row per harness, joined to what it has used.
+
+    Roles map harness -> job; the panel wants job -> harness, so that a night spent
+    on the fallback reads as one line rather than five.
+    """
+    limited = limited or {}
+    rows: dict[str, HarnessRow] = {}
+
+    def row(name: str) -> HarnessRow:
+        return rows.setdefault(name, HarnessRow(name=name, limited=name in limited))
+
+    for role in ROLE_ORDER:
+        chain = roles.get(role) or []
+        for i, entry in enumerate(chain):
+            harness, model = (entry if isinstance(entry, (list, tuple)) else (entry, None))[:2]
+            if not harness:
+                continue
+            r = row(harness)
+            (r.roles if i == 0 else r.backs).append(role)
+            if i == 0 and model and model not in r.models:
+                r.models.append(model)
+
+    for harness, snap in (usage or {}).items():
+        r = row(harness)
+        best = _longest_window(snap or {})
+        if not best:
+            continue
+        r.window, w = best
+        r.utilization = w.get("utilization")
+        first = ((snap or {}).get("first_windows") or {}).get(r.window)
+        if first is not None and r.utilization is not None:
+            r.delta = (r.utilization - first) * 100
+
+    # Working harnesses first, then ones that only ever stood by.
+    return sorted(rows.values(), key=lambda r: (r.idle, not r.roles, r.name))
+
 @dataclass
 class Snapshot:
     now: float
@@ -214,6 +284,7 @@ class Snapshot:
     max_iterations: int | None
     chains: dict[str, list[str]]
     mode: str
+    roles: dict = field(default_factory=dict)   # role -> [(harness, model), ...]
     switches: int = 0
     reconciles: int = 0
     plans: int = 0
@@ -453,7 +524,8 @@ def _newest_transcript(run_dir: Path) -> Path | None:
 
 
 def load_snapshot(run_dir: Path, *, repo: Path, plan_md: str = "PLAN.md", stop_after_s: float | None = None,
-                  max_iterations: int | None = None, chains: dict[str, list[str]] | None = None, mode: str = "single") -> Snapshot:
+                  max_iterations: int | None = None, chains: dict[str, list[str]] | None = None, mode: str = "single",
+                  roles: dict | None = None) -> Snapshot:
     now = time.time()
     status = None
     sp = run_dir / "status.json"
@@ -496,6 +568,6 @@ def load_snapshot(run_dir: Path, *, repo: Path, plan_md: str = "PLAN.md", stop_a
         stage_since=stage_since, decisions=decisions, feed=feed, feed_role=feed_role, feed_age=feed_age,
         log_tail=log_tail, plan_short=_plan_short(repo, plan_md), needs_human=needs_human, loadavg=loadavg,
         procs=procs, cpu_pct=cpu, rss_mb=rss, stop_after_s=stop_after_s, max_iterations=max_iterations,
-        chains=chains or {}, mode=mode, switches=switches, reconciles=reconciles, plans=plans, cost_series=cost_series,
+        chains=chains or {}, roles=roles or {}, mode=mode, switches=switches, reconciles=reconciles, plans=plans, cost_series=cost_series,
         frontier=frontier_counts(repo),
     )

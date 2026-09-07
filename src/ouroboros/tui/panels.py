@@ -7,7 +7,7 @@ import time
 from typing import Callable, Dict
 
 from .layout import Rect
-from .state import STAGES, Snapshot
+from .state import STAGES, Snapshot, harness_roster
 from .theme import (
     PAIR_BOX_FEED, PAIR_BOX_ITER, PAIR_BOX_LOAD, PAIR_BOX_RUN, PAIR_BOX_STAGES, PAIR_CYAN, PAIR_DIM, PAIR_DIV,
     PAIR_GREEN, PAIR_HI, PAIR_INACTIVE, PAIR_MAGENTA, PAIR_PROMPT, PAIR_PURPLE, PAIR_RED, PAIR_TITLE, PAIR_YELLOW, Theme,
@@ -352,14 +352,6 @@ def draw_load(p: Painter, rect: Rect, s: Snapshot, num: int, hist: LoadHistory) 
         ("loadavg", f"{s.loadavg[0]:.1f} {s.loadavg[1]:.1f}", PAIR_DIM),
         ("cost/h", f"${cost_rate:.2f}", PAIR_DIM),
     ]
-    for harness, snap in sorted(s.usage.items()):
-        windows = (snap.get("windows") or {}).items()
-        for name, w in sorted(windows, key=lambda kv: -(kv[1].get("minutes") or 0)):
-            if name.endswith("overage_included"):
-                continue  # a different meter: what you would be billed past the plan
-            pct = float(w.get("utilization") or 0) * 100
-            short = {"seven_day": "7d", "five_hour": "5h", "daily": "24h"}.get(name, name)
-            lines.append((f"{harness} {short}", f"{pct:3.0f}%", PAIR_RED if pct >= 90 else PAIR_DIM))
     limited = (s.status or {}).get("limited") or {}
     for name, until in limited.items():
         lines.append((f"limit {name}", str(until).split(" (")[0], PAIR_RED))
@@ -464,23 +456,67 @@ def draw_time(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
         meter(p, inner.y + i, x, w, name, secs, total, f"{secs / total * 100:3.0f}% {fmt_duration(secs):>7}")
 
 
-# ---------------------------------------------------------------- verdicts (meters)
-def draw_verdicts(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
-    inner = p.box(rect, "verdicts", num, PAIR_BOX_ITER)
+# ---------------------------------------------------------------- harnesses (meters)
+_ROLE_SHORT = {"actor": "act", "critic": "crit", "overseer": "over", "maintainer": "maint", "planner": "plan"}
+
+
+def _roles_line(r, width: int) -> str:
+    """The jobs a harness holds and what it drives them with, shortened only if it must be.
+
+    A half-written model name says less than none, so the model is the first thing
+    dropped once the line stops fitting.
+    """
+    models = [m.replace("claude-", "") for m in r.models]
+    for names, show_model in ((r.roles, True), ([_ROLE_SHORT.get(n, n) for n in r.roles], True),
+                              ([_ROLE_SHORT.get(n, n) for n in r.roles], False)):
+        parts = [" ".join(names) or "standby"]
+        if r.backs:
+            parts.append(f"backs {len(r.backs)}")
+        if models and show_model:
+            parts.append(" ".join(models))
+        line = " · ".join(parts)
+        if len(line) <= width:
+            return line
+    return line
+
+
+def draw_harnesses(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
+    """Who is doing which job, on what model, and what it has cost the subscription."""
+    rows = harness_roster(s.roles or {n: [(h, None) for h in c] for n, c in (s.chains or {}).items()},
+                          s.usage, (s.status or {}).get("limited") or {})
+    # Name the window in the title: a bare percentage does not say what it is a share of.
+    windows = {r.window for r in rows if r.window}
+    short = {"seven_day": "7d", "five_hour": "5h", "daily": "24h"}
+    title2 = short.get(next(iter(windows)), next(iter(windows))) if len(windows) == 1 else ""
+    inner = p.box(rect, "harnesses", num, PAIR_BOX_ITER, title2=title2)
     if inner.h <= 0:
         return
+    t = p.theme
     x, w = inner.x + 1, inner.w - 2
-    counts: Dict[str, int] = {}
-    for d in s.decisions:
-        counts[d.get("verdict", "?")] = counts.get(d.get("verdict", "?"), 0) + 1
-    if not counts:
-        p.text(inner.y, x, "no verdicts yet", p.theme.attr(PAIR_INACTIVE))
+    if not rows:
+        p.text(inner.y, x, "no roles configured", t.attr(PAIR_INACTIVE), width=w)
         return
-    total = sum(counts.values()) or 1
-    order = ["continue", "answer", "done_rejected", "done_accepted", "stuck", "revert"]
-    rows = [(v, counts.get(v, 0)) for v in order if counts.get(v)] or []
-    for i, (v, n) in enumerate(rows[: inner.h]):
-        meter(p, inner.y + i, x, w, v, n, total, f"{n:>3}", pair=VERDICT_PAIR.get(v, PAIR_DIM))
+    # Two lines each where there is room: the meter, then the jobs beneath it. Every
+    # harness keeps its meter, so detail is dropped one row at a time, not all at once.
+    bottom = inner.y + inner.h
+    y = inner.y
+    for i, r in enumerate(rows):
+        if y >= bottom:
+            break
+        detailed = y + 1 + (len(rows) - i - 1) < bottom
+        util = r.utilization
+        delta = f" {r.delta:+.0f}" if r.delta is not None and abs(r.delta) >= 0.5 else ""
+        if util is None:
+            text = "  —" if r.idle else "  ·"
+        else:
+            text = f"{util * 100:3.0f}%{delta}"
+        pair = PAIR_RED if (r.limited or (util is not None and util >= 0.9)) else None
+        label = r.name + (" !" if r.limited else "")
+        meter(p, y, x, w, label, (util or 0.0), 1.0, text, pair=pair, label_w=min(10, max(7, len(label) + 1)))
+        y += 1
+        if detailed and y < inner.y + inner.h:
+            p.text(y, x + 2, _roles_line(r, w - 2), t.attr(PAIR_INACTIVE), width=w - 2)
+            y += 1
 
 
 # ---------------------------------------------------------------- frontier (meters)

@@ -11,7 +11,7 @@ from typing import Optional, Set
 from .layout import MIN_COLS, MIN_LINES, Rect, col, compute_layout, leaf, row
 from .panels import (
     LoadHistory, Painter, draw_cost, draw_feed, draw_frontier, draw_iterations, draw_load, draw_log, draw_loop, draw_overseer,
-    draw_plan, draw_run, draw_stages, draw_time, draw_verdicts,
+    draw_harnesses, draw_plan, draw_run, draw_stages, draw_time,
 )
 from .state import Snapshot, load_snapshot
 from .theme import PAIR_DIM, PAIR_TITLE, PAIR_YELLOW, Theme
@@ -21,15 +21,15 @@ RUN_STRIP_H = 5
 
 # hotkey number → panel id; the superscript on each box names it. The first three are
 # on by default: what is it saying, where is the loop, what did the overseer decide.
-PANELS = ["iterations", "activity", "time", "verdicts", "frontier", "messages", "overseer", "cost", "plan"]
-DEFAULT_ON = {"iterations", "activity", "time", "verdicts", "frontier", "messages", "overseer"}
+PANELS = ["iterations", "activity", "time", "harnesses", "frontier", "messages", "overseer", "cost", "plan"]
+DEFAULT_ON = {"iterations", "activity", "time", "harnesses", "frontier", "messages", "overseer"}
 VIEW = col(
     row(leaf("iterations", 3), leaf("activity", 2), leaf("cost", 2), weight=5),
-    row(leaf("time", 1), leaf("verdicts", 1), leaf("frontier", 1), weight=3),
+    row(leaf("time", 1), leaf("harnesses", 1), leaf("frontier", 1), weight=3),
     row(leaf("messages", 3), col(leaf("overseer", 1), leaf("plan", 1), weight=2), weight=6),
 )
 DRAW = {
-    "iterations": draw_iterations, "activity": draw_load, "time": draw_time, "verdicts": draw_verdicts,
+    "iterations": draw_iterations, "activity": draw_load, "time": draw_time, "harnesses": draw_harnesses,
     "frontier": draw_frontier, "overseer": draw_overseer, "cost": draw_cost, "plan": draw_plan,
     "loop": draw_loop, "stages": draw_stages, "log": draw_log,
 }

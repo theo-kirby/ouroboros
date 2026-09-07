@@ -358,6 +358,7 @@ def cmd_status(args: argparse.Namespace) -> int:
             rec.run_dir, repo=repo, plan_md=cfg.plan.md, stop_after_s=cfg.stop.after_seconds,
             max_iterations=cfg.stop.max_iterations, mode=cfg.mode,
             chains={name: [h for h, _ in cfg.role(name).chain] for name in ("actor", "overseer", "maintainer", "planner", "critic")},
+            roles={name: cfg.role(name).chain for name in ("actor", "critic", "overseer", "maintainer", "planner")},
         )
     while True:
         st = rec.read_status()

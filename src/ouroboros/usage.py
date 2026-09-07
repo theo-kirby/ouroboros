@@ -231,4 +231,11 @@ class UsageLedger:
         return out
 
     def to_dict(self) -> dict:
-        return {h: s.to_dict() for h, s in sorted(self.latest.items())}
+        out = {}
+        for harness, snap in sorted(self.latest.items()):
+            d = snap.to_dict()
+            first = self.first.get(harness)
+            if first is not None:
+                d["first_windows"] = {n: round(w.utilization, 4) for n, w in first.windows.items()}
+            out[harness] = d
+        return out
