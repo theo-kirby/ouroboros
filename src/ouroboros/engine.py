@@ -55,6 +55,11 @@ class IterationOutcome:
     critique: object | None = None
 
 
+def _harness_of(role) -> str | None:
+    """The harness a role just used. Roles hold a pool; a pool knows which one is active."""
+    return getattr(getattr(role, "harness", None), "name", None)
+
+
 @dataclass
 class Engine:
     config: Config
@@ -174,7 +179,8 @@ class Engine:
             verdict = RulesOverseer().judge(signals)
             verdict.reason = f"rules fallback (overseer raised): {verdict.reason}"
         overseer_cost = float(getattr(self.overseer, "last_cost", 0.0) or 0.0)
-        self.budget.add(cost=overseer_cost, usage=getattr(self.overseer, "last_usage", None))
+        self.budget.add(cost=overseer_cost, usage=getattr(self.overseer, "last_usage", None),
+                        harness=_harness_of(self.overseer))
         self.recorder.decision(iteration=n, verdict=verdict.verdict, reason=verdict.reason, reply=verdict.reply, overseer=verdict.source, cost=overseer_cost)
         self.recorder.step(iteration=n, step="oversee", verdict=verdict.verdict, source=verdict.source, reason=verdict.reason)
 
@@ -226,7 +232,7 @@ class Engine:
             elif not self.memory.reconcile_prompt() and self.config.plan.every and self.since_plan >= self.config.plan.every:
                 self._maybe_plan(n, f"every {self.config.plan.every} iterations")
 
-        self.budget.add(cost=result.cost_usd, iteration=True,
+        self.budget.add(cost=result.cost_usd, iteration=True, harness=result.extra.get("harness"),
                         done_accepted=(verdict.verdict == "done_accepted") if verdict.verdict.startswith("done") else None,
                         stuck=(verdict.verdict == "stuck"))
         self._status("idle", iteration=n, last_verdict=verdict.verdict)
@@ -274,7 +280,7 @@ class Engine:
         except Exception as exc:
             result = Result(exit_code=-1, error=f"harness raised {exc!r}")
         sha = self.git.commit(f"ouroboros #{n}: reconcile", allow_empty=False)
-        self.budget.add(cost=result.cost_usd, usage=result.usage)
+        self.budget.add(cost=result.cost_usd, usage=result.usage, harness=result.extra.get("harness"))
         self.recorder.step(iteration=n, step="reconcile", exit=result.exit_code, timed_out=result.timed_out,
                            error=(result.error or None) and result.error[:200], sha=sha[:10], cost=result.cost_usd)
         if result.ok:
@@ -335,7 +341,7 @@ class Engine:
         except Exception as exc:
             self.recorder.log(f"verify_bet raised {exc!r}")
         sha = self.git.commit(f"ouroboros #{n}: plan — {(bet or 'no bet')[:60]}", allow_empty=False)
-        self.budget.add(cost=result.cost_usd, usage=result.usage)
+        self.budget.add(cost=result.cost_usd, usage=result.usage, harness=result.extra.get("harness"))
         self.recorder.step(iteration=n, step="plan", why=why, bet=bet, exit=result.exit_code, timed_out=result.timed_out,
                            error=(result.error or None) and result.error[:200], sha=sha[:10], cost=result.cost_usd)
         self.since_plan = 0
@@ -413,7 +419,8 @@ class Engine:
             self.recorder.log(f"critic raised {exc!r}; accepting")
             return None
         cost = float(getattr(self.critic, "last_cost", 0.0) or 0.0)
-        self.budget.add(cost=cost, usage=getattr(self.critic, "last_usage", None))
+        self.budget.add(cost=cost, usage=getattr(self.critic, "last_usage", None),
+                        harness=_harness_of(self.critic))
         self.recorder.step(iteration=n, step="critique", verdict=critique.verdict, source=critique.source,
                            reasons="; ".join(critique.reasons)[:300], must_fix=critique.must_fix[:300] or None, cost=cost)
         return critique
@@ -439,6 +446,11 @@ class Engine:
         if self.budget.usage:
             fields["usage"] = self.budget.usage.to_dict()
             fields["usage_lines"] = self.budget.usage.lines()
+        # What the run has spent, in the unit each harness charges: windows for a
+        # subscription, money only where money is really billed.
+        fields["usage_compact"] = self.budget.usage.compact(self.budget.billed)
+        if self.budget.money:
+            fields["money"] = {h: round(c, 4) for h, c in self.budget.money.items()}
         board = getattr(self.harness, "board", None)
         if board is not None and board.snapshot():
             fields["limited"] = board.snapshot()

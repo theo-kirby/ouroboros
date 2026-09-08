@@ -10,14 +10,18 @@ from typing import Optional, Set
 
 from .layout import MIN_COLS, MIN_LINES, Rect, col, compute_layout, leaf, row
 from .panels import (
-    LoadHistory, Painter, draw_cost, draw_feed, draw_frontier, draw_iterations, draw_load, draw_log, draw_loop, draw_overseer,
+    LoadHistory, Painter, draw_feed, draw_frontier, draw_iterations, draw_load, draw_log, draw_loop, draw_overseer,
     draw_plan, draw_run, draw_stages, draw_time,
 )
 from .state import Snapshot, load_snapshot
 from .theme import PAIR_DIM, PAIR_TITLE, PAIR_YELLOW, Theme
 
 RENDER_TICK = 0.25
-RUN_STRIP_H = 6
+# The run strip is the one panel a person reads at a glance and the one that was
+# cramped. Six rows packed four lines against each other and hung the usage on the
+# end of the harness line. Eight gives each its own row -- iteration, harness chain,
+# usage, charter -- with a blank line before the clock.
+RUN_STRIP_H = 8
 
 # hotkey number → panel id; the superscript on each box names it. The four on by
 # default answer the four questions a night raises, in the order they get asked:
@@ -26,19 +30,20 @@ RUN_STRIP_H = 6
 # The panels are sized by how often what they hold changes. `messages` changes every
 # few seconds and gets the most room; the charter and the stage split change a few
 # times a night and are now two lines in the run strip rather than two panels.
-PANELS = ["iterations", "activity", "messages", "overseer", "time", "frontier", "cost", "plan", "log"]
+PANELS = ["iterations", "activity", "messages", "overseer", "time", "frontier", "plan", "log"]
 DEFAULT_ON = {"iterations", "activity", "messages", "overseer"}
-# `messages` is placed last on purpose: the weighted split gives the remainder to the
-# final child, and the live feed is the one panel that is always worth another row.
 VIEW = col(
-    row(leaf("iterations", 3), leaf("activity", 3), leaf("cost", 2), weight=10),
+    row(leaf("iterations", 1), leaf("activity", 1), weight=10),
     row(leaf("time", 1), leaf("frontier", 1), weight=6),
     leaf("overseer", weight=4, min_h=4),   # 2 borders + the strip + one line of reason
-    row(leaf("messages", 3), leaf("plan", 1), leaf("log", 2), weight=16),
+    # The feed used to be last, which under the old split handed it every leftover row
+    # and ran it the height of a screen. Ten or so lines is all anyone reads of a live
+    # transcript; the rows are worth more above it.
+    row(leaf("messages", 3), leaf("plan", 1), leaf("log", 2), weight=8),
 )
 DRAW = {
     "iterations": draw_iterations, "activity": draw_load, "time": draw_time,
-    "frontier": draw_frontier, "overseer": draw_overseer, "cost": draw_cost, "plan": draw_plan,
+    "frontier": draw_frontier, "overseer": draw_overseer, "plan": draw_plan,
     "loop": draw_loop, "stages": draw_stages, "log": draw_log,
 }
 
@@ -173,12 +178,13 @@ class App:
             "",
             "  q / Esc    quit (the run keeps going)",
             "  1 - 9      toggle a panel: " + " ".join(f"{i + 1} {n}" for i, n in enumerate(PANELS)),
-            "             (5 - 9 are off by default)",
+            "             (5 - 8 are off by default)",
             "  o          show tool output lines in messages",
             "  + / -      faster / slower refresh",
             "  h / ?      this help",
             "",
-            "  overseer history: · continue  ? answer  ✗ revert  s stuck  d/D done rejected/accepted",
+            "  overseer history: ● ran clean (continue, answer, done accepted)",
+            "                    ● blocked (stuck, revert, done rejected)",
             "",
             "press any key to close",
         ]

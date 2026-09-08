@@ -371,9 +371,11 @@ def cmd_status(args: argparse.Namespace) -> int:
             pid, alive = _pid_alive(rec.run_dir)
             proc = f"pid {pid} alive" if alive else "process NOT running"
             print(f"run {st['run']}  state={st['state']}  iteration={st['iteration']}  branch={st['branch']}  memory={st.get('memory', '?')}  [{proc}]")
-            print(f"harness={st['harness']}  api-equivalent cost=${st.get('cost_usd', 0):.2f}  elapsed={st.get('elapsed_s', 0) // 60}m  updated {age}s ago")
+            print(f"harness={st['harness']}  elapsed={st.get('elapsed_s', 0) // 60}m  updated {age}s ago")
+            if st.get("usage_compact"):
+                print(f"usage: {st['usage_compact']}")
             for u in (st.get("usage_lines") or []):
-                print(f"  usage: {u}")
+                print(f"  {u}")
             if st.get("limited"):
                 print("limited: " + "  ".join(f"{k} for {v}" for k, v in st["limited"].items()))
             for k in ("last_verdict", "last_ok_tag", "why", "seconds", "stop_reason"):
@@ -410,11 +412,11 @@ def _cost_by_role(steps: list[dict], decisions: list[dict]) -> tuple[dict[str, f
     return by_role, uncosted
 
 
-def _cost_split(by_role: dict[str, float]) -> str:
-    if not by_role:
-        return "no harness reported a cost"
-    parts = ", ".join(f"{r} ${c:.2f}" for r, c in sorted(by_role.items(), key=lambda kv: -kv[1]))
-    return parts
+def _billed_split(by_role: dict[str, float], money: dict) -> str:
+    """Roles that really cost money, largest first. Empty when nothing was billed."""
+    if not by_role or not money:
+        return ""
+    return ", ".join(f"{r} ${c:.2f}" for r, c in sorted(by_role.items(), key=lambda kv: -kv[1]))
 
 
 def _unverified_reverts(repo: Path, branch: str, reverts: list[dict]) -> list[dict]:
@@ -464,14 +466,18 @@ def cmd_report(args: argparse.Namespace) -> int:
     usage_lines = [str(u) for u in (st.get("usage_lines") or [])]
     if usage_lines:
         lines += [f"- usage: {usage_lines[0]}"] + [f"         {u}" for u in usage_lines[1:]]
-    lines += [f"- api-equivalent cost: ~${cost:.2f} ({_cost_split(by_role)})",
-              f"- branch: {cfg.branch}", ""]
-    if uncosted and usage_lines:
-        lines += [f"> {uncosted} role call(s) ran on a subscription, which bills a flat fee rather than"
-                  " per call. They cost no dollars and are metered by window above.", ""]
-    elif uncosted:
-        lines += [f"> Cost covers only the roles whose harness reports it. {uncosted} completed role call(s)"
-                  " reported nothing, so the real spend is higher than the figure above.", ""]
+    # What a night costs is the slice of a rationing window it burns. Dollars appear
+    # only for a harness billed per call; a subscription's `total_cost_usd` is priced
+    # from token counts at API list prices and is not money anyone pays.
+    money = st.get("money") or {}
+    if money:
+        split = _billed_split(by_role, money)
+        lines += [f"- billed: " + ", ".join(f"{h} ${float(c):.2f}" for h, c in sorted(money.items()))
+                  + (f" ({split})" if split else "")]
+    lines += [f"- branch: {cfg.branch}", ""]
+    if not usage_lines:
+        lines += ["> No harness reported a usage window, so this run has no meter."
+                  " Cost is not one: a subscription bills a flat fee, not per call.", ""]
     if failed_reverts:
         lines += ["## Reverts that did not take (rejected work is still on the branch)", ""]
         lines += [f"- #{r.get('iteration')}: `{r.get('sha')}` never reached `{r.get('to')}`"

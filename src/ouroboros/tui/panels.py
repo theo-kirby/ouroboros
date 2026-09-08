@@ -22,6 +22,11 @@ VERDICT_PAIR = {
     "continue": PAIR_GREEN, "answer": PAIR_CYAN, "done_rejected": PAIR_YELLOW, "done_accepted": PAIR_PURPLE,
     "stuck": PAIR_MAGENTA, "revert": PAIR_RED,
 }
+# The history strip is read at a glance, and a glance holds two things, not six: the
+# iteration went through, or it ran into something. `answer` and `done_accepted` are
+# the loop working; the rest is work thrown away or not done at all.
+DOT = "●"
+BLOCKED = {"stuck", "revert", "done_rejected"}
 STATE_PAIR = {
     "work": PAIR_GREEN, "critique": PAIR_CYAN, "oversee": PAIR_YELLOW, "reconcile": PAIR_PURPLE, "plan": PAIR_MAGENTA,
     "idle": PAIR_DIM, "backoff": PAIR_RED, "starting": PAIR_DIM, "stopped": PAIR_RED,
@@ -134,6 +139,26 @@ def _summary_line(s: Snapshot) -> str:
 
 
 # ---------------------------------------------------------------- run strip
+def _usage_row(p: Painter, y: int, x: int, w: int, s: Snapshot) -> None:
+    """`usage  claude 7d 54% +19 · codex 7d 42% +36 · pi $2.50`, coloured by how full."""
+    t = p.theme
+    p.text(y, x, "usage ", t.attr(PAIR_DIM))
+    cx = x + 6
+    parts = s.usage_parts
+    if not parts:
+        p.text(y, cx, "no harness has reported a window yet", t.attr(PAIR_INACTIVE), width=max(0, x + w - cx))
+        return
+    for i, (label, fill) in enumerate(parts):
+        if i:
+            p.text(y, cx, "  ·  ", t.attr(PAIR_INACTIVE)); cx += 5
+        if cx >= x + w:
+            return
+        # Money has no ceiling to be a fraction of, so it stays plain.
+        attr = t.grad_attr(fill) if fill is not None else t.attr(PAIR_TITLE)
+        p.text(y, cx, label, attr, width=max(0, x + w - cx))
+        cx += len(label)
+
+
 def draw_run(p: Painter, rect: Rect, s: Snapshot) -> None:
     t = p.theme
     st = s.status or {}
@@ -172,10 +197,16 @@ def draw_run(p: Painter, rect: Rect, s: Snapshot) -> None:
             else:
                 pair, mark = PAIR_INACTIVE, name
             p.text(y + 1, cx, mark, t.attr(pair, bold=name == active)); cx += len(mark)
-        tail = (f"  ·  {s.switches} switches" if s.switches else "") + (f"  ·  ${s.cost:.2f} api-eq" if s.cost else "")
+        tail = f"  ·  {s.switches} switches" if s.switches else ""
         p.text(y + 1, cx, tail, t.attr(PAIR_DIM), width=max(0, x + w - cx))
+    # What the night is spending, on its own row. A subscription bills a flat fee and
+    # rations by window, so the window is the cost; money shows only for a harness
+    # billed per call. This is the number a person checks before going back to sleep,
+    # so it gets a line of its own rather than a tail on someone else's.
+    if inner.h >= 3:
+        _usage_row(p, y + 2, x, w, s)
     if inner.h >= 4:
-        p.text(y + 2, x, _summary_line(s), t.attr(PAIR_DIM), width=w)
+        p.text(y + 3, x, _summary_line(s), t.attr(PAIR_DIM), width=w)
     if inner.h >= 3:
         # One row, three claimants, in the order a person needs them: a run asking for
         # help, then a run that has stopped saying why, then the clock. They used to
@@ -344,7 +375,7 @@ def draw_iterations(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
         p.text(y + ch_h - 2, x, f"{note:>6}", t.attr(PAIR_INACTIVE))
     last = its[-1] if its else None
     foot = (f"last #{last.n}: {fmt_duration(last.actor_seconds)} actor · {last.verdict or '…'}"
-            + (f" · critic {last.critique}" if last.critique else "") + f" · ${last.cost:.2f}") if last else ""
+            + (f" · critic {last.critique}" if last.critique else "")) if last else ""
     p.text(y + inner.h - 1, x, foot, t.attr(PAIR_DIM), width=w)
 
 
@@ -373,8 +404,6 @@ def draw_load(p: Painter, rect: Rect, s: Snapshot, num: int, hist: LoadHistory) 
     y, x, w = inner.y, inner.x + 1, inner.w - 2
 
     stats = f"cpu {s.cpu_pct:.0f}%  ·  {s.procs} proc {s.rss_mb:,.0f} MB  ·  load {s.loadavg[0]:.1f}"
-    if s.elapsed > 600 and s.cost:
-        stats += f"  ·  ${s.cost / (s.elapsed / 3600):.2f}/h"
     # The harnesses come first: they may take every row if they need it, because a
     # harness that silently vanishes is worse than no cpu trace. Whatever they leave
     # goes to the trace, which is the one thing here that reads better the taller it is.
@@ -441,7 +470,9 @@ def draw_overseer(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
         return
     # The shape of the night and its latest word share the top line, so the words the
     # overseer actually wrote get the rest of a panel that is wide rather than tall.
-    glyph = {"continue": "·", "answer": "?", "done_rejected": "d", "done_accepted": "D", "stuck": "s", "revert": "✗"}
+    # Six letters asked the reader to decode a legend at a glance, which is the one
+    # thing a glance cannot do. The only question the strip answers is whether the
+    # night ran or hit something, so it has two states and one shape.
     v = last.get("verdict", "?")
     tag = f"#{last.get('iteration', '?')} {v}"
     strip_w = max(4, w - len(tag) - 12)
@@ -449,8 +480,8 @@ def draw_overseer(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
     p.text(y, x, "history ", t.attr(PAIR_DIM))
     for i, d in enumerate(strip):
         vv = d.get("verdict", "?")
-        p.text(y, x + 8 + i, glyph.get(vv, "?"), t.attr(VERDICT_PAIR.get(vv, PAIR_DIM), bold=True))
-    p.text(y, x + w - len(tag), tag, t.attr(VERDICT_PAIR.get(v, PAIR_DIM), bold=True))
+        p.text(y, x + 8 + i, DOT, t.attr(PAIR_RED if vv in BLOCKED else PAIR_GREEN, bold=True))
+    p.text(y, x + w - len(tag), tag, t.attr(PAIR_RED if v in BLOCKED else PAIR_GREEN, bold=True))
     left = inner.h - 1
     if left <= 0:
         return
@@ -625,26 +656,6 @@ def draw_frontier(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
             rows.append((status, n, nodes, f"{n:>3}", pair))
     for i, (label, v, vmax, text, pair) in enumerate(rows[: inner.h]):
         meter(p, inner.y + i, x, w, label, v, vmax, text, pair=pair)
-
-
-# ---------------------------------------------------------------- cost (chart)
-def draw_cost(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
-    t = p.theme
-    inner = p.box(rect, "cost · api-eq", num, PAIR_BOX_LOAD, title2=f"${s.cost:.2f}")
-    if inner.h <= 0:
-        return
-    x, w = inner.x + 1, inner.w - 2
-    per = [it.cost for it in s.iterations]
-    if not per:
-        p.text(inner.y, x, "no iterations yet", t.attr(PAIR_INACTIVE))
-        return
-    vmax = max(per) or 1.0
-    rows = braille_chart(per, max(1, w - 7), inner.h, 0.0, vmax, fill=True)
-    for i, row in enumerate(rows):
-        p.text(inner.y + i, x + 7, row, t.attr(PAIR_PURPLE))
-    p.text(inner.y, x, f"${vmax:5.2f}", t.attr(PAIR_INACTIVE))
-    if inner.h > 1:
-        p.text(inner.y + inner.h - 1, x, "  /iter", t.attr(PAIR_INACTIVE))
 
 
 # ---------------------------------------------------------------- log

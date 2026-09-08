@@ -23,6 +23,8 @@ from pathlib import Path
 
 # Window lengths we can name. Anything else is reported by its own length.
 _NAMED = {300: "five_hour", 10080: "seven_day", 1440: "daily", 60: "hourly"}
+# The same windows in the width a status line can afford.
+_SHORT = {"five_hour": "5h", "seven_day": "7d", "daily": "24h", "hourly": "1h"}
 # A window this long or longer is worth stopping a run over: it will not come back
 # tonight. Shorter windows heal on their own, and the harness fallback covers them.
 STOP_WINDOW_MINUTES = 1440
@@ -32,6 +34,14 @@ def window_name(minutes: int | None) -> str:
     if minutes is None:
         return "window"
     return _NAMED.get(minutes, f"{minutes}min")
+
+
+def short_name(name: str) -> str:
+    """`seven_day` -> `7d`. Unknown names keep their own, trimmed of the overage suffix."""
+    if name in _SHORT:
+        return _SHORT[name]
+    base = name.replace("_overage_included", "+ov")
+    return _SHORT.get(base, base)
 
 
 @dataclass(frozen=True)
@@ -229,6 +239,32 @@ class UsageLedger:
                     line = f"{harness} {name} {was.percent:.0f}% -> {w.percent:.0f}% ({w.percent - was.percent:+.0f} this run)"
                 out.append(line)
         return out
+
+    def has_windows(self, harness: str) -> bool:
+        """Whether this harness rations by window. If it does not, it bills in money."""
+        snap = self.latest.get(harness)
+        return bool(snap and snap.windows)
+
+    def compact(self, billed: dict[str, float] | None = None) -> str:
+        """One line: what the run has spent, in the unit each harness actually charges.
+
+        A subscription does not bill per call, so a dollar figure derived from token
+        counts at API list prices measures nothing anyone pays. What a night really
+        spends there is a slice of a rationing window, so that is what this reports.
+        Money appears only for a harness with no windows -- an API key, where the
+        dollars are a real invoice.
+        """
+        parts = []
+        for harness, snap in sorted(self.latest.items()):
+            started = self.first.get(harness)
+            for name, w in sorted(snap.windows.items(), key=lambda kv: -(kv[1].minutes or 0)):
+                was = started.windows.get(name) if started else None
+                rose = f" {w.percent - was.percent:+.0f}" if was is not None and abs(w.utilization - was.utilization) >= 0.005 else ""
+                parts.append(f"{harness} {short_name(name)} {w.percent:.0f}%{rose}")
+        for harness, amount in sorted((billed or {}).items()):
+            if amount and not self.has_windows(harness):
+                parts.append(f"{harness} ${amount:.2f}")
+        return "  ·  ".join(parts)
 
     def to_dict(self) -> dict:
         out = {}

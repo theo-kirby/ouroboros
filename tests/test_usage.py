@@ -182,3 +182,38 @@ def test_dollars_and_windows_are_metered_side_by_side():
     assert clock.should_stop() is None
     assert clock.cost_usd == 4.0
     assert clock.usage.lines() == ["codex seven_day 50%"]
+
+
+def test_only_a_harness_without_windows_reports_money():
+    """A subscription's `total_cost_usd` is priced at API list rates and billed to no one.
+
+    So the run's spend reads as windows for the harnesses that ration by window, and as
+    money only for the one that does not -- Pi against an API key, where it is an invoice.
+    """
+    clock = BudgetClock(StopConfig())
+    clock.add(cost=61.0, harness="claude",
+              usage=UsageSnapshot("claude", {"seven_day": Window("seven_day", 0.54, minutes=10080),
+                                             "five_hour": Window("five_hour", 0.65, minutes=300)}))
+    clock.add(cost=24.0, harness="codex",
+              usage=UsageSnapshot("codex", {"seven_day": Window("seven_day", 0.42, minutes=10080)}))
+    clock.add(cost=2.50, harness="pi")   # an API key: no windows, real dollars
+
+    assert clock.money == {"pi": 2.50}
+    assert clock.billed == {"claude": 61.0, "codex": 24.0, "pi": 2.50}
+    assert clock.usage.compact(clock.billed) == (
+        "claude 7d 54%  ·  claude 5h 65%  ·  codex 7d 42%  ·  pi $2.50")
+
+
+def test_the_compact_line_shows_what_this_run_added():
+    clock = BudgetClock(StopConfig())
+    clock.add(usage=UsageSnapshot("claude", {"seven_day": Window("seven_day", 0.35, minutes=10080)}))
+    clock.add(usage=UsageSnapshot("claude", {"seven_day": Window("seven_day", 0.54, minutes=10080)}))
+    assert clock.usage.compact({}) == "claude 7d 54% +19"
+
+
+def test_short_window_names():
+    from ouroboros.usage import short_name
+    assert short_name("seven_day") == "7d"
+    assert short_name("five_hour") == "5h"
+    assert short_name("daily") == "24h"
+    assert short_name("weird_window") == "weird_window"

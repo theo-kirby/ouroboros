@@ -17,6 +17,9 @@ class BudgetClock:
         self.now = now
         self.started_at = now()
         self.cost_usd = 0.0
+        # Per harness, because only a harness without rationing windows -- an API key
+        # rather than a subscription -- is reporting money anyone is actually billed.
+        self.billed: dict[str, float] = {}
         self.usage = UsageLedger()
         self.iterations = 0
         self.done_streak = 0
@@ -24,9 +27,11 @@ class BudgetClock:
 
     def add(self, *, cost: float | None = None, usage: UsageSnapshot | None = None,
             iteration: bool = False, done_accepted: bool | None = None,
-            stuck: bool | None = None) -> None:
+            stuck: bool | None = None, harness: str | None = None) -> None:
         if cost:
             self.cost_usd += cost
+            if harness:
+                self.billed[harness] = self.billed.get(harness, 0.0) + cost
         if usage:
             self.usage.record(usage)
         if iteration:
@@ -39,6 +44,11 @@ class BudgetClock:
             self.stuck_streak += 1
         elif stuck is False:
             self.stuck_streak = 0
+
+    @property
+    def money(self) -> dict[str, float]:
+        """Only the harnesses that bill in money: the ones reporting no windows."""
+        return {h: c for h, c in self.billed.items() if c and not self.usage.has_windows(h)}
 
     @property
     def elapsed(self) -> float:

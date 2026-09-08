@@ -3,7 +3,7 @@
 import json
 
 from ouroboros.cli import main
-from ouroboros.cli import _cost_by_role, _cost_split, _unverified_reverts
+from ouroboros.cli import _billed_split, _cost_by_role, _unverified_reverts
 from ouroboros.gitguard import GitGuard
 
 
@@ -31,9 +31,13 @@ def test_role_calls_that_report_no_cost_are_counted_not_hidden():
     assert uncosted == 2  # the silent commit and critique; the errored plan is not a spend
 
 
-def test_cost_split_reads_largest_first():
-    assert _cost_split({"planner": 1.0, "actor": 9.0}) == "actor $9.00, planner $1.00"
-    assert _cost_split({}) == "no harness reported a cost"
+def test_billed_split_reads_largest_first_and_only_when_money_was_billed():
+    billed = {"pi": 10.0}
+    assert _billed_split({"planner": 1.0, "actor": 9.0}, billed) == "actor $9.00, planner $1.00"
+    # A subscription's api-equivalent dollars are not money; with nothing really
+    # billed the split is empty however much the harness claimed per call.
+    assert _billed_split({"planner": 1.0, "actor": 9.0}, {}) == ""
+    assert _billed_split({}, billed) == ""
 
 
 def test_a_revert_that_never_moved_the_tree_is_reported_as_failed(repo):
@@ -85,9 +89,10 @@ def test_report_shows_the_windows_a_subscription_run_consumed(repo, monkeypatch,
     out = capsys.readouterr().out
     assert "- usage: claude seven_day 13% -> 33% (+20 this run)" in out
     assert "         codex seven_day 24% -> 98% (+74 this run)" in out
-    # A subscription bills a flat fee, so silence about dollars is expected, not alarming.
-    assert "metered by window above" in out
-    assert "the real spend is higher" not in out
+    # The window is the cost. A subscription bills a flat fee, so no dollar figure
+    # derived from token counts belongs in the report at all.
+    assert "$" not in out
+    assert "api-equivalent" not in out and "no meter" not in out
 
 
 def test_report_still_warns_when_nothing_meters_the_run_at_all(repo, monkeypatch, capsys):
@@ -96,4 +101,5 @@ def test_report_still_warns_when_nothing_meters_the_run_at_all(repo, monkeypatch
     assert main(["report", "--run", "r1"]) == 0
     out = capsys.readouterr().out
     assert "- usage:" not in out
-    assert "the real spend is higher" in out
+    assert "this run has no meter" in out
+    assert "$" not in out

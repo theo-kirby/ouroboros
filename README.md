@@ -74,8 +74,10 @@ for shared state and planning. Install it with `uv tool install hypergraph-proto
 Review the report and run branch before merging. Use a merge commit for
 hypergraph runs: their records reference commit IDs, which squash and rebase change.
 
-Reported dollars are **API-equivalent cost**: an estimate based on token
-prices, not your subscription bill.
+A run reports what it spent as the windows it burned, never as dollars: a
+subscription's `total_cost_usd` is priced from token counts at API list rates
+and is not your bill. Dollars appear only for a harness on an API key, which
+has no windows and a real invoice.
 
 ## Development
 

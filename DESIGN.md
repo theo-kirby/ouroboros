@@ -455,10 +455,18 @@ stop:
 
 **What "cost" means.** Claude Code prints `total_cost_usd` in its JSON result.
 It computes that number from token counts at API list prices, even when you
-are logged in with a subscription and nothing is billed per call. Ouroboros
-sums it and labels it *API-equivalent cost*: a measure of how much work the
-run did, and a cap you can set, not a bill. Codex and Pi report tokens rather
-than dollars; their cost stays at zero until a price table exists.
+are logged in with a subscription and nothing is billed per call. That number
+is not money anyone pays, so nothing shows it: not the TUI, not `ouroboros
+status`, not the report. It survives only as `stop.max_cost_usd`, for a run
+whose harness really is billed per call.
+
+**What a night actually costs is a slice of a rationing window.** That is what
+the run strip, the status line and the report all report: `claude 7d 54% +19 ·
+claude 5h 65% +52 · codex 7d 42% +36`, each window with where it sits and how
+far this run moved it. Money appears beside them for one case only -- a harness
+that reports no windows at all, meaning an API key rather than a subscription,
+where the dollars are an invoice: `pi $2.50`. `BudgetClock.money` is that rule
+in one line, and it is why cost is tracked per harness rather than as a total.
 
 Subscription readings are recorded in call order, including failed attempts
 before a fallback switches providers. An earlier actor reading must not overwrite
@@ -540,7 +548,7 @@ without touching code and so a harness can load them natively.
   loop.log                   # every step, backoff, harness switch, limit wait
   iterations.jsonl           # one line per step: actor | commit | critique | oversee | revert | reconcile | plan
   overseer.jsonl             # every decision the overseer made for you (verdict, reason, reply)
-  status.json                # state, iteration, harness, api-equivalent cost, elapsed, last verdict, limit blocks
+  status.json                # state, iteration, harness, usage windows, elapsed, last verdict, limit blocks
   transcripts/NNNN-<role>[-attempt].json   # raw harness output (+ .stderr); roles: actor, critic[N], overseer, maintainer, planner
   reverted/NNNN.patch        # what a revert threw away
   NEEDS_HUMAN.md             # only exists while something needs you (auth failure)
@@ -560,26 +568,31 @@ is a btop-style curses monitor in `tui/`, ported from the author's vllmtop. It
 reads only the run directory and the repo, never the loop process, on a poller
 thread every two seconds. A run strip on top: state, iteration, time in stage,
 elapsed and left with a gradient bar, the harness chain with the active one
-green and limited ones red, cost, pid alive; the pipeline
+green and limited ones red, a usage row of one meter per window, pid alive;
+the pipeline
 `actor→critic→overseer→maintainer→planner` sits in the strip with the active
 stage lit. Below it the default view is chart-first, an overview and not an
 analysis: **iterations** (outcome strip over a braille chart of actor minutes),
 **activity** (harness CPU over time), three meter panels, **time by stage**,
 **verdicts**, and **frontier** (charter gaps done, and the state graph's
 working / open / blocked split), then **messages** and a compact **overseer**
-(verdict history strip, the last verdict, its reason and reply). **cost** (per
-iteration) and **plan** are off by default; the text panels **loop**,
+(verdict history strip, the last verdict, its reason and reply). **plan** is
+off by default; the text panels **loop**,
 **stages**, and **log** are reachable through the help. Panels toggle by their
 superscript number. Details: **stages** (the pipeline with the active stage lit and
 per-stage run counts, last, average, total durations from `iterations.jsonl`),
 **iterations** (an outcome strip, ■ changed and recorded, ▪ changed, · empty,
 ✗ reverted, ◆ bet, ! error, over a braille chart of actor minutes per
 iteration), **load** (a braille chart of the harness process tree's CPU, procs
-and RSS, loadavg, cost per hour, limit blocks), **messages** (the newest
+and RSS, loadavg, limit blocks), **messages** (the newest
 transcript tailed live: assistant text, tool calls with the command or path,
 errors, the result line; `o` shows tool output too; Claude stream-json, Codex
-and Pi event lines all parse), **overseer** (the last verdicts with reasons and
-the last reply), **plan · short** (the `short` plan node's items, read from the
+and Pi event lines all parse), **overseer** (a history strip of one dot per
+verdict -- green for an iteration that went through, red for one that hit
+something: `stuck`, `revert`, or a `done` the overseer rejected -- then the
+last verdict with its reason and reply. Six lettered glyphs asked a reader to
+decode a legend at a glance, which is the one thing a glance cannot do; the
+only question the strip answers is whether the night is moving), **plan · short** (the `short` plan node's items, read from the
 hypergraph plan view or the handoff plan file), and **loop.log**. For the feed
 to be live the headless backend streams each call's stdout to the transcript
 file line by line, and Claude runs with `stream-json` in every backend.

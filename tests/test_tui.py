@@ -24,7 +24,9 @@ def test_parse_claude_stream_json():
     assert kinds[0] == ("init", "session abcdef12  model claude-fable-5-1")
     assert kinds[1] == ("text", "Looking at the build.") and kinds[2] == ("tool", "Bash  pixi run gate")
     assert kinds[3] == ("tool_out", "ok 12 passed") and kinds[4] == ("error", "boom")
-    assert kinds[5] == ("result", "success  turns 6  $1.25 api-eq")
+    # `total_cost_usd` is priced at API list rates even on a flat-fee subscription,
+    # so the feed does not repeat it as if it were money.
+    assert kinds[5] == ("result", "success  turns 6")
 
 
 def test_parse_codex_and_pi_events():
@@ -88,7 +90,7 @@ def test_load_snapshot_from_a_run_dir(tmp_path):
     s = load_snapshot(run, repo=tmp_path, stop_after_s=3600.0, chains={"actor": ["claude", "codex"]})
     assert s.stage == "actor" and not s.alive and s.pid is None and s.switches == 1
     assert [e.text for e in s.feed] == ["hello"] and s.feed_role == "0001-actor"
-    assert s.plan_short == ["do A", "do B"] and s.cost_series == [1.5] and len(s.iterations) == 1
+    assert s.plan_short == ["do A", "do B"] and len(s.iterations) == 1
     (tmp_path / "PLAN.md").unlink()
     (tmp_path / ".ouroboros" / "plan.md").write_text("# Plan\n\n(agent-owned. rewrite freely.)\n")
     assert load_snapshot(run, repo=tmp_path).plan_short == []
@@ -339,3 +341,33 @@ def test_expired_usage_waits_for_new_reading():
     usage['claude']['windows']['five_hour'].update(utilization=.02, resets_at=200)
     refreshed = harness_roster(_roles(), usage, now=101)[0]
     assert refreshed.short_utilization == .02 and not refreshed.short_expired
+
+
+def test_usage_parts_read_as_windows_with_money_only_where_it_is_billed():
+    from ouroboros.tui.state import usage_parts
+    usage = {
+        "claude": {"windows": {"seven_day": {"utilization": 0.54, "minutes": 10080, "resets_at": 9e9},
+                               "five_hour": {"utilization": 0.65, "minutes": 300, "resets_at": 9e9}},
+                   "first_windows": {"seven_day": 0.35, "five_hour": 0.13}},
+        "codex": {"windows": {"seven_day": {"utilization": 0.42, "minutes": 10080, "resets_at": 9e9}},
+                  "first_windows": {"seven_day": 0.06}},
+    }
+    parts = usage_parts(usage, {"pi": 2.5}, now=1000.0)
+    assert [label for label, _ in parts] == [
+        "claude 7d 54% +19", "claude 5h 65% +52", "codex 7d 42% +36", "pi $2.50"]
+    # the fill drives the gradient; money has no ceiling, so it has none
+    assert [fill for _, fill in parts] == [0.54, 0.65, 0.42, None]
+
+
+def test_a_window_past_its_reset_reads_as_empty_not_as_whatever_it_last_said():
+    from ouroboros.tui.state import usage_parts
+    usage = {"claude": {"windows": {"five_hour": {"utilization": 0.75, "minutes": 300, "resets_at": 1500.0}}}}
+    assert usage_parts(usage, {}, now=2000.0) == [("claude 5h 0%", 0.0)]
+
+
+def test_the_history_strip_has_two_states():
+    from ouroboros.tui.panels import BLOCKED
+    # work that went through, including the overseer answering and accepting done
+    assert not {"continue", "answer", "done_accepted"} & BLOCKED
+    # work thrown away, or not done at all
+    assert {"stuck", "revert", "done_rejected"} <= BLOCKED

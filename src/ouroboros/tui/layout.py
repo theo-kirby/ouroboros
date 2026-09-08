@@ -48,11 +48,14 @@ def _split_weighted(start: int, total: int, weights: List[int],
     """
     mins = list(mins or [0] * len(weights))
     tw = sum(weights) or 1
-    segs, used = [], 0
-    for i, wt in enumerate(weights):
-        seg = (total - used) if i == len(weights) - 1 else (total * wt) // tw
-        segs.append(seg)
-        used += seg
+    segs = [(total * wt) // tw for wt in weights]
+    # Integer division leaves a remainder. Handing it to the last child made the last
+    # child the biggest whatever its weight said, which is how a panel with the
+    # smallest weight ended up the tallest on screen. It goes to the heaviest instead,
+    # so a weight is the whole story of a panel's size.
+    leftover = total - sum(segs)
+    if leftover > 0:
+        segs[max(range(len(segs)), key=lambda k: (weights[k], -k))] += leftover
     if sum(mins) <= total:
         for i, m in enumerate(mins):
             while segs[i] < m:

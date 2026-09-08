@@ -134,6 +134,7 @@ class PooledHarness:
                 result = harness.run(prompt, cwd=cwd, timeout=timeout, resume=own_session, model=entry_model, **kw)
             except Exception as exc:  # a driver bug must not stop the loop
                 result = Result(exit_code=-1, error=f"harness raised {exc!r}")
+            result.extra.setdefault("harness", harness.name)
             self.board.usage.record(result.usage)
             if result.session_id:
                 self._session_owner[result.session_id] = harness.name

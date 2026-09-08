@@ -73,10 +73,10 @@ def _claude_event(d: dict) -> list[Event]:
     elif t == "system" and d.get("subtype") == "init":
         out.append(Event("init", f"session {str(d.get('session_id', ''))[:8]}  model {d.get('model', '?')}"))
     elif t == "result":
-        cost = d.get("total_cost_usd")
+        # `total_cost_usd` is priced from token counts at API list prices even on a
+        # subscription that bills a flat fee, so it is not money. The usage row on the
+        # run strip carries what this really spends. Pi, billed per call, keeps its own.
         note = f"{d.get('subtype', 'result')}  turns {d.get('num_turns', '?')}"
-        if isinstance(cost, (int, float)):
-            note += f"  ${cost:.2f} api-eq"
         out.append(Event("error" if d.get("is_error") else "result", note))
     return out
 
@@ -327,7 +327,6 @@ class Snapshot:
     switches: int = 0
     reconciles: int = 0
     plans: int = 0
-    cost_series: list[float] = field(default_factory=list)
     frontier: dict[str, int] = field(default_factory=dict)
 
     @property
@@ -342,6 +341,52 @@ class Snapshot:
     def usage(self) -> dict:
         """Per-harness subscription windows, as the engine last wrote them."""
         return (self.status or {}).get("usage") or {}
+
+    @property
+    def money(self) -> dict:
+        """Harnesses billed in money rather than rationed by a window."""
+        return (self.status or {}).get("money") or {}
+
+    @property
+    def usage_parts(self) -> list[tuple[str, float | None]]:
+        return usage_parts(self.usage, self.money, self.now)
+
+
+_SHORT_WINDOW = {"five_hour": "5h", "seven_day": "7d", "daily": "24h", "hourly": "1h"}
+
+
+def usage_parts(usage: dict, money: dict, now: float) -> list[tuple[str, float | None]]:
+    """`[("claude 7d 54% +19", 0.54), ("pi $2.50", None)]`, longest window first.
+
+    What a night costs is the slice of a rationing window it burns, so that is what the
+    run strip shows. A window is a gauge that drains on its own, so one whose reset has
+    passed reads as empty rather than as whatever it said before it emptied. The float
+    is the fill, for the gradient; money has no ceiling to be a fraction of, so it is
+    None, and it appears only for a harness that reports no windows at all -- an API
+    key, where the dollars are an invoice rather than a list price.
+    """
+    out: list[tuple[str, float | None]] = []
+    for harness, snap in sorted((usage or {}).items()):
+        windows = (snap or {}).get("windows") or {}
+        first = (snap or {}).get("first_windows") or {}
+        for name, w in sorted(windows.items(), key=lambda kv: -((kv[1] or {}).get("minutes") or 0)):
+            util = (w or {}).get("utilization")
+            if util is None:
+                continue
+            resets = (w or {}).get("resets_at")
+            if resets is not None and resets <= now:
+                util = 0.0
+            was = first.get(name)
+            rose = f" {(util - was) * 100:+.0f}" if was is not None and abs(util - was) >= 0.005 else ""
+            out.append((f"{harness} {_short_window(name)} {util * 100:.0f}%{rose}", util))
+    for harness, amount in sorted((money or {}).items()):
+        if amount:
+            out.append((f"{harness} ${float(amount):.2f}", None))
+    return out
+
+
+def _short_window(name: str) -> str:
+    return _SHORT_WINDOW.get(name, name.replace("_overage_included", "+ov"))
 
 
 def _ts(s: str) -> float:
@@ -598,15 +643,11 @@ def load_snapshot(run_dir: Path, *, repo: Path, plan_md: str = "PLAN.md", stop_a
     except (OSError, AttributeError):
         loadavg = (0.0, 0.0, 0.0)
     procs, cpu, rss = _process_tree(pid if alive else None)
-    cost_series, running = [], 0.0
-    for it in iterations:
-        running += it.cost
-        cost_series.append(running)
     return Snapshot(
         now=now, status=status, alive=alive, pid=pid, iterations=iterations, stages=stages, stage=stage,
         stage_since=stage_since, decisions=decisions, feed=feed, feed_role=feed_role, feed_age=feed_age,
         log_tail=log_tail, plan_short=_plan_short(repo, plan_md), needs_human=needs_human, loadavg=loadavg,
         procs=procs, cpu_pct=cpu, rss_mb=rss, stop_after_s=stop_after_s, max_iterations=max_iterations,
-        chains=chains or {}, roles=roles or {}, mode=mode, switches=switches, reconciles=reconciles, plans=plans, cost_series=cost_series,
+        chains=chains or {}, roles=roles or {}, mode=mode, switches=switches, reconciles=reconciles, plans=plans,
         frontier=frontier_counts(repo),
     )
