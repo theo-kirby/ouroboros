@@ -227,6 +227,20 @@ class UsageLedger:
                     return harness, w
         return None
 
+    def reserve_hit(self, harness: str, ceiling: float) -> Window | None:
+        """The fullest window of one harness at or past `ceiling`, if any is.
+
+        The same measurement as `exceeded`, asked per harness rather than across
+        all of them, because a reserve blocks one harness and leaves the run
+        alone. A window with no reset time still counts: the board falls back to
+        its own cooldown when it is asked to block until nowhere.
+        """
+        snap = self.latest.get(harness)
+        if not snap:
+            return None
+        hit = [w for w in snap.windows.values() if w.governs_stop and w.utilization >= ceiling]
+        return max(hit, key=lambda w: w.utilization) if hit else None
+
     def lines(self) -> list[str]:
         """One line per window: where it is, and how far this run moved it."""
         out = []

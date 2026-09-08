@@ -181,3 +181,66 @@ def test_usage_from_limited_attempt_survives_fallback(tmp_path):
     pool = PooledHarness([(claude, None), (codex, None)], board)
     assert pool.run('p', cwd=tmp_path, timeout=1).ok
     assert board.usage.latest['claude'] == snapshot
+
+
+# -- reserves: block the harness, not the run -------------------------------
+
+def _usage(util: float, minutes=10080, resets_at=None):
+    from ouroboros.usage import UsageSnapshot, Window
+    return UsageSnapshot(harness="a", windows={
+        "seven_day": Window(name="seven_day", utilization=util, resets_at=resets_at, minutes=minutes)})
+
+
+def spends(util: float, resets_at=None):
+    def b(cwd, prompt):
+        return Result(text="did a unit", usage=_usage(util, resets_at=resets_at))
+    return b
+
+
+def test_a_harness_that_spends_its_reserve_is_blocked_and_the_pool_falls_back(tmp_path: Path):
+    a, b = FakeHarness([], default=spends(0.90)), FakeHarness([], default=works("b"))
+    a.name, b.name = "a", "b"
+    board = LimitBoard(reserve={"a": 0.85})
+    pool = PooledHarness([(a, None), (b, None)], board)
+    first = pool.run("go", cwd=tmp_path, timeout=1)
+    assert first.ok, "the call that crosses the reserve still returns its work"
+    assert board.is_blocked("a")
+    pool.run("go again", cwd=tmp_path, timeout=1)
+    assert b.calls, "the next call falls back"
+
+
+def test_a_reserve_blocks_until_the_window_resets(tmp_path: Path):
+    reset = time.time() + 3600
+    a = FakeHarness([], default=spends(0.9, resets_at=reset))
+    a.name = "a"
+    board = LimitBoard(reserve={"a": 0.85})
+    PooledHarness([(a, None)], board).run("go", cwd=tmp_path, timeout=1)
+    assert board.blocked["a"] > reset, "blocked past the reset, not on a blind cooldown"
+
+
+def test_below_the_reserve_nothing_is_blocked(tmp_path: Path):
+    a = FakeHarness([], default=spends(0.80))
+    a.name = "a"
+    board = LimitBoard(reserve={"a": 0.85})
+    PooledHarness([(a, None)], board).run("go", cwd=tmp_path, timeout=1)
+    assert not board.is_blocked("a")
+
+
+def test_a_harness_with_no_reserve_configured_is_never_blocked_by_one(tmp_path: Path):
+    a = FakeHarness([], default=spends(0.99))
+    a.name = "a"
+    board = LimitBoard()
+    PooledHarness([(a, None)], board).run("go", cwd=tmp_path, timeout=1)
+    assert not board.is_blocked("a")
+
+
+def test_a_short_window_does_not_trip_a_reserve(tmp_path: Path):
+    """Five-hour windows heal on their own; a reserve is about the long one."""
+    from ouroboros.usage import UsageSnapshot, Window
+    a = FakeHarness([], default=lambda cwd, p: Result(
+        text="x", usage=UsageSnapshot(harness="a", windows={
+            "five_hour": Window(name="five_hour", utilization=0.99, minutes=300)})))
+    a.name = "a"
+    board = LimitBoard(reserve={"a": 0.85})
+    PooledHarness([(a, None)], board).run("go", cwd=tmp_path, timeout=1)
+    assert not board.is_blocked("a")

@@ -62,6 +62,12 @@ class LimitConfig(BaseModel):
     cooldown: str = "30m"        # first block; doubles on every repeat
     max_cooldown: str = "3h"     # cap for the doubling
     transient_strikes: int = 3   # this many transient errors in a row count as a limit
+    # Stop *using* a harness at this much of one of its subscription windows,
+    # instead of stopping the run: {claude: 0.85} keeps a two-day run from eating
+    # the whole 7-day window the operator also works out of. The harness is
+    # blocked until that window resets, the pool falls back, and the loop goes on.
+    # `stop.max_usage` is the blunt version of the same idea -- it ends the run.
+    reserve: dict[str, float] = Field(default_factory=dict)   # harness -> 0..1
 
     @property
     def cooldown_seconds(self) -> float:

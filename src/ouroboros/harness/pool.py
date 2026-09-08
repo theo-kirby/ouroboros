@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Callable
 
 from .base import Harness, Result
-from ..usage import UsageLedger
+from ..usage import UsageLedger, Window
 
 Log = Callable[[str], None]
 
@@ -22,6 +22,12 @@ Log = Callable[[str], None]
 @dataclass
 class LimitBoard:
     usage: UsageLedger = field(default_factory=UsageLedger)
+    # Stop *using* a harness at this much of one of its subscription windows,
+    # rather than stopping the run. A reserve is what keeps a two-day run from
+    # eating the whole 7-day window the operator also works out of: the harness
+    # is blocked until the window resets, the pool falls back, and the run
+    # continues. `stop.max_usage` is the other, blunter tool -- it ends the run.
+    reserve: dict[str, float] = field(default_factory=dict)   # harness -> 0..1
     cooldown: float = 1800.0        # block length when the reset time is unknown
     max_cooldown: float = 10800.0
     transient_strikes: int = 3      # transient errors in a row that count as a limit
@@ -30,6 +36,18 @@ class LimitBoard:
     repeats: dict[str, int] = field(default_factory=dict)     # harness -> unknown-reset blocks in a row
     strikes: dict[str, int] = field(default_factory=dict)     # harness -> transient errors in a row
     why: dict[str, str] = field(default_factory=dict)
+
+    def check_reserve(self, name: str) -> Window | None:
+        """Block a harness that has spent its reserve. Returns the window that did it."""
+        ceiling = self.reserve.get(name)
+        if ceiling is None or self.is_blocked(name):
+            return None
+        w = self.usage.reserve_hit(name, ceiling)
+        if w is None:
+            return None
+        until = datetime.fromtimestamp(w.resets_at, tz=timezone.utc) if w.resets_at else None
+        self.block(name, until=until, why=f"reserve {ceiling:.0%} reached ({w.name} at {w.percent:.0f}%)")
+        return w
 
     def is_blocked(self, name: str) -> bool:
         until = self.blocked.get(name)
@@ -140,7 +158,14 @@ class PooledHarness:
                 self._session_owner[result.session_id] = harness.name
             kind = result.kind
             if kind in ("ok", "timeout"):
+                # `clear` first: the call succeeded, so any earlier strike or block
+                # is stale. The reserve is then applied on top, or clearing would
+                # undo the block the reading it just took asks for.
                 self.board.clear(harness.name)
+                spent = self.board.check_reserve(harness.name)
+                if spent is not None:
+                    self.log(f"harness {harness.name} hit its reserve "
+                             f"({spent.name} at {spent.percent:.0f}%); blocked until it resets")
                 return result
             if kind == "limit":
                 at = self.board.block(harness.name, until=result.reset_at(), why=(result.error or result.text)[-120:])

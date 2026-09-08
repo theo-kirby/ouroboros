@@ -526,6 +526,16 @@ later critic, overseer, maintainer, or planner readings. The TUI treats a window
 whose reset time has passed as **reset · awaiting reading**, until the provider
 reports a fresh window; it does not invent 0% or 100% from the clock or a limit error.
 
+**A reserve stops a harness, not a run.** `stop.max_usage` ends the run when any
+long window crosses a fraction. That is the right tool for a run that must not
+overshoot, and the wrong one for a two-day run: the windows reset while it is
+still going, so ending the run throws away the recovery. `limits.reserve`
+(`{claude: 0.85}`) is the other half — the harness is blocked until that window
+resets, exactly as a real usage limit blocks it, so the pool falls back and the
+loop continues. It is also how you keep a long run from eating the whole 7-day
+window you work out of yourself. Short windows never trip a reserve; they heal
+on their own.
+
 Resilience. These are not stop conditions. The loop absorbs them:
 
 | Event | Response |
@@ -695,6 +705,7 @@ limits:
   cooldown: 30m             # block a limited harness this long when the reset time is unknown; doubles
   max_cooldown: 3h
   transient_strikes: 3      # 429/overloaded errors in a row that count as a limit
+  reserve: {}               # harness -> 0..1: stop using it at this much of a long window
 plan:
   enabled: null             # null = on; false turns the planner and plan view off
   every: 5                  # handoff repos: planner pass every N worked iterations

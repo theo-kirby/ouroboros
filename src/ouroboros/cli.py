@@ -189,7 +189,7 @@ def _pools(cfg: Config, log) -> dict[str, PooledHarness]:
     """One harness chain per role, all sharing one limit board (limits belong to accounts, not roles)."""
     board = LimitBoard(
         cooldown=cfg.limits.cooldown_seconds, max_cooldown=cfg.limits.max_cooldown_seconds,
-        transient_strikes=cfg.limits.transient_strikes,
+        transient_strikes=cfg.limits.transient_strikes, reserve=dict(cfg.limits.reserve),
     )
     return {
         name: PooledHarness([(make_harness(h), m) for h, m in cfg.role(name).chain], board, log=log)
