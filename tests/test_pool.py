@@ -169,3 +169,15 @@ def test_config_chain():
     assert cfg.role("actor").chain == [("claude", "opus"), ("codex", "gpt-5-codex"), ("pi", None)]
     assert Config().role("overseer").chain == [("claude", "haiku")]
     assert cfg.limits.cooldown_seconds == 1800
+
+
+def test_usage_from_limited_attempt_survives_fallback(tmp_path):
+    from ouroboros.usage import UsageSnapshot, Window
+    snapshot = UsageSnapshot('claude', {'five_hour': Window('five_hour', .96)})
+    claude = named('claude', [lambda cwd, prompt: Result(
+        exit_code=1, error='session limit', usage=snapshot)])
+    codex = named('codex', [lambda cwd, prompt: Result()])
+    board = LimitBoard()
+    pool = PooledHarness([(claude, None), (codex, None)], board)
+    assert pool.run('p', cwd=tmp_path, timeout=1).ok
+    assert board.usage.latest['claude'] == snapshot

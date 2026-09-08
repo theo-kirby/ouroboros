@@ -139,7 +139,8 @@ def test_engine_runs_maintainer_pass(hg_repo):
     assert eng.iteration == 3
     assert len(maintainer.prompts) == 1 and "single writer" in maintainer.prompts[0]
     log = git(hg_repo, "log", "--oneline")
-    assert "ouroboros #2: reconcile" in log and "ouroboros #1: unit" in log
+    assert "ouroboros #2: reconcile" not in log and "ouroboros #1: unit" in log
+    assert any(s.get("step") == "reconcile" for s in eng.recorder.read_jsonl(eng.recorder.iterations))
     assert eng.budget.cost_usd == pytest.approx(0.3 + 0.2)
     assert git(hg_repo, "status", "--porcelain") == ""
     assert eng.outcomes[0].recorded and eng.outcomes[2].recorded

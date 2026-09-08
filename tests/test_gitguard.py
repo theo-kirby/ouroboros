@@ -32,11 +32,11 @@ def test_commit_tag_revert(repo):
     assert git(repo, "diff", "ok", "HEAD", "--stat") == ""
 
 
-def test_empty_commit_allowed(repo):
+def test_empty_commit_skipped_by_default(repo):
     g = GitGuard(repo, "ouroboros/x")
     g.start()
     before = g.head()
-    assert g.commit("nothing") != before
+    assert g.commit("nothing") == before
 
 
 def test_revert_survives_a_stale_sequencer(repo):

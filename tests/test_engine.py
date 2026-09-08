@@ -260,3 +260,54 @@ def test_plan_disabled_skips_planner(repo: Path):
     eng.config.plan.every = 1
     eng.run()
     assert planner.prompts == []
+
+
+@pytest.mark.parametrize("own_commit", [False, True])
+def test_noop_reconcile_does_not_create_marker_commit(repo, monkeypatch, own_commit):
+    eng = make_engine(repo, FakeHarness([]))
+    def maintain(cwd, prompt):
+        if own_commit:
+            (cwd / "maintained.txt").write_text("reconciled")
+            git(cwd, "add", "-A")
+            git(cwd, "commit", "-qm", "maintainer work")
+        return Result()
+
+    eng.maintainer = FakeHarness([], default=maintain)
+    monkeypatch.setattr(eng.memory, 'needs_reconcile', lambda: True)
+    monkeypatch.setattr(eng.memory, 'reconcile_prompt', lambda: 'reconcile')
+    monkeypatch.setattr(eng, '_maybe_plan', lambda *args: None)
+    before = eng.git.head()
+    eng._maybe_reconcile(1)
+    if own_commit:
+        assert git(repo, "rev-parse", "HEAD^") == before
+        assert git(repo, "log", "-1", "--format=%s") == "maintainer work"
+    else:
+        assert eng.git.head() == before
+
+
+def test_newer_planner_usage_is_not_overwritten_by_actor(repo):
+    from ouroboros.usage import UsageSnapshot, Window
+
+    def actor(cwd, prompt):
+        result = works()(cwd, prompt)
+        result.usage = UsageSnapshot('claude', {'five_hour': Window('five_hour', .75)})
+        return result
+
+    def planner(cwd, prompt):
+        return Result(usage=UsageSnapshot('claude', {'five_hour': Window('five_hour', .96)}))
+
+    eng = make_engine(repo, FakeHarness([actor]), max_iterations=1,
+                      planner=FakeHarness([planner]))
+    eng.config.plan.every = 1
+    eng.run()
+    assert eng.budget.usage.latest['claude'].windows['five_hour'].utilization == .96
+
+
+def test_unchanged_iterations_do_not_schedule_bookkeeping(repo, monkeypatch):
+    eng = make_engine(repo, FakeHarness([], default=nothing()), max_iterations=6)
+    marked = []
+    reconciled = []
+    monkeypatch.setattr(eng.memory, 'mark_iteration', lambda: marked.append(True))
+    monkeypatch.setattr(eng, '_maybe_reconcile', lambda n: reconciled.append(n))
+    eng.run()
+    assert not marked and not reconciled and eng.since_plan == 0

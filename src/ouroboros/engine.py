@@ -83,6 +83,12 @@ class Engine:
     failed_iterations: int = 0
     outcomes: list[IterationOutcome] = field(default_factory=list)
 
+    def __post_init__(self) -> None:
+        # All role pools share the board; retain readings from failed fallback attempts too.
+        board = getattr(self.harness, "board", None)
+        if board is not None:
+            board.usage = self.budget.usage
+
     # ------------------------------------------------------------------
     def run(self) -> str:
         """Run until a stop condition. Returns the stop reason. Never raises for harness trouble."""
@@ -130,7 +136,8 @@ class Engine:
         summary = self.memory.last_summary() if recorded else (result.error or "no record")[:60]
         commit = self.git.commit(f"ouroboros #{n}: {summary}", allow_empty=False)  # no marker commits; the ok tag marks the iteration
         self.recorder.step(iteration=n, step="commit", sha=commit[:10], changed=changed, recorded=recorded, cost=result.cost_usd)
-        if worked:
+        progressed = worked and (changed or recorded)
+        if progressed:
             self.memory.mark_iteration()
 
         check_problem = None
@@ -210,7 +217,7 @@ class Engine:
             verdict.reply = f"{verdict.reply}\n\nThe memory checker reports a problem. Fix it first:\n{check_problem}".strip()
         self.injected = verdict.reply or None
 
-        if worked and verdict.verdict != "revert":
+        if progressed and verdict.verdict != "revert":
             self.since_plan += 1
             self._maybe_reconcile(n)
             if verdict.verdict == "done_accepted":
@@ -218,7 +225,7 @@ class Engine:
             elif not self.memory.reconcile_prompt() and self.config.plan.every and self.since_plan >= self.config.plan.every:
                 self._maybe_plan(n, f"every {self.config.plan.every} iterations")
 
-        self.budget.add(cost=result.cost_usd, usage=result.usage, iteration=True, done_accepted=(verdict.verdict == "done_accepted") if verdict.verdict.startswith("done") else None)
+        self.budget.add(cost=result.cost_usd, iteration=True, done_accepted=(verdict.verdict == "done_accepted") if verdict.verdict.startswith("done") else None)
         self._status("idle", iteration=n, last_verdict=verdict.verdict)
         out = IterationOutcome(n, result, verdict, commit, changed, recorded, critique)
         self.outcomes.append(out)
@@ -253,7 +260,7 @@ class Engine:
             )
         except Exception as exc:
             result = Result(exit_code=-1, error=f"harness raised {exc!r}")
-        sha = self.git.commit(f"ouroboros #{n}: reconcile")
+        sha = self.git.commit(f"ouroboros #{n}: reconcile", allow_empty=False)
         self.budget.add(cost=result.cost_usd, usage=result.usage)
         self.recorder.step(iteration=n, step="reconcile", exit=result.exit_code, timed_out=result.timed_out,
                            error=(result.error or None) and result.error[:200], sha=sha[:10], cost=result.cost_usd)
@@ -343,6 +350,7 @@ class Engine:
                 )
             except Exception as exc:
                 result = Result(exit_code=-1, error=f"harness raised {exc!r}")
+            self.budget.usage.record(result.usage)
             self.recorder.step(iteration=n, step="actor", attempt=attempt, exit=result.exit_code, timed_out=result.timed_out, error=(result.error or None) and result.error[:200], session=result.session_id, turns=result.turns)
             if result.ok or result.timed_out:
                 self.recorder.clear_needs_human()

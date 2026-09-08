@@ -323,3 +323,19 @@ def test_the_summary_row_carries_both_panels_it_replaced():
 def test_the_summary_row_says_nothing_when_there_is_nothing_to_say():
     from ouroboros.tui.panels import _summary_line
     assert _summary_line(_snap()) == ""
+
+
+def test_expired_usage_waits_for_new_reading():
+    usage = _usage()
+    usage['claude']['windows']['five_hour']['resets_at'] = 100
+    before = harness_roster(_roles(), usage, now=99)[0]
+    assert before.short_utilization == 1.0
+    after = harness_roster(_roles(), usage, now=100)[0]
+    assert after.short_utilization is None
+    assert after.short_expired
+    from ouroboros.tui.panels import _block
+    assert "short" in _block(after, 3)
+    assert after.utilization == .33
+    usage['claude']['windows']['five_hour'].update(utilization=.02, resets_at=200)
+    refreshed = harness_roster(_roles(), usage, now=101)[0]
+    assert refreshed.short_utilization == .02 and not refreshed.short_expired

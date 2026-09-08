@@ -522,7 +522,7 @@ def _roles_line(r, width: int) -> str:
 def harness_rows(s: Snapshot) -> list:
     """One row per configured harness, joined to what it has used."""
     return harness_roster(s.roles or {n: [(h, None) for h in c] for n, c in (s.chains or {}).items()},
-                          s.usage, (s.status or {}).get("limited") or {})
+                          s.usage, (s.status or {}).get("limited") or {}, now=s.now)
 
 
 _SHORT_WINDOW_LABEL = {"five_hour": "5h", "hourly": "1h", "daily": "24h"}
@@ -536,7 +536,7 @@ def _block(r, level: int) -> list[str]:
     worse than a harness whose detail is missing.
     """
     kinds = ["meter"]
-    if level >= 3 and r.short_utilization is not None:
+    if level >= 3 and (r.short_utilization is not None or r.short_expired):
         kinds.append("short")
     if level >= 2:
         kinds.append("roles")
@@ -572,6 +572,8 @@ def draw_harness_rows(p: Painter, y: int, x: int, w: int, h: int, rows: list, no
                 util = r.utilization
                 delta = f" {r.delta:+.0f}" if r.delta is not None and abs(r.delta) >= 0.5 else ""
                 text = ("  —" if r.idle else "  ·") if util is None else f"{util * 100:3.0f}%{delta}"
+                if r.expired:
+                    text = "reset · awaiting reading"
                 pair = PAIR_RED if (r.limited or (util is not None and util >= 0.9)) else None
                 label = r.name + (" !" if r.limited else "")
                 meter(p, y, x, w, label, (util or 0.0), 1.0, text, pair=pair,
@@ -583,7 +585,7 @@ def draw_harness_rows(p: Painter, y: int, x: int, w: int, h: int, rows: list, no
                 left = (f"  resets {fmt_duration(r.short_resets_at - now)}"
                         if r.short_resets_at and r.short_resets_at > now else "")
                 meter(p, y, x + 2, w - 2, _SHORT_WINDOW_LABEL.get(r.short_window, r.short_window),
-                      util, 1.0, f"{util * 100:3.0f}%{left}",
+                      util, 1.0, ("reset · awaiting reading" if r.short_expired else f"{util * 100:3.0f}%{left}"),
                       pair=PAIR_RED if util >= 0.9 else None, label_w=5)
             else:
                 p.text(y, x + 2, _roles_line(r, w - 2), t.attr(PAIR_INACTIVE), width=w - 2)

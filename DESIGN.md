@@ -130,7 +130,7 @@ failure; it is a recorded event and the loop continues.
 | **COMMIT** | Git guard commits whatever changed on the run branch. No change, no commit. | ouroboros (local) |
 | **CRITIC** | `actor-critic` and `council` modes, only when something changed. Reads the diff with read-only tools. `accept` or `reject` with `must_fix`. | critic (headless call) |
 | **OVERSEE** | Read the actor's final message, the frontier and plan, the critique, the diff stat. Did it ask a question? Did it claim done? Is it stuck? Answer as the user would. | overseer (headless call, cheap model) |
-| **RECONCILE** | Hypergraph only. Fold recorded impacts into the state graph. Runs after `reconcile_every` worked iterations, at `pressure` unreconciled nodes, or at once after a directive that declared gaps. | maintainer (headless call) |
+| **RECONCILE** | Hypergraph only. Fold recorded impacts into the state graph. Runs after `reconcile_every` iterations with changes or records, at `pressure` unreconciled nodes, or at once after a directive that declared gaps. | maintainer (headless call) |
 | **PLAN** | After every successful RECONCILE, and after `done_accepted`. One `Bet:` record folded into the plan view. Handoff repos: every `plan.every` worked iterations. | planner (headless call) |
 
 **ORIENT, WORK, and RECORD are one call**, not three. The prompt tells the
@@ -172,7 +172,7 @@ Rules Ouroboros enforces for hypergraph mode:
 - The run branch `ouroboros/<run>` is the **single-writer branch for the run**.
   Only the RECONCILE step writes state nodes. Only one RECONCILE runs at a time.
 - The actor prompt says: *never reconcile, never write state nodes, record only.*
-- RECONCILE triggers: every `reconcile_every: 5` iterations, **or** when ORIENT
+- RECONCILE triggers: every `reconcile_every: 5` iterations with changes or records, **or** when ORIENT
   reports a fat unreconciled tail (the skill's own pressure trigger).
 - The critic sees the diff, which includes the record node file. A unit with
   no record node is reported to the overseer as `handoff recorded: NO` and the
@@ -419,6 +419,9 @@ yet.
   `runs/<run>/reverted/<n>.patch` so the memory can cite it as a dead end.
 - Reconcile and plan passes commit as `reconcile:` / `plan:` (the agent's own
   commit) or `ouroboros #<n>: reconcile|plan — ...` (the loop's catch-all).
+  All catch-all commits skip an unchanged tree, including when the role already
+  committed its work. Unchanged, unrecorded actor turns do not advance maintenance
+  or planning counters or dispatch those passes.
 - Never force-push. Never touch `main`. Never rebase. The morning merge is
   yours. Merge with a merge commit: record nodes cite commit SHAs, so a squash
   or rebase dangles them.
@@ -443,6 +446,12 @@ are logged in with a subscription and nothing is billed per call. Ouroboros
 sums it and labels it *API-equivalent cost*: a measure of how much work the
 run did, and a cap you can set, not a bill. Codex and Pi report tokens rather
 than dollars; their cost stays at zero until a price table exists.
+
+Subscription readings are recorded in call order, including failed attempts
+before a fallback switches providers. An earlier actor reading must not overwrite
+later critic, overseer, maintainer, or planner readings. The TUI treats a window
+whose reset time has passed as **reset · awaiting reading**, until the provider
+reports a fresh window; it does not invent 0% or 100% from the clock or a limit error.
 
 Resilience. These are not stop conditions. The loop absorbs them:
 
@@ -802,7 +811,7 @@ Facts from the run, and what changed because of each.
 |---|---|
 | "You've hit your session limit · resets 2:50am (Europe/Madrid)" was not recognised as retriable; 63 of 90 iterations were empty commits, pointless reconcile passes, and rules-fallback `stuck`/`revert` verdicts on 0-byte patches. | `Result.kind` classifies limits; reset time parsed from five message shapes; wait until one minute past the reset (cap 6 h); fallback chains switch harness instead of waiting; a limit with no time gets a doubling cooldown. |
 | The actor committed on its own, so the loop saw a clean tree and counted "no changes" streaks while work was landing. | Changed = HEAD moved or tree dirty. |
-| Failed iterations still committed (empty), ticked the reconcile counter, and triggered maintainer passes. | A failed iteration commits nothing, counts nothing, reconciles nothing. Empty commits are gone entirely. |
+| Failed iterations still committed (empty), ticked the reconcile counter, and triggered maintainer passes. | A failed iteration commits nothing, counts nothing, reconciles nothing. Empty commits are skipped by default, including reconcile catch-all commits (the nt3 audit found that missed path). Unchanged, unrecorded turns no longer trigger bookkeeping passes. |
 | At iteration 50 the overseer rejected "done" with "file lifecycle 0/3" while all three had shipped: it counted boxes in a static file. | The charter/plan split (section 20). Criteria become gaps on the frontier; the overseer judges against the frontier and the plan; a ticked box declares no gap. |
 | The frontier had 3 open nodes and the fine grain lived only in goal.md, so the actor was steered by a document nothing updates. | The plan view (`short` / `medium` / `long`) and the planner role. |
 | The horizon ladder worked: the actor took rungs in order and never ran dry. | Kept as the seed of the plan. |

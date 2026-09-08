@@ -207,6 +207,8 @@ class HarnessRow:
     short_window: str = ""                                # the sub-day window, when the harness reports one
     short_utilization: float | None = None
     short_resets_at: float | None = None
+    short_expired: bool = False
+    expired: bool = False
     limited: bool = False
     limit_note: str = ""
 
@@ -245,12 +247,13 @@ def _shortest_window(snap: dict) -> tuple[str, dict] | None:
     return best
 
 
-def harness_roster(roles: dict, usage: dict, limited: dict | None = None) -> list[HarnessRow]:
+def harness_roster(roles: dict, usage: dict, limited: dict | None = None, *, now: float | None = None) -> list[HarnessRow]:
     """Invert the role config into one row per harness, joined to what it has used.
 
     Roles map harness -> job; the panel wants job -> harness, so that a night spent
     on the fallback reads as one line rather than five.
     """
+    now = time.time() if now is None else now
     limited = limited or {}
     rows: dict[str, HarnessRow] = {}
 
@@ -277,6 +280,9 @@ def harness_roster(roles: dict, usage: dict, limited: dict | None = None) -> lis
         r.window, w = best
         r.utilization = w.get("utilization")
         r.resets_at = w.get("resets_at")
+        r.expired = r.resets_at is not None and r.resets_at <= now
+        if r.expired:
+            r.utilization = None
         first = ((snap or {}).get("first_windows") or {}).get(r.window)
         if first is not None and r.utilization is not None:
             r.delta = (r.utilization - first) * 100
@@ -285,6 +291,9 @@ def harness_roster(roles: dict, usage: dict, limited: dict | None = None) -> lis
             r.short_window, sw = short
             r.short_utilization = sw.get("utilization")
             r.short_resets_at = sw.get("resets_at")
+            r.short_expired = r.short_resets_at is not None and r.short_resets_at <= now
+            if r.short_expired:
+                r.short_utilization = None
 
     # Working harnesses first, then ones that only ever stood by.
     return sorted(rows.values(), key=lambda r: (r.idle, not r.roles, r.name))

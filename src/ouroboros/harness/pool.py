@@ -14,12 +14,14 @@ from pathlib import Path
 from typing import Callable
 
 from .base import Harness, Result
+from ..usage import UsageLedger
 
 Log = Callable[[str], None]
 
 
 @dataclass
 class LimitBoard:
+    usage: UsageLedger = field(default_factory=UsageLedger)
     cooldown: float = 1800.0        # block length when the reset time is unknown
     max_cooldown: float = 10800.0
     transient_strikes: int = 3      # transient errors in a row that count as a limit
@@ -132,6 +134,7 @@ class PooledHarness:
                 result = harness.run(prompt, cwd=cwd, timeout=timeout, resume=own_session, model=entry_model, **kw)
             except Exception as exc:  # a driver bug must not stop the loop
                 result = Result(exit_code=-1, error=f"harness raised {exc!r}")
+            self.board.usage.record(result.usage)
             if result.session_id:
                 self._session_owner[result.session_id] = harness.name
             kind = result.kind
