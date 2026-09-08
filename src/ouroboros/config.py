@@ -110,6 +110,25 @@ class HypergraphConfig(BaseModel):
     budget_units: int = 1      # dispatch budget per iteration
 
 
+class LoopConfig(BaseModel):
+    """Motion-without-progress detection (see loops.py).
+
+    Thresholds are counted in iterations and are deliberately generous: a real
+    loop is sustained, and a signal that fires on a slow afternoon is a signal
+    the operator learns to ignore. Any of them may be null to switch that
+    signal off. None of them can stop a run -- a loop is a thing to break out
+    of, not a thing to die of.
+    """
+
+    product_after: int | None = 8     # iterations changing only bookkeeping
+    frontier_after: int | None = 30   # iterations with the frontier unmoved
+    repeat_bet_after: int | None = 3  # planner bets restating an earlier bet
+    bet_similarity: float = 0.5       # Jaccard over content words; nt3 healthy peaked at 0.33
+    bet_window: int = 6               # how many recent bets a new one is compared against
+    escalate_every: int = 5           # iterations past the threshold per escalation step
+    rotate: bool = True               # step 3 may switch the actor to its fallback
+
+
 class PlanConfig(BaseModel):
     """The self-evolving plan layer (DESIGN.md section 20)."""
     enabled: bool | None = None   # None = on for every memory adapter that supports it
@@ -143,6 +162,7 @@ class Config(BaseModel):
     hypergraph: HypergraphConfig = Field(default_factory=HypergraphConfig)
     limits: LimitConfig = Field(default_factory=LimitConfig)
     plan: PlanConfig = Field(default_factory=PlanConfig)
+    loop: LoopConfig = Field(default_factory=LoopConfig)
 
     @property
     def branch(self) -> str:

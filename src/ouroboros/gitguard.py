@@ -67,6 +67,11 @@ class GitGuard:
     def diff_stat(self, a: str, b: str = "HEAD") -> str:
         return self.git("diff", "--stat", a, b, check=False)
 
+    def changed_files(self, a: str, b: str = "HEAD") -> list[str]:
+        """Repo-relative paths touched between two commits. Empty when either ref is unknown."""
+        out = self.git("diff", "--name-only", a, b, check=False)
+        return [line.strip() for line in out.splitlines() if line.strip()]
+
     def branch_exists(self, name: str) -> bool:
         return subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{name}"], cwd=str(self.repo), capture_output=True).returncode == 0
 

@@ -18,7 +18,8 @@ from .harness.base import Harness, Result
 from .memory.base import MemoryAdapter
 from .recorder import Recorder
 from .roles.actor import build_actor_prompt
-from .roles.overseer import Overseer, RulesOverseer, Signals, Verdict
+from .loops import LoopDetector, loop_reply
+from .roles.overseer import HISTORY_WINDOW, Overseer, RulesOverseer, Signals, Verdict
 
 Sleeper = Callable[[float], None]
 
@@ -87,9 +88,13 @@ class Engine:
     session_uses: int = 0
     failed_iterations: int = 0
     stuck_iterations: int = 0
+    loops: LoopDetector = None   # type: ignore[assignment]  # built in __post_init__
+    forced_plan: str | None = None   # a loop escalation demanding the next planner pass
     outcomes: list[IterationOutcome] = field(default_factory=list)
 
     def __post_init__(self) -> None:
+        if self.loops is None:
+            self.loops = LoopDetector(self.config.loop)
         # All role pools share the board; retain readings from failed fallback attempts too.
         board = getattr(self.harness, "board", None)
         if board is not None:
@@ -163,14 +168,29 @@ class Engine:
             self.error_streak = 0
         self.last_error = result.error
 
+        # What this iteration moved, as opposed to what it touched. The frontier
+        # is sampled here rather than at the end of the iteration, so it reflects
+        # the previous maintainer pass -- a constant lag, and the signal only ever
+        # compares one iteration against the next.
+        files = self.git.changed_files(head_before, commit or "HEAD") if changed else []
+        try:
+            frontier = self.memory.frontier_fingerprint()
+        except Exception as exc:   # a memory bug must not stop the loop
+            self.recorder.log(f"frontier_fingerprint raised {exc!r}")
+            frontier = None
+        self.loops.observe_iteration(files=files, frontier=frontier, subject=summary)
+        loop = self.loops.report()
+
         critique = self._critique(n, result.text, head_before, commit) if (worked and changed) else None
         self._status("oversee", iteration=n)
         signals = Signals(
             result.text, changed, recorded, self.no_change_streak, self.error_streak, result.error,
             iteration=n, diff_stat=self.git.diff_stat(head_before, commit),
-            history=self.recorder.read_jsonl(self.recorder.overseer)[-3:],
+            history=self.recorder.read_jsonl(self.recorder.overseer)[-HISTORY_WINDOW:],
             memory=self._memory_context(),
             critique=critique.describe() if critique else "",
+            loop=self.loops.describe(),
+            loop_fired=loop.describe() if loop else "",
         )
         try:
             verdict = self.overseer.judge(signals)
@@ -183,6 +203,8 @@ class Engine:
                         harness=_harness_of(self.overseer))
         self.recorder.decision(iteration=n, verdict=verdict.verdict, reason=verdict.reason, reply=verdict.reply, overseer=verdict.source, cost=overseer_cost)
         self.recorder.step(iteration=n, step="oversee", verdict=verdict.verdict, source=verdict.source, reason=verdict.reason)
+        if loop is not None:
+            self._escalate(n, loop, verdict)
 
         idle = False
         if verdict.verdict == "done_accepted":
@@ -227,7 +249,10 @@ class Engine:
         if progressed and verdict.verdict != "revert":
             self.since_plan += 1
             self._maybe_reconcile(n)
-            if verdict.verdict == "done_accepted":
+            if self.forced_plan:
+                self._maybe_plan(n, f"loop escalation: {self.forced_plan}")
+                self.forced_plan = None
+            elif verdict.verdict == "done_accepted":
                 self._maybe_plan(n, "done accepted: plan the next directions")
             elif not self.memory.reconcile_prompt() and self.config.plan.every and self.since_plan >= self.config.plan.every:
                 self._maybe_plan(n, f"every {self.config.plan.every} iterations")
@@ -257,6 +282,49 @@ class Engine:
         return out
 
     # ------------------------------------------------------------------
+    def _escalate(self, n: int, loop, verdict: Verdict) -> None:
+        """Name the loop, then force a re-plan, then change the model.
+
+        There is no fourth step. A loop is a thing to break out of, not a thing
+        to die of: a false positive must never end a run nobody is awake for.
+        The ladder ends at "try a different model" and the loop continues either
+        way, so a wrong signal costs one wasted prompt, not a night.
+        """
+        step = self.loops.escalation(loop)
+        act = self.loops.should_act(loop)
+        self.recorder.step(iteration=n, step="loop", signal=loop.signal, streak=loop.streak,
+                           escalation=step, acted=act, evidence=loop.evidence[:4])
+        # Only a `continue` is overruled. If the overseer already saw something
+        # worse -- a revert, an unanswered question -- that judgement wins.
+        if verdict.verdict == "continue":
+            verdict.verdict = "looping"
+            verdict.reason = f"{loop.signal} x{loop.streak}; overseer said continue"
+        # Naming the loop costs nothing, so the actor hears about it every time.
+        verdict.reply = f"{loop_reply(loop, step)}\n\n{verdict.reply}".strip()
+        if not act:
+            return
+        self.recorder.log(f"[{n}] loop: {loop.signal} x{loop.streak} (escalation {step}/3)")
+        if step >= 2:
+            self.forced_plan = f"{loop.signal} x{loop.streak}"
+        if step >= 3 and self.config.loop.rotate:
+            self._rotate_actor(f"{loop.signal} x{loop.streak}")
+
+    def _rotate_actor(self, why: str) -> None:
+        """Block the actor's current harness for a while, so its pool falls back.
+
+        A different model often breaks a rut that another prompt cannot. This
+        reuses the usage-limit machinery, so the harness un-blocks itself on the
+        board's cooldown and nothing has to remember to bring it back.
+        """
+        board = getattr(self.harness, "board", None)
+        if board is None or len(getattr(self.harness, "entries", []) or []) < 2:
+            return
+        name = self.harness.name
+        if board.is_blocked(name):
+            return
+        board.block(name, why=f"loop escalation: {why}"[:120])
+        self.recorder.log(f"loop: actor harness {name} rotated out ({why})")
+
     def _maybe_reconcile(self, n: int) -> None:
         try:
             due = self.memory.needs_reconcile()
@@ -302,7 +370,7 @@ class Engine:
         elapsed = self.budget.elapsed / 3600
         left = f"{max(stop.after_seconds / 3600 - elapsed, 0):.1f}h left" if stop.after_seconds else "no wall-clock cap"
         lines = [
-            f"- iterations so far: {self.iteration} {cap}; api-equivalent cost so far: ${self.budget.cost_usd:.2f}"
+            f"- iterations so far: {self.iteration} {cap}"
             + (f"; subscription usage: {'; '.join(self.budget.usage.lines())}" if self.budget.usage else ""),
             f"- run budget: {elapsed:.1f}h elapsed, {left}. Size the short horizon to what fits; the charter has no clock.",
         ]
@@ -310,6 +378,17 @@ class Engine:
             lines.append(f"- #{o.iteration}: {o.verdict.verdict} ({o.verdict.reason[:100]}); changed={o.changed} recorded={o.recorded}")
         if self.no_change_streak:
             lines.append(f"- iterations in a row with no change: {self.no_change_streak}")
+        lines.append(self.loops.describe())
+        loop = self.loops.report()
+        if loop is not None:
+            # The planner is the role that can end a loop cheapest, because a
+            # loop is usually the plan repeating itself, not the actor failing.
+            lines.append("")
+            lines.append("LOOP DETECTED — " + loop.describe())
+            lines.append(
+                "Do not restate the current bet. Pick a different charter criterion and bet on "
+                "that. If every criterion looks blocked, say which and why, one line each."
+            )
         return "\n".join(lines)
 
     def _maybe_plan(self, n: int, why: str) -> None:
@@ -340,10 +419,12 @@ class Engine:
             bet = self.memory.verify_bet(before)
         except Exception as exc:
             self.recorder.log(f"verify_bet raised {exc!r}")
+        near = self.loops.observe_bet(bet)
         sha = self.git.commit(f"ouroboros #{n}: plan — {(bet or 'no bet')[:60]}", allow_empty=False)
         self.budget.add(cost=result.cost_usd, usage=result.usage, harness=result.extra.get("harness"))
         self.recorder.step(iteration=n, step="plan", why=why, bet=bet, exit=result.exit_code, timed_out=result.timed_out,
-                           error=(result.error or None) and result.error[:200], sha=sha[:10], cost=result.cost_usd)
+                           error=(result.error or None) and result.error[:200], sha=sha[:10], cost=result.cost_usd,
+                           repeats=round(near, 2))
         self.since_plan = 0
         if not result.ok or not bet:
             self.recorder.log(f"[{n}] plan: no bet landed ({result.error or 'planner wrote nothing'})")

@@ -27,6 +27,14 @@ def works(did: str = "did a unit") -> Behavior:
     return b
 
 
+def records_only(did: str = "recorded the handoff") -> Behavior:
+    """Writes a handoff and nothing else: a diff that is all bookkeeping."""
+    def b(cwd: Path, prompt: str) -> Result:
+        _handoff(cwd, did)
+        return Result(text=f"I {did}. Next: more.", session_id="s1", cost_usd=0.5, turns=3)
+    return b
+
+
 def asks_question() -> Behavior:
     def b(cwd: Path, prompt: str) -> Result:
         _handoff(cwd, "paused to ask")

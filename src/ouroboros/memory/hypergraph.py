@@ -21,6 +21,9 @@ _GAP_LINE = re.compile(r"^- \[gap\] (\S+): (.*)$", re.MULTILINE)
 STATE_MD_LIMIT = 16000
 PLAN_MD_LIMIT = 4000
 _FRONTIER = re.compile(r"^## Frontier\s*$(.*?)(?=^## |\Z)", re.MULTILINE | re.DOTALL)
+# `- [working] **Title** (`slug`) — ...` anywhere in STATE.md. Status plus slug is
+# the whole of what "the frontier moved" means; the prose around it is not.
+_NODE_STATUS = re.compile(r"\[([a-z_]+)\]\s+\*\*.+?\*\*\s+\(`([a-z0-9-]+)`\)")
 
 
 def frontier_of(state_md: str) -> str:
@@ -361,6 +364,27 @@ class HypergraphMemory(BaseMemory):
                 self.last_record_slug = f.stem
                 return f"{f.stem} — {_title_of(f)}"
         return None
+
+    def frontier_fingerprint(self) -> str | None:
+        """Every state node's status, plus how many charter criteria are still open.
+
+        These are the only two things that make a run's night worth having: a
+        node changed status, or a criterion got ticked. Records, plans, audits
+        and docs are how those happen, not whether they did. nt3 wrote 22,437
+        lines and this digest changed once in 201 iterations.
+        """
+        if not self.state_md.exists():
+            return None
+        try:
+            text = self.state_md.read_text()
+        except OSError:
+            return None
+        pairs = sorted({(slug, status) for status, slug in _NODE_STATUS.findall(text)})
+        if not pairs:
+            return None
+        open_criteria = len(charter.done_criteria(self.goal_text or ""))
+        body = f"{open_criteria}|" + ";".join(f"{slug}={status}" for slug, status in pairs)
+        return hashlib.sha256(body.encode()).hexdigest()[:16]
 
     def mark_iteration(self) -> None:
         self.since_reconcile += 1

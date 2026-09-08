@@ -11,7 +11,12 @@ from typing import Protocol
 
 from ..harness.base import Harness, Result
 
-VERDICTS = ("continue", "answer", "done_rejected", "done_accepted", "stuck", "revert")
+VERDICTS = ("continue", "answer", "done_rejected", "done_accepted", "stuck", "looping", "revert")
+
+# How many past decisions the overseer sees. Three was not enough to notice a
+# pattern: nt3 re-derived "stuck" from scratch 113 times because each call could
+# only see the two before it. A loop is only visible over a window.
+HISTORY_WINDOW = 20
 
 # Claude needs a second turn to emit structured output even with tools off; 3 leaves slack.
 OVERSEER_MAX_TURNS = 3
@@ -39,6 +44,12 @@ STUCK_REPLY = (
     "The last iterations changed nothing. Apply the exhaustion policy from the goal: "
     "pick a rung of the horizon ladder that still has items, or propose three new "
     "directions in the plan, pick one, and do one unit of it now."
+)
+LOOPING_REPLY = (
+    "The last iterations changed files but moved nothing. Writing about the work is "
+    "not the work. Name one open criterion from the goal's done criteria, and make the "
+    "smallest change to a real file that moves it. Do not write another record about "
+    "what you plan to do."
 )
 REVERT_REPLY = (
     "The same error happened three times. That path is dead. Record it as a dead end "
@@ -74,6 +85,8 @@ class Signals:
     history: list[dict] = field(default_factory=list)
     memory: str = ""   # what the memory adapter says is true now: frontier, plan
     critique: str = ""  # the critic's verdict this iteration, if a critic ran
+    loop: str = ""      # the loop detector's three counters (loops.py)
+    loop_fired: str = ""  # the signal that has crossed its threshold, if any
 
     def describe(self) -> str:
         lines = [
@@ -82,6 +95,10 @@ class Signals:
             f"- iterations in a row with no changes: {self.no_change_streak}",
             f"- identical errors in a row: {self.error_streak}",
         ]
+        if self.loop:
+            lines.append(self.loop)
+        if self.loop_fired:
+            lines.append(f"- LOOP DETECTED: {self.loop_fired}")
         if self.error:
             lines.append(f"- harness error: {self.error[:300]}")
         if self.critique:
@@ -118,6 +135,8 @@ class RulesOverseer:
             return Verdict("revert", REVERT_REPLY, f"same error {s.error_streak}x")
         if s.no_change_streak >= 3:
             return Verdict("stuck", STUCK_REPLY, f"no changes for {s.no_change_streak} iterations")
+        if s.loop_fired:
+            return Verdict("looping", LOOPING_REPLY, f"loop detector: {s.loop_fired}")
         if _DONE.search(tail):
             return Verdict("done_rejected", DONE_REPLY, "actor claimed done; rules never accept")
         if _QUESTION.search(tail):
@@ -138,7 +157,7 @@ def load_template() -> str:
 def build_overseer_prompt(*, goal_text: str, s: Signals, template: str | None = None) -> str:
     tpl = template or load_template()
     hist = "\n".join(
-        f"- #{h.get('iteration')}: {h.get('verdict')} — {h.get('reason')}" for h in s.history[-3:]
+        f"- #{h.get('iteration')}: {h.get('verdict')} — {h.get('reason')}" for h in s.history[-HISTORY_WINDOW:]
     ) or "(none yet)"
     return (
         tpl.replace("{iteration}", str(s.iteration))

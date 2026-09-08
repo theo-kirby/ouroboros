@@ -12,7 +12,7 @@ from ouroboros.harness.base import Result
 
 from conftest import git
 from fake_harness import (FakeHarness, asks_question, claims_done, crashes, no_record, nothing,
-                          raises, rate_limited, times_out, works)
+                          raises, rate_limited, records_only, times_out, works)
 
 
 def make_engine(repo: Path, harness: FakeHarness, *, max_iterations=5, resume_for=1, sleeps=None,
@@ -351,3 +351,77 @@ def test_max_stuck_none_never_stops(repo):
     h = FakeHarness([], default=nothing())
     eng = make_engine(repo, h, sleeps=[], stop=StopConfig(max_iterations=6, max_stuck=None))
     assert "max_iterations" in eng.run()
+
+
+# -- loop detection: motion that is not progress ----------------------------
+
+def test_records_without_product_changes_become_a_looping_verdict(repo):
+    from ouroboros.config import LoopConfig
+    h = FakeHarness([], default=records_only())
+    eng = make_engine(repo, h, max_iterations=4)
+    eng.config.loop = LoopConfig(product_after=2, frontier_after=None)
+    eng.loops.cfg = eng.config.loop
+    eng.run()
+    verdicts = [o.verdict.verdict for o in eng.outcomes]
+    # The first two iterations only build the streak; the threshold is crossed on the second.
+    assert verdicts[0] == "continue"
+    assert verdicts[1:] == ["looping", "looping", "looping"]
+    assert "not the work" in eng.outcomes[1].verdict.reply or "instead of doing it" in eng.outcomes[1].verdict.reply
+
+
+def test_one_real_change_clears_the_streak(repo):
+    from ouroboros.config import LoopConfig
+    h = FakeHarness([records_only(), records_only(), works("a real unit"), records_only()])
+    eng = make_engine(repo, h, max_iterations=4)
+    eng.config.loop = LoopConfig(product_after=2, frontier_after=None)
+    eng.loops.cfg = eng.config.loop
+    eng.run()
+    assert [o.verdict.verdict for o in eng.outcomes] == ["continue", "looping", "continue", "continue"]
+
+
+def test_the_loop_is_named_to_the_actor_in_the_next_prompt(repo):
+    from ouroboros.config import LoopConfig
+    h = FakeHarness([], default=records_only("Record the role handoff"))
+    eng = make_engine(repo, h, max_iterations=3)
+    eng.config.loop = LoopConfig(product_after=1, frontier_after=None)
+    eng.loops.cfg = eng.config.loop
+    eng.run()
+    assert "Record the role handoff" in h.prompts[-1]
+    assert "not a record and not a plan" in h.prompts[-1]
+
+
+def test_escalation_rotates_the_actor_to_its_fallback(repo):
+    """Step 3 blocks the active harness on the shared board, so the pool falls back."""
+    from ouroboros.config import LoopConfig
+    from ouroboros.harness.pool import LimitBoard, PooledHarness
+    first, second = FakeHarness([], default=records_only()), FakeHarness([], default=works("b"))
+    first.name, second.name = "first", "second"
+    board = LimitBoard()
+    pool = PooledHarness([(first, None), (second, None)], board)
+    eng = make_engine(repo, pool, max_iterations=12)
+    eng.config.loop = LoopConfig(product_after=2, frontier_after=None, escalate_every=2)
+    eng.loops.cfg = eng.config.loop
+    eng.run()
+    assert board.is_blocked("first"), "the looping harness should have been rotated out"
+    assert second.calls, "the fallback should have taken a turn"
+
+
+def test_a_loop_forces_a_planner_pass_that_is_told_not_to_repeat_itself(repo):
+    from ouroboros.config import LoopConfig
+    planner = FakeHarness([], default=nothing())
+    h = FakeHarness([], default=records_only())
+    eng = make_engine(repo, h, max_iterations=6, planner=planner)
+    eng.config.loop = LoopConfig(product_after=1, frontier_after=None, escalate_every=1)
+    eng.loops.cfg = eng.config.loop
+    eng.run()
+    assert planner.prompts, "escalation step 2 should have forced a planner pass"
+    assert any("LOOP DETECTED" in p for p in planner.prompts)
+
+
+def test_a_repeated_bet_is_measured_even_when_the_actor_is_productive(repo):
+    """The planner restating itself is a loop of its own, on the plan rather than the work."""
+    eng = make_engine(repo, FakeHarness([], default=works()), max_iterations=1)
+    for n in ("fifteen", "twenty", "twenty-four", "thirty-four"):
+        eng.loops.observe_bet(f"Bet: retain the conditional rehearsal after {n} unchanged iterations")
+    report = eng.loops.report()
+    assert report is not None and report.signal == "repeat_bet"

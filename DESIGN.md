@@ -163,6 +163,57 @@ The nt3 run on cadex is why this exists: 113 consecutive stuck iterations, at
 roughly one every 15 seconds, waiting for a wall-clock boundary the planner had
 written into the plan.
 
+### 6b. Motion is not progress
+
+`stuck` measures the filesystem: an iteration that produced no diff. That is the
+cheap half of the problem. The expensive half is a loop that keeps working and
+ships nothing — records about records, audits of what was already audited, plans
+that restate the last plan, handoffs from the actor to a role that is the same
+agent under a different prompt. All of those write files, so a diff-based signal
+reads them as progress and the overseer says `continue`.
+
+The same nt3 run is the worked example on both counts: 201 iterations, 22,437
+lines, 128 record nodes, and **one** node moved on the frontier.
+
+So `loops.py` measures the other thing. Three counters, all mechanical, because
+an agent asked "are you looping?" always finds a reason why this time is
+different:
+
+| counter | what it counts | default |
+|---|---|---|
+| `no_product` | iterations whose diff touched only `.hypergraph/`, `.ouroboros/`, `STATE.md`, `PLAN.md` | 8 |
+| `no_frontier` | iterations after which the memory's frontier digest was unchanged | 30 |
+| `repeat_bet` | planner bets whose content words overlap a recent bet by ≥ 0.5 | 3 |
+
+Each resets the moment the thing it measures happens. A memory adapter with no
+frontier returns `None` and switches that counter off: unknown is not the same
+as unmoved. The numbers reach the overseer in its signal block, and the overseer
+may disagree with them — but the ladder below runs on the numbers regardless.
+
+**The ladder, and why it has no fourth step.**
+
+1. **Name it.** The evidence goes into the actor's next prompt: the streak, and
+   the subjects of the commits that made it.
+2. **Ban the bet.** The next planner pass is forced, and told to pick a
+   different charter criterion.
+3. **Change the model.** The actor's harness is blocked on the shared
+   `LimitBoard`, so its pool falls back and the board un-blocks it later on its
+   own cooldown.
+
+There is no step 4. A loop is a thing to break out of, not a thing to die of, so
+none of this can stop a run: a false positive costs one wasted prompt, never a
+night nobody is awake for. Step 1 is free and repeats every iteration; steps 2
+and 3 cost real calls, so they fire once per `escalate_every` iterations rather
+than on every one — without that gate, nt3's 157-iteration frontier streak would
+have forced 157 re-plans.
+
+**Replayed against the real nt3 log**, each counter alone would first have fired
+at iteration **#50** (`no_product`, one iteration into the stall), **#74**
+(`no_frontier`) and **#118** (`repeat_bet`), against zero firings in the run's
+two productive stretches. `no_product` is the signal that earns its place;
+`repeat_bet` is a backstop for a planner that repeats itself outright, and does
+not catch a paraphrase.
+
 ## 7. Memory adapters
 
 ### 7a. Hypergraph (default when available)
@@ -251,7 +302,7 @@ charter (section 21 says why).
 It returns strict JSON:
 
 ```json
-{ "verdict": "continue | answer | done_rejected | done_accepted | stuck | revert",
+{ "verdict": "continue | answer | done_rejected | done_accepted | stuck | looping | revert",
   "reply": "text injected into the next prompt",
   "reason": "one sentence for the log" }
 ```
@@ -263,6 +314,7 @@ Triggers, in order:
 | Ends with a question | Answer it using the goal doc's **question policy**. Inject the answer. |
 | Claims "done" or "complete" | Check against **done criteria**. Usually `done_rejected` + "here is what is still open". |
 | No file changes for 3 iterations | `stuck`. Inject a nudge from the **exhaustion policy**. |
+| Files change but nothing moves (section 6b) | `looping`. Name the loop with its evidence, then force a re-plan, then change the model. |
 | Same error 3 times in a row | `revert` to the last accepted commit, inject "that path is dead, record it as a dead end". |
 | Anything else | `continue`. |
 
@@ -649,6 +701,14 @@ plan:
   view: plan                # the hypergraph view name
   md: PLAN.md               # its rendered snapshot
   max_new_directions: 1     # new directions per planner pass
+loop:                       # motion-without-progress detection (section 6b)
+  product_after: 8          # iterations changing only bookkeeping; null turns it off
+  frontier_after: 30        # iterations with the frontier digest unmoved
+  repeat_bet_after: 3       # planner bets restating a recent bet
+  bet_similarity: 0.5       # content-word overlap that counts as a restatement
+  bet_window: 6             # how many recent bets a new one is compared against
+  escalate_every: 5         # iterations past the threshold per rung of the ladder
+  rotate: true              # rung 3 may switch the actor to its fallback
 ```
 
 A fallback is `{ harness: codex, model: null }`; the chain is the role's own

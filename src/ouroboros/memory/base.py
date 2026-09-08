@@ -45,6 +45,15 @@ class MemoryAdapter(Protocol):
     def verify_bet(self, before: Any) -> str | None:
         """The bet the planner wrote since `before` (a slug or title), or None."""
 
+    def frontier_fingerprint(self) -> str | None:
+        """A digest of the frontier as it stands, or None when this memory has no frontier.
+
+        Two iterations with the same fingerprint moved nothing that matters,
+        however many files they wrote. Returning None disables the loop
+        detector's frontier signal for this adapter, which is the honest
+        answer: unknown is not the same as unmoved.
+        """
+
 
 class BaseMemory:
     """No-op lifecycle defaults."""
@@ -76,4 +85,7 @@ class BaseMemory:
         return None
 
     def verify_bet(self, before) -> str | None:
+        return None
+
+    def frontier_fingerprint(self) -> str | None:
         return None
