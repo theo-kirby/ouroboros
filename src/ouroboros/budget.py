@@ -20,9 +20,11 @@ class BudgetClock:
         self.usage = UsageLedger()
         self.iterations = 0
         self.done_streak = 0
+        self.stuck_streak = 0
 
     def add(self, *, cost: float | None = None, usage: UsageSnapshot | None = None,
-            iteration: bool = False, done_accepted: bool | None = None) -> None:
+            iteration: bool = False, done_accepted: bool | None = None,
+            stuck: bool | None = None) -> None:
         if cost:
             self.cost_usd += cost
         if usage:
@@ -33,6 +35,10 @@ class BudgetClock:
             self.done_streak += 1
         elif done_accepted is False:
             self.done_streak = 0
+        if stuck is True:
+            self.stuck_streak += 1
+        elif stuck is False:
+            self.stuck_streak = 0
 
     @property
     def elapsed(self) -> float:
@@ -55,6 +61,8 @@ class BudgetClock:
             return f"until {s.until} reached"
         if s.on_done_accepted is not None and self.done_streak >= s.on_done_accepted:
             return f"overseer accepted done {self.done_streak}x in a row"
+        if s.max_stuck is not None and self.stuck_streak >= s.max_stuck:
+            return f"overseer called the loop stuck {self.stuck_streak}x in a row"
         return None
 
 

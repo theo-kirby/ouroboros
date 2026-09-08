@@ -311,3 +311,43 @@ def test_unchanged_iterations_do_not_schedule_bookkeeping(repo, monkeypatch):
     monkeypatch.setattr(eng, '_maybe_reconcile', lambda n: reconciled.append(n))
     eng.run()
     assert not marked and not reconciled and eng.since_plan == 0
+
+
+def test_stuck_verdicts_slow_down(repo):
+    # An actor that changes nothing: the rules overseer calls it stuck from the third
+    # iteration on. Repeating that at full speed still pays for a critic, maintainer,
+    # planner and overseer call every time, so the streak has to back off.
+    h = FakeHarness([], default=nothing())
+    sleeps = []
+    eng = make_engine(repo, h, max_iterations=7, sleeps=sleeps)
+    eng.run()
+    # stuck from the 3rd iteration; the 7th hits max_iterations and stops without sleeping
+    assert [s for s in sleeps if s >= 60] == [60, 120, 300, 600]
+
+
+def test_a_change_clears_the_stuck_streak(repo):
+    h = FakeHarness([nothing(), nothing(), nothing(), nothing(), works("out")])
+    sleeps = []
+    eng = make_engine(repo, h, max_iterations=5, sleeps=sleeps)
+    eng.run()
+    assert [s for s in sleeps if s >= 60] == [60, 120]
+    assert eng.stuck_iterations == 0 and eng.budget.stuck_streak == 0
+
+
+def test_max_stuck_stops_the_run(repo):
+    # The night that is never coming back: stop instead of spending until the wall clock.
+    h = FakeHarness([], default=nothing())
+    sleeps = []
+    eng = make_engine(repo, h, sleeps=sleeps,
+                      stop=StopConfig(max_iterations=50, max_stuck=3))
+    reason = eng.run()
+    assert "stuck 3x in a row" in reason
+    assert eng.iteration < 50
+    # the stop wins over the backoff: no sleeping on the iteration that ends the run
+    assert [s for s in sleeps if s >= 60] == [60, 120]
+
+
+def test_max_stuck_none_never_stops(repo):
+    h = FakeHarness([], default=nothing())
+    eng = make_engine(repo, h, sleeps=[], stop=StopConfig(max_iterations=6, max_stuck=None))
+    assert "max_iterations" in eng.run()

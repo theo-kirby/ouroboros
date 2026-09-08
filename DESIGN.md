@@ -152,6 +152,17 @@ policy of section 12), nothing is committed, the reconcile counter does not
 tick, no maintainer runs, and the error rides into the next prompt. Repeated
 failures back off 1m, 2m, 5m, 10m.
 
+**A stuck iteration is expensive.** `stuck` means the opposite of a failure: the
+actor ran fine and changed nothing, because it is waiting on a clock, a quota,
+or an instruction it cannot act on. Nothing about repeating it immediately makes
+it truer, and every repeat still pays for a critic, a maintainer, a planner and
+an overseer call. So a run of `stuck` verdicts backs off on the same table --
+1m, 2m, 5m, 10m, then 10m forever -- and `stop.max_stuck` (25 by default) ends a
+night that is not coming back. Any verdict other than `stuck` clears the streak.
+The nt3 run on cadex is why this exists: 113 consecutive stuck iterations, at
+roughly one every 15 seconds, waiting for a wall-clock boundary the planner had
+written into the plan.
+
 ## 7. Memory adapters
 
 ### 7a. Hypergraph (default when available)
@@ -436,8 +447,10 @@ stop:
   after: 10h              # wall clock
   max_iterations: 200
   max_cost_usd: 50        # API-equivalent dollars; see the note below
+  max_usage: 0.8          # 0..1 of a subscription window; the meter for a subscription
   until: "2026-09-06T07:30"
   on_done_accepted: 3     # overseer accepted "done" this many times in a row
+  max_stuck: 25           # consecutive `stuck` verdicts; null to never stop
 ```
 
 **What "cost" means.** Claude Code prints `total_cost_usd` in its JSON result.
@@ -463,6 +476,7 @@ Resilience. These are not stop conditions. The loop absorbs them:
 | Usage limit ("session limit · resets 2:50am (Europe/Madrid)", `usage_limit_reached`) | Switch to the next harness in the chain. With no chain, sleep until one minute past the reset (capped at 6 h) or a growing cooldown when the message has no time. |
 | Auth expired | Block the harness on the limit board and use the next one. With no chain, backoff 10m and retry forever. Write `NEEDS_HUMAN.md` so the morning read shows it first. |
 | Context exhausted mid-call | The call ends. The recorder notices no record. Next prompt starts with "record first". |
+| Overseer returns `stuck` | Backoff: 1m, 2m, 5m, 10m, then 10m forever. The streak clears on any other verdict; `stop.max_stuck` in a row ends the run. |
 | Engine error (git, disk, a bug in a step) | Logged, 60 s backoff, next iteration. The loop only exits on a stop condition, Ctrl-C, or SIGTERM. |
 | Terminal dies (SIGHUP) | The logger falls back to file only and the loop keeps running. |
 | SIGTERM / `ouroboros stop` / Ctrl-C | Every harness child (process group, tmux window) is killed; status says `killed`. |
@@ -602,8 +616,10 @@ stop:                       # all optional; none set = run until killed
   after: null               # wall clock, e.g. 15h
   max_iterations: null
   max_cost_usd: null        # API-equivalent dollars, not a bill (section 12)
+  max_usage: null           # 0..1 of a subscription window
   until: null               # ISO timestamp
   on_done_accepted: null    # this many done_accepted in a row
+  max_stuck: 25             # this many `stuck` verdicts in a row; null to never stop
 handoff:
   recent: 3                 # handoff files shown to the actor
 hypergraph:

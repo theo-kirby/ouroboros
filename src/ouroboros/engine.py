@@ -81,6 +81,7 @@ class Engine:
     since_plan: int = 0
     session_uses: int = 0
     failed_iterations: int = 0
+    stuck_iterations: int = 0
     outcomes: list[IterationOutcome] = field(default_factory=list)
 
     def __post_init__(self) -> None:
@@ -225,12 +226,24 @@ class Engine:
             elif not self.memory.reconcile_prompt() and self.config.plan.every and self.since_plan >= self.config.plan.every:
                 self._maybe_plan(n, f"every {self.config.plan.every} iterations")
 
-        self.budget.add(cost=result.cost_usd, iteration=True, done_accepted=(verdict.verdict == "done_accepted") if verdict.verdict.startswith("done") else None)
+        self.budget.add(cost=result.cost_usd, iteration=True,
+                        done_accepted=(verdict.verdict == "done_accepted") if verdict.verdict.startswith("done") else None,
+                        stuck=(verdict.verdict == "stuck"))
         self._status("idle", iteration=n, last_verdict=verdict.verdict)
         out = IterationOutcome(n, result, verdict, commit, changed, recorded, critique)
         self.outcomes.append(out)
         if idle and self.budget.should_stop() is None:
             self._sleep(parse_duration(self.config.idle_interval) or 1800.0, "done accepted; report_done policy")
+        # A stuck verdict means the actor ran fine and changed nothing -- waiting on a
+        # clock, a quota, or an instruction it cannot act on. Repeating it at full speed
+        # buys nothing and still pays for a critic, maintainer, planner and overseer call
+        # every time, so slow down the same way a run of failed iterations does. The stop
+        # condition (stop.max_stuck) ends a night that is never going to recover.
+        self.stuck_iterations = self.stuck_iterations + 1 if verdict.verdict == "stuck" else 0
+        if self.stuck_iterations and self.budget.should_stop() is None:
+            self._sleep(backoff_seconds(self.stuck_iterations - 1),
+                        f"{self.stuck_iterations} stuck verdict(s) in a row")
+
         # a second net under the retry loop: iterations that keep failing for any reason slow down
         self.failed_iterations = 0 if result.ok or result.timed_out else self.failed_iterations + 1
         if self.failed_iterations and self.budget.should_stop() is None:
