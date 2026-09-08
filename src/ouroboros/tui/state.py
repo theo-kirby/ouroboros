@@ -250,7 +250,7 @@ def _shortest_window(snap: dict) -> tuple[str, dict] | None:
 def harness_roster(roles: dict, usage: dict, limited: dict | None = None, *, now: float | None = None) -> list[HarnessRow]:
     """Invert the role config into one row per harness, joined to what it has used.
 
-    Roles map harness -> job; the panel wants job -> harness, so that a night spent
+    Roles map harness -> job; the panel wants job -> harness, so that a run spent
     on the fallback reads as one line rather than five.
     """
     now = time.time() if now is None else now
@@ -358,7 +358,7 @@ _SHORT_WINDOW = {"five_hour": "5h", "seven_day": "7d", "daily": "24h", "hourly":
 def usage_parts(usage: dict, money: dict, now: float) -> list[tuple[str, float | None]]:
     """`[("claude 7d 54% +19", 0.54), ("pi $2.50", None)]`, longest window first.
 
-    What a night costs is the slice of a rationing window it burns, so that is what the
+    What a run costs is the slice of a rationing window it burns, so that is what the
     run strip shows. A window is a gauge that drains on its own, so one whose reset has
     passed reads as empty rather than as whatever it said before it emptied. The float
     is the fill, for the gradient; money has no ceiling to be a fraction of, so it is

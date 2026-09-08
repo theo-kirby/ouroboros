@@ -466,7 +466,7 @@ def cmd_report(args: argparse.Namespace) -> int:
     usage_lines = [str(u) for u in (st.get("usage_lines") or [])]
     if usage_lines:
         lines += [f"- usage: {usage_lines[0]}"] + [f"         {u}" for u in usage_lines[1:]]
-    # What a night costs is the slice of a rationing window it burns. Dollars appear
+    # What a run costs is the slice of a rationing window it burns. Dollars appear
     # only for a harness billed per call; a subscription's `total_cost_usd` is priced
     # from token counts at API list prices and is not money anyone pays.
     money = st.get("money") or {}

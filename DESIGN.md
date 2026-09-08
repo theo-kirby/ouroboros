@@ -2,7 +2,7 @@
 
 **One line:** Ouroboros is a loop runner for agent harnesses. You give it a goal.
 It runs Claude Code, Codex, or Pi again and again, never blocks on a question,
-never believes "done" too early, and leaves a clean memory trail for the morning.
+never believes "done" too early, and leaves a clean memory trail for the check-in.
 
 Status: every phase of section 18 is built and tested (104 tests). Sections 1–5
 are the intent; sections 6–17 describe what is built and are kept true to the
@@ -158,7 +158,7 @@ or an instruction it cannot act on. Nothing about repeating it immediately makes
 it truer, and every repeat still pays for a critic, a maintainer, a planner and
 an overseer call. So a run of `stuck` verdicts backs off on the same table --
 1m, 2m, 5m, 10m, then 10m forever -- and `stop.max_stuck` (25 by default) ends a
-night that is not coming back. Any verdict other than `stuck` clears the streak.
+run that is not coming back. Any verdict other than `stuck` clears the streak.
 The nt3 run on cadex is why this exists: 113 consecutive stuck iterations, at
 roughly one every 15 seconds, waiting for a wall-clock boundary the planner had
 written into the plan.
@@ -202,7 +202,7 @@ may disagree with them — but the ladder below runs on the numbers regardless.
 
 There is no step 4. A loop is a thing to break out of, not a thing to die of, so
 none of this can stop a run: a false positive costs one wasted prompt, never a
-night nobody is awake for. Step 1 is free and repeats every iteration; steps 2
+run nobody is awake for. Step 1 is free and repeats every iteration; steps 2
 and 3 cost real calls, so they fire once per `escalate_every` iterations rather
 than on every one — without that gate, nt3's 157-iteration frontier streak would
 have forced 157 re-plans.
@@ -485,7 +485,7 @@ yet.
   All catch-all commits skip an unchanged tree, including when the role already
   committed its work. Unchanged, unrecorded actor turns do not advance maintenance
   or planning counters or dispatch those passes.
-- Never force-push. Never touch `main`. Never rebase. The morning merge is
+- Never force-push. Never touch `main`. Never rebase. The merge after a run is
   yours. Merge with a merge commit: record nodes cite commit SHAs, so a squash
   or rebase dangles them.
 
@@ -512,7 +512,7 @@ is not money anyone pays, so nothing shows it: not the TUI, not `ouroboros
 status`, not the report. It survives only as `stop.max_cost_usd`, for a run
 whose harness really is billed per call.
 
-**What a night actually costs is a slice of a rationing window.** That is what
+**What a run actually costs is a slice of a rationing window.** That is what
 the run strip, the status line and the report all report: `claude 7d 54% +19 ·
 claude 5h 65% +52 · codex 7d 42% +36`, each window with where it sits and how
 far this run moved it. Money appears beside them for one case only -- a harness
@@ -534,7 +534,7 @@ Resilience. These are not stop conditions. The loop absorbs them:
 | Timeout (`roles.<role>.timeout`, default 45 min) | Kill the process group (or the tmux window). Commit whatever landed. Continue. |
 | Rate limit / 429 / "overloaded" | Backoff: 1m, 2m, 5m, 10m, then 10m forever. Never exit. Log every wait. Three in a row count as a usage limit. |
 | Usage limit ("session limit · resets 2:50am (Europe/Madrid)", `usage_limit_reached`) | Switch to the next harness in the chain. With no chain, sleep until one minute past the reset (capped at 6 h) or a growing cooldown when the message has no time. |
-| Auth expired | Block the harness on the limit board and use the next one. With no chain, backoff 10m and retry forever. Write `NEEDS_HUMAN.md` so the morning read shows it first. |
+| Auth expired | Block the harness on the limit board and use the next one. With no chain, backoff 10m and retry forever. Write `NEEDS_HUMAN.md` so the check-in shows it first. |
 | Context exhausted mid-call | The call ends. The recorder notices no record. Next prompt starts with "record first". |
 | Overseer returns `stuck` | Backoff: 1m, 2m, 5m, 10m, then 10m forever. The streak clears on any other verdict; `stop.max_stuck` in a row ends the run. |
 | Engine error (git, disk, a bug in a step) | Logged, 60 s backoff, next iteration. The loop only exits on a stop condition, Ctrl-C, or SIGTERM. |
@@ -582,7 +582,7 @@ the actor chain names first, by skill name when installed and inline otherwise.
 | Skill | What it does |
 |---|---|
 | `ouroboros-design` | The interview (built). Reads the repo first. Then asks, in rounds: mission, done criteria as claims, each rung of the horizon ladder, constraints, question policy, exhaustion policy, quality bar, run shape. Refuses to finish until every rung has at least 3 concrete items. Writes the charter `goal.md` and a matching `config.yml`; never the plan. |
-| `ouroboros-morning` | The morning read (built). Blockers first, then what landed, the bets the planner changed (so you can overrule), decisions the overseer made for you, critic rejects and reverts, how the frontier moved, what to review hardest, a merge recommendation, and charter changes to consider. |
+| `ouroboros-checkup` | The check-in (built), for a live run or a finished one. Blockers first, then what landed, **whether the loop is moving or going in circles** (section 6b), the bets the planner changed (so you can overrule), decisions the overseer made for you, critic rejects and reverts, how the frontier moved, what to review hardest, then either a merge recommendation or the one correction worth making mid-run, and charter changes to consider. |
 | `ouroboros-planner` | Internal. The planner role: one `Bet:` record per pass, folded into the `plan` view (section 20). |
 | `ouroboros-actor` | Internal. The role prompt for WORK. Includes the memory adapter's orient and record instructions. |
 | `ouroboros-critic` | Internal. The role prompt for CRITIC. Grades against the quality bar, returns strict JSON. |
@@ -644,7 +644,7 @@ verdict -- green for an iteration that went through, red for one that hit
 something: `stuck`, `revert`, or a `done` the overseer rejected -- then the
 last verdict with its reason and reply. Six lettered glyphs asked a reader to
 decode a legend at a glance, which is the one thing a glance cannot do; the
-only question the strip answers is whether the night is moving), **plan · short** (the `short` plan node's items, read from the
+only question the strip answers is whether the run is moving), **plan · short** (the `short` plan node's items, read from the
 hypergraph plan view or the handoff plan file), and **loop.log**. For the feed
 to be live the headless backend streams each call's stdout to the transcript
 file line by line, and Claude runs with `stream-json` in every backend.
@@ -745,7 +745,7 @@ ouroboros/
     tui/                    # the status TUI: theme, widgets, layout (from vllmtop), state (run-dir reader), panels, app
     skills/                 # packaged with the wheel; `ouroboros skills install` copies them out
       ouroboros-actor/  ouroboros-critic/  ouroboros-overseer/  ouroboros-maintainer/
-      ouroboros-planner/  ouroboros-design/  ouroboros-morning/     (each SKILL.md)
+      ouroboros-planner/  ouroboros-design/  ouroboros-checkup/     (each SKILL.md)
   tests/                    # 104 tests; fake_harness.py scripts actors, critics, overseers
     test_engine.py test_pool.py test_critic.py test_goal.py test_overseer.py
     test_memory_handoff.py test_memory_hypergraph.py (needs the hypergraph CLI)
@@ -769,7 +769,7 @@ harness depends on skill discovery.
    Directive node per charter version. `check` after commit.
 4. **Codex and Pi drivers.** Fallback chains and the limit board.
 5. **Critic + modes.** `actor-critic`, `council`, revert on reject, tags.
-6. **Skills.** `ouroboros-design` interview, `ouroboros-morning` report.
+6. **Skills.** `ouroboros-design` interview, `ouroboros-checkup` report.
 7. **tmux backend.** One window per call.
 8. **Charter and plan** (section 20): gaps from criteria, the plan view, the
    planner role, the overseer on the frontier.
@@ -862,7 +862,7 @@ medium, month and year to long.
    Actors write neither.
 5. **The overseer reads the frontier and the plan,** not the checklist. "Done"
    means no charter-derived gap is open.
-6. **The morning report leads with the bets the planner changed this run,** each with its
+6. **The check-in leads with the bets the planner changed this run,** each with its
    why, then the current `PLAN.md`, then the decisions the overseer made for
    you.
 
@@ -887,9 +887,9 @@ turn the self-evolving layer off in either memory.
 
 1. Directive declares `NEW` impacts for done criteria.
 2. Overseer prompt gets the frontier and `PLAN.md`.
-3. Plan view, planner role, morning report.
+3. Plan view, planner role, check-in report.
 4. `actor-critic` and `council` modes; a Codex critic on Claude work.
-5. `ouroboros-design` interview rewritten for the charter; `ouroboros-morning`.
+5. `ouroboros-design` interview rewritten for the charter; `ouroboros-checkup`.
 6. tmux backend.
 
 ## 21. What the first night taught (cadex nt1, 2026-09-05/06)

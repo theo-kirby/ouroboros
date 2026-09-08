@@ -2,7 +2,7 @@
 
 Dollars are the wrong meter for a subscription. Claude Code and Codex bill a flat
 fee and then ration by window -- five hours, seven days -- so the scarce thing a
-night consumes is a fraction of a window, not money. Both report it, in different
+run consumes is a fraction of a window, not money. Both report it, in different
 places and different units:
 
 - Claude Code emits a `rate_limit_event` line in its stream whose `unifiedWindows`
@@ -26,7 +26,7 @@ _NAMED = {300: "five_hour", 10080: "seven_day", 1440: "daily", 60: "hourly"}
 # The same windows in the width a status line can afford.
 _SHORT = {"five_hour": "5h", "seven_day": "7d", "daily": "24h", "hourly": "1h"}
 # A window this long or longer is worth stopping a run over: it will not come back
-# tonight. Shorter windows heal on their own, and the harness fallback covers them.
+# this run. Shorter windows heal on their own, and the harness fallback covers them.
 STOP_WINDOW_MINUTES = 1440
 
 
@@ -249,7 +249,7 @@ class UsageLedger:
         """One line: what the run has spent, in the unit each harness actually charges.
 
         A subscription does not bill per call, so a dollar figure derived from token
-        counts at API list prices measures nothing anyone pays. What a night really
+        counts at API list prices measures nothing anyone pays. What a run really
         spends there is a slice of a rationing window, so that is what this reports.
         Money appears only for a harness with no windows -- an API key, where the
         dollars are a real invoice.

@@ -24,12 +24,12 @@ RENDER_TICK = 0.25
 RUN_STRIP_H = 8
 
 # hotkey number → panel id; the superscript on each box names it. The four on by
-# default answer the four questions a night raises, in the order they get asked:
+# default answer the four questions a run raises, in the order they get asked:
 # is it moving, will the subscription last, what is it saying, what was decided.
 #
 # The panels are sized by how often what they hold changes. `messages` changes every
 # few seconds and gets the most room; the charter and the stage split change a few
-# times a night and are now two lines in the run strip rather than two panels.
+# times a run and are now two lines in the run strip rather than two panels.
 PANELS = ["iterations", "activity", "messages", "overseer", "time", "frontier", "plan", "log"]
 DEFAULT_ON = {"iterations", "activity", "messages", "overseer"}
 VIEW = col(

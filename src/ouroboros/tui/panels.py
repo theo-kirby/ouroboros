@@ -115,9 +115,9 @@ def _pipeline(p: Painter, y: int, x: int, w: int, s: Snapshot) -> int:
 
 
 def _summary_line(s: Snapshot) -> str:
-    """How far through the charter, and where the night went.
+    """How far through the charter, and where the run went.
 
-    Both used to be panels. Neither earned one: the charter moves a few times a night,
+    Both used to be panels. Neither earned one: the charter moves a few times a run,
     and the stage split is ~80% actor in every run there has ever been. A constant does
     not need a chart, it needs a line.
     """
@@ -199,7 +199,7 @@ def draw_run(p: Painter, rect: Rect, s: Snapshot) -> None:
             p.text(y + 1, cx, mark, t.attr(pair, bold=name == active)); cx += len(mark)
         tail = f"  ·  {s.switches} switches" if s.switches else ""
         p.text(y + 1, cx, tail, t.attr(PAIR_DIM), width=max(0, x + w - cx))
-    # What the night is spending, on its own row. A subscription bills a flat fee and
+    # What the run is spending, on its own row. A subscription bills a flat fee and
     # rations by window, so the window is the cost; money shows only for a harness
     # billed per call. This is the number a person checks before going back to sleep,
     # so it gets a line of its own rather than a tail on someone else's.
@@ -468,11 +468,11 @@ def draw_overseer(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
     if last is None:
         p.text(y, x, "no verdicts yet", t.attr(PAIR_INACTIVE))
         return
-    # The shape of the night and its latest word share the top line, so the words the
+    # The shape of the run and its latest word share the top line, so the words the
     # overseer actually wrote get the rest of a panel that is wide rather than tall.
     # Six letters asked the reader to decode a legend at a glance, which is the one
     # thing a glance cannot do. The only question the strip answers is whether the
-    # night ran or hit something, so it has two states and one shape.
+    # run went through or hit something, so it has two states and one shape.
     v = last.get("verdict", "?")
     tag = f"#{last.get('iteration', '?')} {v}"
     strip_w = max(4, w - len(tag) - 12)

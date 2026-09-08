@@ -95,7 +95,7 @@ plan: { enabled: true, every: 5, max_new_directions: 1 }   # new directions per 
 
 - Read both files back to the user in full. Then say: `ouroboros run` starts it,
   `ouroboros status --watch` watches it, `ouroboros stop` stops it, and in the
-  morning `/ouroboros-morning` reads the night.
+  `/ouroboros-checkup` reads the run, live or finished.
 
 ## Rules
 

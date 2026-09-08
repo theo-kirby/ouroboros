@@ -23,7 +23,7 @@ never instead of it: the numbers reach the overseer, which is free to disagree
 with them, and the escalation ladder runs on the numbers regardless.
 
 Nothing here stops a run. A loop is a thing to break out of, not a thing to die
-of, and a false positive must never end a night nobody is awake for.
+of, and a false positive must never end a run nobody is awake for.
 """
 
 from __future__ import annotations

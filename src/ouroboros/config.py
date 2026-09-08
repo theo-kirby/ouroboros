@@ -86,7 +86,7 @@ class StopConfig(BaseModel):
     max_usage: float | None = None   # 0..1 of a subscription window; 0.8 = stop at 80%
     # A loop the overseer calls stuck every iteration is spending on nothing. Backoff
     # slows it first (60s, 120s, 300s, then 600s), so this many verdicts is hours of
-    # mostly sleeping, not minutes: a night that will not recover, not a passing stall.
+    # mostly sleeping, not minutes: a run that will not recover, not a passing stall.
     max_stuck: int | None = 25       # consecutive `stuck` verdicts; null to never stop
     until: str | None = None
     on_done_accepted: int | None = None

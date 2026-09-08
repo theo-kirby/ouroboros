@@ -14,7 +14,7 @@ def resample(series: Sequence[float], n: int) -> List[float]:
 
     A bucket reports its largest value rather than its mean, because on a duration or
     load series the spike is the thing worth seeing; averaging it away is how a chart
-    ends up saying a night went smoothly when it did not.
+    ends up saying a run went smoothly when it did not.
     """
     vals = [float(v) for v in series]
     if n <= 0 or not vals:

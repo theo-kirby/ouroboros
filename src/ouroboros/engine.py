@@ -269,7 +269,7 @@ class Engine:
         # clock, a quota, or an instruction it cannot act on. Repeating it at full speed
         # buys nothing and still pays for a critic, maintainer, planner and overseer call
         # every time, so slow down the same way a run of failed iterations does. The stop
-        # condition (stop.max_stuck) ends a night that is never going to recover.
+        # condition (stop.max_stuck) ends a run that is never going to recover.
         self.stuck_iterations = self.stuck_iterations + 1 if verdict.verdict == "stuck" else 0
         if self.stuck_iterations and self.budget.should_stop() is None:
             self._sleep(backoff_seconds(self.stuck_iterations - 1),
@@ -288,7 +288,7 @@ class Engine:
         There is no fourth step. A loop is a thing to break out of, not a thing
         to die of: a false positive must never end a run nobody is awake for.
         The ladder ends at "try a different model" and the loop continues either
-        way, so a wrong signal costs one wasted prompt, not a night.
+        way, so a wrong signal costs one wasted prompt, not a run.
         """
         step = self.loops.escalation(loop)
         act = self.loops.should_act(loop)
