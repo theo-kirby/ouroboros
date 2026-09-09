@@ -465,7 +465,10 @@ def draw_feed(p: Painter, rect: Rect, s: Snapshot, num: int, show_output: bool) 
 # `last` and `current` change once an iteration; the raw line changes every few
 # seconds. Three rows hold a run's whole state, and a transcript is something you go
 # and read on purpose rather than something that scrolls past you.
-STATUS_ROWS = 3
+# How many recent verdicts the panel lists above the summaries. Three is the window
+# a glance holds: enough to see the same reason repeat, not so many that the list
+# pushes the summaries into a single clipped row each.
+VERDICT_ROWS = 3
 _PIPELINE = ("actor", "critic", "overseer", "maintainer", "planner")
 
 
@@ -499,48 +502,42 @@ def draw_status(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
     if inner.h >= 2:
         _stage_line(p, y + 1, x, w, s)
 
-    # 3. the three rows, pinned to the bottom so they never move as the prose above
-    # them grows or shrinks. A person learns where to look once.
-    rows_y = inner.y + inner.h - STATUS_ROWS
-    middle = rows_y - (y + 2)
-    if last is not None and middle > 0:
-        lines = _verdict_lines(s, w, middle)
-        for i, (text, pair) in enumerate(lines[-middle:]):
-            p.text(rows_y - len(lines[-middle:]) + i, x, text, t.attr(pair), width=w)
-    if inner.h >= STATUS_ROWS + 2:
-        _status_rows(p, rows_y, x, w, s)
+    # 3. the last few verdicts, one line each, then the newest one's reply.
+    cy = y + 2
+    bottom = inner.y + inner.h          # one past the last usable row
+    if last is not None:
+        for text, pair in _verdict_lines(s, w)[: max(0, bottom - cy - STATUS_MIN)]:
+            p.text(cy, x, text, t.attr(pair), width=w)
+            cy += 1
+
+    # 4. the summaries get whatever is left, and the raw line is the last row. The
+    # summaries wrap into the room rather than clipping at one row each: they are the
+    # two sentences a person came to read, and the verdict list above them is capped
+    # precisely so that they have somewhere to go.
+    if bottom - cy >= STATUS_MIN:
+        _status_rows(p, cy, x, w, bottom - cy, s)
 
 
-def _verdict_lines(s: Snapshot, w: int, room: int) -> list[tuple[str, int]]:
-    """The overseer's decisions, oldest first, ending with the newest one in full.
+def _verdict_lines(s: Snapshot, w: int) -> list[tuple[str, int]]:
+    """The last `VERDICT_ROWS` decisions, oldest first, plus the newest one's reply.
 
-    The panel it replaced showed one verdict, because one verdict was all a four-row
-    strip could hold. With the feed's rows added there is room for the window the
-    overseer itself now reads, and a run reads completely differently over twenty
-    decisions than over one: the same reason four times running is a stall, and a
-    single line of it is just a sentence.
+    One line of "nothing changed" is a sentence; three in a row is a stall, and
+    only the window shows it. Three rows is that window and no more, so the
+    summaries below keep the room.
     """
-    last = s.decisions[-1]
-    v = last.get("verdict", "?")
-    tag = f"#{last.get('iteration', '?')} {v}  "
-    reason = " ".join(str(last.get("reason", "")).split())
-    reply = " ".join(str(last.get("reply") or "").split())
-    # The newest decision carries the same tag as the ones above it, so the column
-    # reads as one list rather than a list with a loose sentence under it.
-    newest: list[tuple[str, int]] = [
-        ((tag if i == 0 else " " * len(tag)) + l, PAIR_DIM)
-        for i, l in enumerate(wrap(reason, w - len(tag), 2))
-    ] if reason else []
-    if reply:
-        newest += [(("\u2192 " + l if i == 0 else "  " + l), PAIR_PROMPT)
-                   for i, l in enumerate(wrap(reply, w - 2, max(1, room - len(newest) - 1)))]
-    older = []
-    for d in s.decisions[-(room + 1):-1]:
+    out: list[tuple[str, int]] = []
+    recent = s.decisions[-VERDICT_ROWS:]
+    for i, d in enumerate(recent):
         v = d.get("verdict", "?")
-        tag = f"#{d.get('iteration', '?')} {v}"
-        older.append((clip(f"{tag}  {' '.join(str(d.get('reason', '')).split())}", w),
-                      PAIR_RED if v in BLOCKED else PAIR_INACTIVE))
-    return older + newest
+        tag = f"#{d.get('iteration', '?')} {v}  "
+        reason = " ".join(str(d.get("reason", "")).split())
+        newest = i == len(recent) - 1
+        out.append((clip(tag + reason, w), (PAIR_RED if v in BLOCKED else PAIR_DIM) if newest
+                    else (PAIR_RED if v in BLOCKED else PAIR_INACTIVE)))
+    reply = " ".join(str(recent[-1].get("reply") or "").split())
+    if reply:
+        out.append((clip("\u2192 " + reply, w), PAIR_PROMPT))
+    return out
 
 
 def _stage_line(p: Painter, y: int, x: int, w: int, s: Snapshot) -> None:
@@ -566,24 +563,38 @@ def _stage_line(p: Painter, y: int, x: int, w: int, s: Snapshot) -> None:
         p.text(y, x + w - len(held), held, t.attr(PAIR_DIM))
 
 
-_STATUS_LABELS = ("last", "current", "")
+# The least the summaries need: one row each and one for the raw line.
+STATUS_MIN = 3
+_LABEL_W = len("current") + 2
 
 
-def _status_rows(p: Painter, y: int, x: int, w: int, s: Snapshot) -> None:
-    """The three rows: what finished, what is running, what it just said."""
+def _status_rows(p: Painter, y: int, x: int, w: int, room: int, s: Snapshot) -> None:
+    """`last` and `current`, wrapped into the room, with the agent's own line last.
+
+    The raw line is pinned to the bottom row. The two summaries share what is above
+    it: each may take up to half, and one that needs less hands the rest to the other,
+    so a long `current` under a short `last` is not clipped to make the split fair.
+    """
     t = p.theme
-    lw = max(len(l) for l in _STATUS_LABELS) + 2
+    tw = w - _LABEL_W
     ev = s.last_message
-    raw = ev.text if ev is not None else ""
-    rows = [
-        ("last", s.did or "\u2014", PAIR_TITLE),
-        ("current", s.doing or "\u2014", PAIR_CYAN),
-        ("", " ".join(raw.split()) or "waiting for the first message\u2026",
-         PAIR_RED if ev is not None and ev.kind == "error" else PAIR_DIM),
-    ]
-    for i, (label, text, pair) in enumerate(rows):
-        p.text(y + i, x, label.ljust(lw), t.attr(PAIR_INACTIVE))
-        p.text(y + i, x + lw, clip(text, w - lw), t.attr(pair, bold=pair in (PAIR_TITLE, PAIR_CYAN)), width=w - lw)
+    raw = " ".join((ev.text if ev is not None else "").split()) or "waiting for the first message\u2026"
+    raw_pair = PAIR_RED if ev is not None and ev.kind == "error" else PAIR_DIM
+    avail = room - 1
+    want_last = wrap(s.did or "\u2014", tw, avail)
+    want_cur = wrap(s.doing or "\u2014", tw, avail)
+    if len(want_last) + len(want_cur) > avail:
+        half = avail // 2
+        cap_last = max(1, min(len(want_last), max(half, avail - len(want_cur))))
+        want_last = wrap(s.did or "\u2014", tw, cap_last)
+        want_cur = wrap(s.doing or "\u2014", tw, max(1, avail - len(want_last)))
+    cy = y
+    for label, lines, pair in (("last", want_last, PAIR_TITLE), ("current", want_cur, PAIR_CYAN)):
+        for i, l in enumerate(lines):
+            p.text(cy, x, (label if i == 0 else "").ljust(_LABEL_W), t.attr(PAIR_INACTIVE))
+            p.text(cy, x + _LABEL_W, l, t.attr(pair, bold=True), width=tw)
+            cy += 1
+    p.text(y + room - 1, x + _LABEL_W, clip(raw, tw), t.attr(raw_pair), width=tw)
 
 
 # ---------------------------------------------------------------- plan

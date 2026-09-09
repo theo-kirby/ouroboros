@@ -670,20 +670,23 @@ and the message feed went. They were two panels holding half an answer each --
 one said what was decided, the other said what was being typed, and joining them
 was the reader's job. It carries, top to bottom: the verdict history strip and
 the latest verdict; the pipeline with the stage lit and how long it has been
-held; the window of recent verdicts, one line each, newest last, ending with the
-latest one's reason and reply; and then the three rows that are the point of it:
+held; the last three verdicts, one line each, newest last, with the newest one's
+reply under it; and then the rows that are the point of it:
 
     last     the unit that finished    (one sentence, written by the overseer)
     current  the unit now running      (one sentence, written by the overseer)
              the newest line the running agent said or ran
 
+The verdict list is capped at three so the summaries get the room: they wrap into
+whatever is under the list rather than clipping at a row each, sharing it when
+both are long, and the raw line holds the bottom row.
+
 `did` and `doing` are two extra fields on the overseer's JSON verdict
 (`roles/overseer.py`). The overseer writes them because it is the only role that
 runs every iteration, sees the actor's whole output, and is cheap; nothing in the
 engine branches on them, and when the overseer is `rules` the panel falls back to
-the reason and the reply, which are always there. The three rows are pinned to
-the bottom of the panel, so they do not move as the prose above them grows, and
-they are the last thing to be given up when the panel is short. Details: **stages** (the pipeline with the active stage lit and
+the reason and the reply, which are always there. When the panel is short the
+verdict list is the first thing given up and the summaries the last. Details: **stages** (the pipeline with the active stage lit and
 per-stage run counts, last, average, total durations from `iterations.jsonl`),
 **iterations** (an outcome strip, ■ changed and recorded, ▪ changed, · empty,
 ✗ reverted, ◆ bet, ! error, over a braille chart of actor minutes per

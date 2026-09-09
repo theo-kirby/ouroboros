@@ -419,7 +419,7 @@ def decision(**kw):
     return base
 
 
-def test_the_three_status_rows_are_the_bottom_of_the_panel():
+def test_the_summaries_follow_the_verdicts_and_the_raw_line_is_last():
     from ouroboros.tui.state import Event
     s = snapshot(
         decisions=[decision(did="Added swept clearance to the rollout path, with twelve tests.",
@@ -427,10 +427,31 @@ def test_the_three_status_rows_are_the_bottom_of_the_panel():
         feed=[Event("think", "hmm"), Event("tool", "$ pytest cli/tests -k walk")],
     )
     lines = render(s)
-    assert "last" in lines[-4] and "Added swept clearance" in lines[-4]
-    assert "current" in lines[-3] and "Wiring the pending receipt" in lines[-3]
-    # The raw line carries no label: it is the same "current", said by the agent itself.
+    # history, stage, the one verdict, then the two summaries straight under it.
+    assert "last" in lines[4] and "Added swept clearance" in lines[4]
+    assert "current" in lines[5] and "Wiring the pending receipt" in lines[5]
+    # The raw line carries no label and holds the bottom row, whatever is above it.
     assert "pytest cli/tests -k walk" in lines[-2] and "current" not in lines[-2]
+
+
+def test_a_long_summary_wraps_into_the_room_instead_of_clipping():
+    long = " ".join(f"word{i}" for i in range(40))
+    s = snapshot(decisions=[decision(did=long, doing="short")])
+    body = render(s, h=14, w=60)
+    last_rows = [l for l in body if "word" in l]
+    assert len(last_rows) >= 3, "the room under the verdicts is the summaries' to use"
+    assert "word39" in "\n".join(body), "nothing was cut"
+    assert any("current" in l and "short" in l for l in body)
+
+
+def test_two_long_summaries_share_the_room_rather_than_one_starving_the_other():
+    long = " ".join(f"w{i}" for i in range(60))
+    s = snapshot(decisions=[decision(did=long, doing=long.upper())])
+    body = render(s, h=10, w=50)
+    lower = sum(1 for l in body if "w1" in l.lower() and "W" not in l)
+    upper = sum(1 for l in body if "W1" in l)
+    assert lower >= 2 and upper >= 2
+    assert lower + upper == 10 - 2 - 2 - 1 - 1   # borders, history, stage, one verdict, raw line
 
 
 def test_the_panel_keeps_the_history_strip_and_gains_the_stage():
@@ -455,15 +476,21 @@ def test_the_overseers_own_words_still_get_the_middle():
     assert "→ Use the existing one." in body
 
 
-def test_the_middle_is_the_window_of_verdicts_not_one_of_them():
-    """One line of "stuck" is a sentence; four in a row is a stall. Only the window shows it."""
+def test_only_the_last_three_verdicts_are_listed_however_tall_the_panel():
+    """Three is the window a glance holds; the rest of the room is the summaries'."""
     s = snapshot(decisions=[decision(iteration=n, verdict="stuck", reason=f"nothing changed ({n})")
                             for n in range(1, 9)], stage="actor")
-    body = "\n".join(render(s, h=14))
-    assert "#5 stuck  nothing changed (5)" in body
-    assert "#8 stuck  nothing changed (8)" in body
-    # Newest last, so the eye lands on it right above the three rows.
-    assert body.index("nothing changed (5)") < body.index("nothing changed (8)")
+    body = "\n".join(render(s, h=24))
+    for n in (6, 7, 8):
+        assert f"#{n} stuck  nothing changed ({n})" in body
+    assert "nothing changed (5)" not in body
+    # Newest last, so the eye lands on it right above the summaries.
+    assert body.index("nothing changed (6)") < body.index("nothing changed (8)")
+
+
+def test_the_newest_verdicts_reply_is_listed_under_it():
+    s = snapshot(decisions=[decision(verdict="answer", reason="asked which store", reply="Use the existing one.")])
+    assert "→ Use the existing one." in "\n".join(render(s))
 
 
 def test_the_window_gives_way_to_the_three_rows_when_the_panel_is_short():
