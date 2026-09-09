@@ -37,8 +37,9 @@ VIEW = col(
     row(leaf("iterations", 1), leaf("activity", 1), weight=10),
     row(leaf("time", 1), leaf("frontier", 1), weight=6),
     # 12 of the 22 the default view weighs: what the overseer panel and the feed held
-    # between them, in one box. min_h is 2 borders + history + stage + the three rows.
-    leaf("status", weight=12, min_h=7),
+    # between them, in one box. min_h is 2 borders + history + stage + the summaries
+    # with their spacing (STATUS_SPACED).
+    leaf("status", weight=12, min_h=9),
     row(leaf("messages", 3), leaf("plan", 1), leaf("log", 2), weight=8),
 )
 DRAW = {

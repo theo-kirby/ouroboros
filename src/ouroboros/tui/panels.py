@@ -506,7 +506,10 @@ def draw_status(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
     cy = y + 2
     bottom = inner.y + inner.h          # one past the last usable row
     if last is not None:
-        for text, pair in _verdict_lines(s, w)[: max(0, bottom - cy - STATUS_MIN)]:
+        # The spacing goes before the verdict list does: a verdict row is one of three,
+        # the blank rows are what make the summaries readable at all.
+        reserve = STATUS_SPACED if bottom - cy >= STATUS_SPACED else STATUS_MIN
+        for text, pair in _verdict_lines(s, w)[: max(0, bottom - cy - reserve)]:
             p.text(cy, x, text, t.attr(pair), width=w)
             cy += 1
 
@@ -563,24 +566,29 @@ def _stage_line(p: Painter, y: int, x: int, w: int, s: Snapshot) -> None:
         p.text(y, x + w - len(held), held, t.attr(PAIR_DIM))
 
 
-# The least the summaries need: one row each and one for the raw line.
+# The least the summaries need: one row each and one for the raw line. With two
+# more rows they get their spacing back; below that they pack, and are still read.
 STATUS_MIN = 3
-_LABEL_W = len("current") + 2
+STATUS_SPACED = 5
+_LABEL_W = len("CURRENT") + 2
 
 
 def _status_rows(p: Painter, y: int, x: int, w: int, room: int, s: Snapshot) -> None:
-    """`last` and `current`, wrapped into the room, with the agent's own line last.
+    """`LAST` and `CURRENT`, wrapped into the room, with the agent's own line last.
 
-    The raw line is pinned to the bottom row. The two summaries share what is above
-    it: each may take up to half, and one that needs less hands the rest to the other,
-    so a long `current` under a short `last` is not clipped to make the split fair.
+    A blank row separates the verdict list from the summaries and the two summaries
+    from each other, so the eye finds three things and not one block. The raw line is
+    pinned to the bottom row. The two summaries share what is above it: each may take
+    up to half, and one that needs less hands the rest to the other, so a long
+    `current` under a short `last` is not clipped to make the split fair.
     """
     t = p.theme
     tw = w - _LABEL_W
     ev = s.last_message
     raw = " ".join((ev.text if ev is not None else "").split()) or "waiting for the first message\u2026"
     raw_pair = PAIR_RED if ev is not None and ev.kind == "error" else PAIR_DIM
-    avail = room - 1
+    spaced = room >= STATUS_SPACED
+    avail = room - 1 - (2 if spaced else 0)
     want_last = wrap(s.did or "\u2014", tw, avail)
     want_cur = wrap(s.doing or "\u2014", tw, avail)
     if len(want_last) + len(want_cur) > avail:
@@ -588,11 +596,14 @@ def _status_rows(p: Painter, y: int, x: int, w: int, room: int, s: Snapshot) -> 
         cap_last = max(1, min(len(want_last), max(half, avail - len(want_cur))))
         want_last = wrap(s.did or "\u2014", tw, cap_last)
         want_cur = wrap(s.doing or "\u2014", tw, max(1, avail - len(want_last)))
-    cy = y
-    for label, lines, pair in (("last", want_last, PAIR_TITLE), ("current", want_cur, PAIR_CYAN)):
+    cy = y + (1 if spaced else 0)
+    for n, (label, lines, pair) in enumerate((("LAST", want_last, PAIR_TITLE), ("CURRENT", want_cur, PAIR_CYAN))):
+        if n and spaced:
+            cy += 1
         for i, l in enumerate(lines):
-            p.text(cy, x, (label if i == 0 else "").ljust(_LABEL_W), t.attr(PAIR_INACTIVE))
-            p.text(cy, x + _LABEL_W, l, t.attr(pair, bold=True), width=tw)
+            if i == 0:
+                p.text(cy, x, label, t.attr(PAIR_YELLOW, bold=True))
+            p.text(cy, x + _LABEL_W, l, t.attr(pair), width=tw)
             cy += 1
     p.text(y + room - 1, x + _LABEL_W, clip(raw, tw), t.attr(raw_pair), width=tw)
 

@@ -427,31 +427,33 @@ def test_the_summaries_follow_the_verdicts_and_the_raw_line_is_last():
         feed=[Event("think", "hmm"), Event("tool", "$ pytest cli/tests -k walk")],
     )
     lines = render(s)
-    # history, stage, the one verdict, then the two summaries straight under it.
-    assert "last" in lines[4] and "Added swept clearance" in lines[4]
-    assert "current" in lines[5] and "Wiring the pending receipt" in lines[5]
+    # history, stage, the one verdict, a blank, LAST, a blank, CURRENT.
+    assert lines[4].strip() == "│" + " " * 0 or lines[4].strip("│ ") == ""
+    assert lines[5].startswith("│ LAST") and "Added swept clearance" in lines[5]
+    assert lines[6].strip("│ ") == ""
+    assert lines[7].startswith("│ CURRENT") and "Wiring the pending receipt" in lines[7]
     # The raw line carries no label and holds the bottom row, whatever is above it.
-    assert "pytest cli/tests -k walk" in lines[-2] and "current" not in lines[-2]
+    assert "pytest cli/tests -k walk" in lines[-2] and "CURRENT" not in lines[-2]
 
 
 def test_a_long_summary_wraps_into_the_room_instead_of_clipping():
     long = " ".join(f"word{i}" for i in range(40))
     s = snapshot(decisions=[decision(did=long, doing="short")])
-    body = render(s, h=14, w=60)
+    body = render(s, h=16, w=60)
     last_rows = [l for l in body if "word" in l]
     assert len(last_rows) >= 3, "the room under the verdicts is the summaries' to use"
     assert "word39" in "\n".join(body), "nothing was cut"
-    assert any("current" in l and "short" in l for l in body)
+    assert any("CURRENT" in l and "short" in l for l in body)
 
 
 def test_two_long_summaries_share_the_room_rather_than_one_starving_the_other():
     long = " ".join(f"w{i}" for i in range(60))
     s = snapshot(decisions=[decision(did=long, doing=long.upper())])
-    body = render(s, h=10, w=50)
+    body = render(s, h=12, w=50)
     lower = sum(1 for l in body if "w1" in l.lower() and "W" not in l)
     upper = sum(1 for l in body if "W1" in l)
     assert lower >= 2 and upper >= 2
-    assert lower + upper == 10 - 2 - 2 - 1 - 1   # borders, history, stage, one verdict, raw line
+    assert lower + upper == 12 - 2 - 2 - 1 - 1 - 2   # borders, history, stage, verdict, raw, two spacers
 
 
 def test_the_panel_keeps_the_history_strip_and_gains_the_stage():
@@ -505,6 +507,18 @@ def test_the_rows_survive_a_panel_with_no_room_for_prose():
     """min_h is seven: two borders, history, stage, and the three rows. Nothing else."""
     lines = render(snapshot(decisions=[decision(did="finished the thing", doing="starting the next")]), h=7)
     assert "finished the thing" in lines[-4] and "starting the next" in lines[-3]
+
+
+def test_the_spacing_outlives_the_verdict_list():
+    """The verdicts go before the blank rows around the summaries do."""
+    s = snapshot(decisions=[decision(iteration=n, did="D", doing="C") for n in range(1, 5)])
+    lines = render(s, h=10)
+    assert lines[3].startswith("│ #4"), "ten rows: one verdict fits"
+    assert lines[4].strip("│ ") == "" and lines[6].strip("│ ") == ""
+    assert lines[5].startswith("│ LAST") and lines[7].startswith("│ CURRENT")
+    lines = render(s, h=9)
+    assert "#4" not in lines[3], "nine rows: the verdict goes, not the spacing"
+    assert lines[3].strip("│ ") == "" and lines[4].startswith("│ LAST") and lines[6].startswith("│ CURRENT")
 
 
 def test_an_overseer_that_wrote_no_summary_falls_back_to_what_it_did_write():

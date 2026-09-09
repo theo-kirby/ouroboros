@@ -679,7 +679,9 @@ reply under it; and then the rows that are the point of it:
 
 The verdict list is capped at three so the summaries get the room: they wrap into
 whatever is under the list rather than clipping at a row each, sharing it when
-both are long, and the raw line holds the bottom row.
+both are long, and the raw line holds the bottom row. A blank row sits between the
+list and `LAST` and between `LAST` and `CURRENT`, and the labels are the loud ones
+on the panel; when the panel is short the verdict rows go before the blank ones.
 
 `did` and `doing` are two extra fields on the overseer's JSON verdict
 (`roles/overseer.py`). The overseer writes them because it is the only role that
