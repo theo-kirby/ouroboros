@@ -23,7 +23,9 @@ time -- so a rewrite preserves it rather than flattening it.
 
 from __future__ import annotations
 
+import json
 import socket
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -33,6 +35,7 @@ from .config import Config
 from .gitguard import GitError, GitGuard
 from .loops import is_product_change
 from .recorder import Recorder
+from .usage import short_name
 
 HISTORY_DIR = Path(".ouroboros") / "history"
 INDEX_PATH = Path(".ouroboros") / "RUNS.md"
@@ -438,3 +441,54 @@ def archive(repo: Path, cfg: Config, run_dir: Path, *, machine: str | None = Non
     """Digest one run and rebuild the index. The whole durable record, in one call."""
     facts = gather(repo, cfg, run_dir, machine=machine)
     return write_digest(repo, facts), write_index(repo)
+
+
+# ----------------------------------------------------------------------
+def spent_windows(repo: Path, *, floor: float = 0.5) -> list[tuple[str, str, float, float]]:
+    """Windows the last run left full and that have not reset yet.
+
+    A launch does not fail on a spent window, it stalls on one: the loop starts,
+    the first call is refused, and the run spends its wall clock asleep. ot4 left
+    Codex's weekly window at 99% with five days to run, so the next launch needed
+    to know before it started, not after.
+
+    Nothing here calls a harness. The reading is the one the last run recorded on
+    its way out, which is the freshest number available for free, and a window
+    only ever falls with time -- so a window this says is spent may have quietly
+    recovered, and one it says is clear is never worse than it claims.
+    """
+    runs = repo / ".ouroboros" / "runs"
+    if not runs.is_dir():
+        return []
+    latest, when = None, 0.0
+    for path in runs.glob("*/status.json"):
+        stamp = path.stat().st_mtime
+        if stamp > when:
+            latest, when = path, stamp
+    if latest is None:
+        return []
+    try:
+        usage = (json.loads(latest.read_text()) or {}).get("usage") or {}
+    except (OSError, json.JSONDecodeError):
+        return []
+    now = time.time()
+    out = []
+    for harness, snap in sorted(usage.items()):
+        for name, w in sorted((snap or {}).get("windows", {}).items()):
+            util, resets = w.get("utilization"), w.get("resets_at")
+            if not isinstance(util, (int, float)) or util < floor:
+                continue
+            if isinstance(resets, (int, float)) and resets > now:
+                out.append((harness, name, float(util), float(resets)))
+    return out
+
+
+def spent_window_lines(repo: Path, *, floor: float = 0.5) -> list[str]:
+    """`spent_windows` as one warning line each, with how long until it resets."""
+    now = time.time()
+    lines = []
+    for harness, name, util, resets in spent_windows(repo, floor=floor):
+        hours = (resets - now) / 3600
+        when = f"{hours:.0f}h" if hours < 48 else f"{hours / 24:.0f}d"
+        lines.append(f"{harness} {short_name(name)} was {util * 100:.0f}% full at the last run's end; resets in {when}")
+    return lines

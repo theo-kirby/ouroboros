@@ -593,6 +593,7 @@ the actor chain names first, by skill name when installed and inline otherwise.
 |---|---|
 | `ouroboros-design` | The interview (built). Reads the repo first. Then asks, in rounds: mission, done criteria as claims, each rung of the horizon ladder, constraints, question policy, exhaustion policy, quality bar, run shape. Refuses to finish until every rung has at least 3 concrete items. Writes the charter `goal.md` and a matching `config.yml`; never the plan. |
 | `ouroboros-checkup` | The check-in (built), for a live run or a finished one. Blockers first, then what landed, **whether the loop is moving or going in circles** (section 6b), the bets the planner changed (so you can overrule), decisions the overseer made for you, critic rejects and reverts, how the frontier moved, what to review hardest, then either a merge recommendation or the one correction worth making mid-run, and charter changes to consider. |
+| `ouroboros-launch` | Starting one (built). Reads `RUNS.md` and the last digest's notes before anything else, pushes back on a charter criterion no single run can tick, runs `ouroboros preflight`, names the run and its stops, launches, and says what to watch. Most of what wastes a run is decided in the twenty minutes before it starts. |
 | `ouroboros-planner` | Internal. The planner role: one `Bet:` record per pass, folded into the `plan` view (section 20). |
 | `ouroboros-actor` | Internal. The role prompt for WORK. Includes the memory adapter's orient and record instructions. |
 | `ouroboros-critic` | Internal. The role prompt for CRITIC. Grades against the quality bar, returns strict JSON. |
@@ -757,7 +758,7 @@ CLI flags override config: `--run-name --for --max-iterations --max-cost --mode
 ouroboros/
   pyproject.toml            # [project.scripts] ouroboros = "ouroboros.cli:main"; pydantic, pyyaml; pytest
   src/ouroboros/
-    cli.py                  # init | design | run | stop | status | report | archive | skills install; menu; preflight; signals
+    cli.py                  # init | design | preflight | run | stop | status | report | archive | skills install; menu; signals
     engine.py               # the state machine (section 6): step(), retry policy, reconcile, plan, critique
     config.py               # pydantic models for config.yml (section 16)
     goal.py                 # the charter parser: sections, done criteria → gap names, ladder, policies, template check
@@ -781,7 +782,7 @@ ouroboros/
     tui/                    # the status TUI: theme, widgets, layout (from vllmtop), state (run-dir reader), panels, app
     skills/                 # packaged with the wheel; `ouroboros skills install` copies them out
       ouroboros-actor/  ouroboros-critic/  ouroboros-overseer/  ouroboros-maintainer/
-      ouroboros-planner/  ouroboros-design/  ouroboros-checkup/     (each SKILL.md)
+      ouroboros-planner/  ouroboros-design/  ouroboros-launch/  ouroboros-checkup/   (each SKILL.md)
   tests/                    # 104 tests; fake_harness.py scripts actors, critics, overseers
     test_engine.py test_pool.py test_critic.py test_goal.py test_overseer.py
     test_memory_handoff.py test_memory_hypergraph.py (needs the hypergraph CLI)
@@ -805,7 +806,7 @@ harness depends on skill discovery.
    Directive node per charter version. `check` after commit.
 4. **Codex and Pi drivers.** Fallback chains and the limit board.
 5. **Critic + modes.** `actor-critic`, `council`, revert on reject, tags.
-6. **Skills.** `ouroboros-design` interview, `ouroboros-checkup` report.
+6. **Skills.** `ouroboros-design` interview, `ouroboros-launch` start, `ouroboros-checkup` report.
 7. **tmux backend.** One window per call.
 8. **Charter and plan** (section 20): gaps from criteria, the plan view, the
    planner role, the overseer on the frontier.

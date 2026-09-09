@@ -193,6 +193,28 @@ def preflight(cfg: Config, repo: Path) -> str | None:
     return None
 
 
+def cmd_preflight(args: argparse.Namespace) -> int:
+    """Everything `run` checks, without starting anything.
+
+    Same checks, said out loud. A launch that is going to be refused should be
+    refused while a human is still looking at the terminal, and the warnings --
+    which never block -- are the ones that cost ot4 its first hours.
+    """
+    repo = repo_root()
+    cfg = load_config(args, repo)
+    problem = preflight(cfg, repo)
+    for line in history.spent_window_lines(repo):
+        print(f"warning: {line}")
+    if problem:
+        print(f"not ready: {problem}", file=sys.stderr)
+        return 2
+    print(f"ready: run {cfg.run!r} on branch {cfg.branch}, mode {cfg.mode}, memory {cfg.memory}")
+    print("  roles: " + ", ".join(f"{n}={r.harness}:{r.model or 'default'}" for n, r in sorted(cfg.roles.items())))
+    stop = [f"{k}={v}" for k, v in cfg.stop.model_dump().items() if v is not None]
+    print("  stops at: " + (", ".join(stop) or "nothing — it will run until you stop it"))
+    return 0
+
+
 def _pools(cfg: Config, log) -> dict[str, PooledHarness]:
     """One harness chain per role, all sharing one limit board (limits belong to accounts, not roles)."""
     board = LimitBoard(
@@ -213,6 +235,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     if problem:
         print(f"ouroboros: {problem}", file=sys.stderr)
         return 2
+    for line in history.spent_window_lines(repo):
+        print(f"ouroboros: warning: {line}", file=sys.stderr)
 
     if not args.foreground and not tmux.inside_ouroboros_tmux():
         if not tmux.available():
@@ -621,6 +645,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     rep = sub.add_parser("report", parents=[common], help="write REPORT.md for the morning")
     rep.set_defaults(fn=cmd_report)
+
+    pf = sub.add_parser("preflight", parents=[common], help="check everything `run` checks, without starting")
+    pf.set_defaults(fn=cmd_preflight)
 
     ar = sub.add_parser("archive", parents=[common],
                         help="write .ouroboros/history/<run>.md and RUNS.md (run and stop do this too)")

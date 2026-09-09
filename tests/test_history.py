@@ -243,3 +243,69 @@ def test_an_archive_failure_never_takes_the_run_down_with_it(repo, monkeypatch, 
     (repo / ".ouroboros" / "config.yml").write_text(Config(run="ot4").dump())
     assert main(["stop"]) == 0
     assert "could not archive" in capsys.readouterr().err
+
+
+# -- what the last run left behind for the next launch ----------------------
+
+def spent(repo: Path, name: str, usage: dict) -> None:
+    d = run_dir(repo, name, steps=[])
+    st = json.loads((d / "status.json").read_text())
+    st["usage"] = usage
+    (d / "status.json").write_text(json.dumps(st))
+
+
+def windows(util: float, resets_in_hours: float) -> dict:
+    import time
+    return {"claude": {"windows": {"seven_day": {
+        "utilization": util, "resets_at": time.time() + resets_in_hours * 3600, "minutes": 10080}}}}
+
+
+def test_a_window_the_last_run_left_full_warns_the_next_launch(repo):
+    """ot4 left Codex at 99% for five days. The next launch stalls, it does not fail."""
+    spent(repo, "ot4", windows(0.99, 120))
+    lines = history.spent_window_lines(repo)
+    assert len(lines) == 1
+    assert "claude 7d was 99% full" in lines[0] and "resets in 5d" in lines[0]
+
+
+def test_a_window_that_has_already_reset_is_not_a_warning(repo):
+    spent(repo, "ot4", windows(0.99, -1))
+    assert history.spent_window_lines(repo) == []
+
+
+def test_a_window_with_room_left_is_not_a_warning(repo):
+    spent(repo, "ot4", windows(0.2, 120))
+    assert history.spent_window_lines(repo) == []
+
+
+def test_only_the_most_recent_run_is_asked(repo):
+    """An old run's exhausted window says nothing about today."""
+    spent(repo, "nt1", windows(0.99, 120))
+    spent(repo, "ot4", windows(0.1, 120))
+    assert history.spent_window_lines(repo) == []
+
+
+def test_no_runs_at_all_is_silence_not_an_error(repo):
+    assert history.spent_window_lines(repo) == []
+
+
+def test_preflight_reports_ready_without_starting_anything(repo, monkeypatch, capsys):
+    monkeypatch.chdir(repo)
+    from ouroboros import cli
+    monkeypatch.setattr(cli, "preflight", lambda cfg, r: None)
+    spent(repo, "ot4", windows(0.9, 24))
+    (repo / ".ouroboros" / "config.yml").write_text(Config(run="ot5").dump())
+
+    assert main(["preflight"]) == 0
+    out = capsys.readouterr().out
+    assert "warning: claude 7d was 90% full" in out
+    assert "ready: run 'ot5' on branch ouroboros/ot5" in out
+    assert "actor=claude" in out
+    assert not (repo / ".ouroboros" / "runs" / "ot5").exists(), "preflight must start nothing"
+
+
+def test_preflight_refuses_and_says_why(repo, monkeypatch, capsys):
+    monkeypatch.chdir(repo)
+    (repo / "dirty.txt").write_text("x\n")
+    assert main(["preflight"]) == 2
+    assert "not ready: working tree is dirty" in capsys.readouterr().err
