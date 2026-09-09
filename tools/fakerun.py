@@ -82,6 +82,31 @@ SAID = [
     "No change needed. The behaviour the critic flagged is the documented one, and the test that "
     "looked wrong is asserting the documented case.",
 ]
+# The two sentences the overseer writes for the monitor's `last` and `current` rows.
+# They are the whole reading a person gets at a glance, so the synthetic ones have to
+# be the shape a real overseer would write: one clause, a thing named, no role words.
+FINISHED = [
+    "Added the 25T horn to the library from the manufacturer STEP, with its tooth count measured.",
+    "Keyed the tessellation cache on the placement hash, so a reload cannot share a mesh.",
+    "Ran the engine suite: 2062 passed, 14 skipped, and the skips are the GUI ones.",
+    "Made the clearance check scriptable, so the headless walk can reach it.",
+    "Fixed the motor mount's doubled origin and pinned it with a test.",
+    "Cut the fork delta to 41 files by removing two dead 0.21 shims.",
+    "Wrote nothing but records this iteration, and moved no node.",
+    "Threaded the named angle through the headless renderer's three call sites.",
+    "Closed the wiring-scope ordering bug the fourth failure was hiding.",
+    "Regenerated STATE.md from the graph after closing the tessellation node.",
+]
+STARTING = [
+    "Qualifying the second mechanism against the unchanged walk entry point.",
+    "Threading the render angle through to the review leg.",
+    "Reading CadexCatalog.py before adding to the part registry.",
+    "Rerunning the engine suite to see whether the ordering fix holds.",
+    "Splitting the swept clearance check away from the GUI command.",
+    "Measuring what the packaged payload carries that the source tree does not.",
+    "Picking up the inventory gap: assembly counts do not reach the project yet.",
+    "Writing the failing test for the wiring scope before touching it.",
+]
 DID = [
     ("Bash", "pixi run pytest src/Mod/cadex/cadex_tests/test_catalog.py -q"),
     ("Bash", "pixi run pytest -q -x"),
@@ -178,6 +203,8 @@ class Voice:
     def critic_no(self):  return self._pick(CRITIC_NO, 240)
     def must_fix(self):   return self._pick(MUST_FIX, 200)
     def overseer(self):   return self._pick(OVERSEER_WHY, 160)
+    def finished(self):   return self._pick(FINISHED, 160)
+    def starting(self):   return self._pick(STARTING, 160)
     def bet(self):        return self._pick(BETS, 90)
     def plan_item(self):  return self._pick(PLAN_ITEMS, 120)
     def blurb(self, cap): return (LONG if self.hostile else self.rng.choice(SAID))[:cap]
@@ -377,6 +404,7 @@ def write_run(run_dir: Path, spec: dict, rng, v: Voice) -> None:
                                "reason": v.overseer()}))
         decisions.append((clock, {"iteration": n, "verdict": ov, "reason": v.overseer(),
                                   "reply": v.reply() if ov == "answer" else "", "overseer": "agent",
+                                  "did": v.finished(), "doing": v.starting(),
                                   "cost": round(rng.uniform(0.0, 0.4), 4)}))
         if reverted:
             clock += rng.uniform(2.0, 12.0)
@@ -513,7 +541,8 @@ def tick(name: str) -> None:
                             "source": "agent", "reason": v.overseer()}) + "\n")
     with (run_dir / "overseer.jsonl").open("a") as f:
         f.write(json.dumps({"ts": ts(0), "iteration": n, "verdict": "continue", "reason": v.overseer(),
-                            "reply": "", "overseer": "agent", "cost": 0.1}) + "\n")
+                            "reply": "", "did": v.finished(), "doing": v.starting(),
+                            "overseer": "agent", "cost": 0.1}) + "\n")
     with (run_dir / "loop.log").open("a") as f:
         f.write(f"{ts(0)} [{n}] actor: exit=0, turns={rng.randint(3, 40)}\n")
     # Usage only ever climbs, which is the point of the meter.

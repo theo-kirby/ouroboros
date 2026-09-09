@@ -10,8 +10,8 @@ from typing import Optional, Set
 
 from .layout import MIN_COLS, MIN_LINES, Rect, col, compute_layout, leaf, row
 from .panels import (
-    LoadHistory, Painter, draw_feed, draw_frontier, draw_iterations, draw_load, draw_log, draw_loop, draw_overseer,
-    draw_plan, draw_run, draw_stages, draw_time,
+    LoadHistory, Painter, draw_feed, draw_frontier, draw_iterations, draw_load, draw_log, draw_loop, draw_plan,
+    draw_run, draw_stages, draw_status, draw_time,
 )
 from .state import Snapshot, load_snapshot
 from .theme import PAIR_DIM, PAIR_TITLE, PAIR_YELLOW, Theme
@@ -23,27 +23,27 @@ RENDER_TICK = 0.25
 # usage, charter -- with a blank line before the clock.
 RUN_STRIP_H = 8
 
-# hotkey number → panel id; the superscript on each box names it. The four on by
-# default answer the four questions a run raises, in the order they get asked:
-# is it moving, will the subscription last, what is it saying, what was decided.
+# hotkey number → panel id; the superscript on each box names it. The three on by
+# default answer the three questions a run raises, in the order they get asked: is it
+# moving, will the subscription last, and what is actually happening right now.
 #
-# The panels are sized by how often what they hold changes. `messages` changes every
-# few seconds and gets the most room; the charter and the stage split change a few
-# times a run and are now two lines in the run strip rather than two panels.
-PANELS = ["iterations", "activity", "messages", "overseer", "time", "frontier", "plan", "log"]
-DEFAULT_ON = {"iterations", "activity", "messages", "overseer"}
+# `status` is the answer to the third and it is where the overseer panel and the
+# message feed went. They were two panels saying half a thing each -- what was decided,
+# and what was being typed -- and joining them was left to the reader. The raw feed is
+# still here as panel 6 for when you want to watch a transcript on purpose.
+PANELS = ["iterations", "activity", "status", "time", "frontier", "messages", "plan", "log"]
+DEFAULT_ON = {"iterations", "activity", "status"}
 VIEW = col(
     row(leaf("iterations", 1), leaf("activity", 1), weight=10),
     row(leaf("time", 1), leaf("frontier", 1), weight=6),
-    leaf("overseer", weight=4, min_h=4),   # 2 borders + the strip + one line of reason
-    # The feed used to be last, which under the old split handed it every leftover row
-    # and ran it the height of a screen. Ten or so lines is all anyone reads of a live
-    # transcript; the rows are worth more above it.
+    # 12 of the 22 the default view weighs: what the overseer panel and the feed held
+    # between them, in one box. min_h is 2 borders + history + stage + the three rows.
+    leaf("status", weight=12, min_h=7),
     row(leaf("messages", 3), leaf("plan", 1), leaf("log", 2), weight=8),
 )
 DRAW = {
     "iterations": draw_iterations, "activity": draw_load, "time": draw_time,
-    "frontier": draw_frontier, "overseer": draw_overseer, "plan": draw_plan,
+    "frontier": draw_frontier, "status": draw_status, "plan": draw_plan,
     "loop": draw_loop, "stages": draw_stages, "log": draw_log,
 }
 
@@ -178,13 +178,17 @@ class App:
             "",
             "  q / Esc    quit (the run keeps going)",
             "  1 - 9      toggle a panel: " + " ".join(f"{i + 1} {n}" for i, n in enumerate(PANELS)),
-            "             (5 - 8 are off by default)",
-            "  o          show tool output lines in messages",
+            "             (4 - 8 are off by default)",
+            "  o          show tool output lines in the raw messages panel",
             "  + / -      faster / slower refresh",
             "  h / ?      this help",
             "",
-            "  overseer history: ● ran clean (continue, answer, done accepted)",
-            "                    ● blocked (stuck, revert, done rejected)",
+            "  status history: ● ran clean (continue, answer, done accepted)",
+            "                  ● blocked (stuck, revert, done rejected)",
+            "",
+            "  status rows: last     the unit that finished (the overseer wrote it)",
+            "               current  the unit now running (the overseer wrote it)",
+            "                        the newest line from the agent itself",
             "",
             "press any key to close",
         ]

@@ -21,14 +21,21 @@ HISTORY_WINDOW = 20
 # Claude needs a second turn to emit structured output even with tools off; 3 leaves slack.
 OVERSEER_MAX_TURNS = 3
 
+# `did` and `doing` are for the person watching, not for the loop: the monitor shows
+# one sentence for the unit that just finished and one for the unit now running, so a
+# glance answers "where is it" without reading a transcript. The overseer writes them
+# because it is the only role that runs every iteration, sees the actor's whole output,
+# and is cheap. They are advisory -- nothing in the engine branches on them.
 VERDICT_SCHEMA = {
     "type": "object",
     "properties": {
         "verdict": {"type": "string", "enum": list(VERDICTS)},
         "reply": {"type": "string"},
         "reason": {"type": "string"},
+        "did": {"type": "string"},
+        "doing": {"type": "string"},
     },
-    "required": ["verdict", "reply", "reason"],
+    "required": ["verdict", "reply", "reason", "did", "doing"],
 }
 
 RULES_REPLY = (
@@ -116,6 +123,8 @@ class Verdict:
     reply: str
     reason: str
     source: str = "rules"
+    did: str = ""      # one sentence: the unit that just finished
+    doing: str = ""    # one sentence: the unit the next iteration is starting
 
 
 class Overseer(Protocol):
@@ -170,6 +179,12 @@ def build_overseer_prompt(*, goal_text: str, s: Signals, template: str | None = 
     )
 
 
+def _one_line(value, limit: int = 160) -> str:
+    """One sentence on one line. The monitor gives each of these a single row."""
+    text = " ".join(str(value or "").split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "\u2026"
+
+
 def parse_verdict(text: str) -> Verdict | None:
     """Lenient: whole text, else the outermost {...} block. Validates the verdict."""
     candidates = [text.strip()]
@@ -186,7 +201,8 @@ def parse_verdict(text: str) -> Verdict | None:
         verdict = str(data.get("verdict", "")).strip().lower()
         if verdict not in VERDICTS:
             continue
-        return Verdict(verdict, str(data.get("reply") or ""), str(data.get("reason") or ""), source="agent")
+        return Verdict(verdict, str(data.get("reply") or ""), str(data.get("reason") or ""), source="agent",
+                       did=_one_line(data.get("did")), doing=_one_line(data.get("doing")))
     return None
 
 

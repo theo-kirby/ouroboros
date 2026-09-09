@@ -35,6 +35,12 @@ class Event:
     text: str
 
 
+def oneline(value, limit: int = 400) -> str:
+    """Collapse anything to one line. Panels give these a single row each."""
+    text = " ".join(str(value or "").split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "\u2026"
+
+
 def _short_input(name: str, inp) -> str:
     if not isinstance(inp, dict):
         return str(inp)[:200]
@@ -350,6 +356,39 @@ class Snapshot:
     @property
     def usage_parts(self) -> list[tuple[str, float | None]]:
         return usage_parts(self.usage, self.money, self.now)
+
+    # The three lines the status panel exists for. Two are written by the overseer,
+    # one sentence each; the third is whatever the running agent said last. Each has
+    # a fallback that is true rather than blank, because an empty row on a monitor
+    # reads as "nothing is happening" and that is usually the wrong thing to say.
+    @property
+    def _last_decision(self) -> dict:
+        return self.decisions[-1] if self.decisions else {}
+
+    @property
+    def did(self) -> str:
+        """One sentence for the unit that finished, or the overseer's log line."""
+        d = self._last_decision
+        return oneline(d.get("did")) or oneline(d.get("reason"))
+
+    @property
+    def doing(self) -> str:
+        """One sentence for the unit now running, or the steer the overseer gave."""
+        d = self._last_decision
+        return oneline(d.get("doing")) or oneline(d.get("reply"))
+
+    @property
+    def last_message(self) -> Event | None:
+        """The newest thing the running agent said or ran.
+
+        Thinking and the init banner are skipped -- they are not what it did -- and
+        so is tool output, which is the machine answering rather than the agent
+        speaking. What is left is the sentence or the command, which is the line.
+        """
+        for ev in reversed(self.feed):
+            if ev.kind in ("text", "tool", "result", "error"):
+                return ev
+        return None
 
 
 _SHORT_WINDOW = {"five_hour": "5h", "seven_day": "7d", "daily": "24h", "hourly": "1h"}

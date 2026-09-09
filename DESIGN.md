@@ -659,13 +659,31 @@ the pipeline
 `actor→critic→overseer→maintainer→planner` sits in the strip with the active
 stage lit. Below it the default view is chart-first, an overview and not an
 analysis: **iterations** (outcome strip over a braille chart of actor minutes),
-**activity** (harness CPU over time), three meter panels, **time by stage**,
-**verdicts**, and **frontier** (charter gaps done, and the state graph's
-working / open / blocked split), then **messages** and a compact **overseer**
-(verdict history strip, the last verdict, its reason and reply). **plan** is
-off by default; the text panels **loop**,
-**stages**, and **log** are reachable through the help. Panels toggle by their
-superscript number. Details: **stages** (the pipeline with the active stage lit and
+**activity** (harness CPU over time), and **status**. **time by stage**,
+**frontier** (charter gaps done, and the state graph's working / open / blocked
+split), **messages**, **plan**, **loop**, **stages** and **log** are off by
+default and reachable through the help. Panels toggle by their superscript
+number.
+
+**status** is what a person actually watches, and it is where the overseer panel
+and the message feed went. They were two panels holding half an answer each --
+one said what was decided, the other said what was being typed, and joining them
+was the reader's job. It carries, top to bottom: the verdict history strip and
+the latest verdict; the pipeline with the stage lit and how long it has been
+held; the window of recent verdicts, one line each, newest last, ending with the
+latest one's reason and reply; and then the three rows that are the point of it:
+
+    last     the unit that finished    (one sentence, written by the overseer)
+    current  the unit now running      (one sentence, written by the overseer)
+             the newest line the running agent said or ran
+
+`did` and `doing` are two extra fields on the overseer's JSON verdict
+(`roles/overseer.py`). The overseer writes them because it is the only role that
+runs every iteration, sees the actor's whole output, and is cheap; nothing in the
+engine branches on them, and when the overseer is `rules` the panel falls back to
+the reason and the reply, which are always there. The three rows are pinned to
+the bottom of the panel, so they do not move as the prose above them grows, and
+they are the last thing to be given up when the panel is short. Details: **stages** (the pipeline with the active stage lit and
 per-stage run counts, last, average, total durations from `iterations.jsonl`),
 **iterations** (an outcome strip, ■ changed and recorded, ▪ changed, · empty,
 ✗ reverted, ◆ bet, ! error, over a braille chart of actor minutes per

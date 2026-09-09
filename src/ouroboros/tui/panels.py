@@ -1,4 +1,4 @@
-"""The panels: run strip, stages, iterations, load, feed, overseer, plan, log."""
+"""The panels: run strip, iterations, load, status, feed, plan, log."""
 
 from __future__ import annotations
 
@@ -452,47 +452,138 @@ def draw_feed(p: Painter, rect: Rect, s: Snapshot, num: int, show_output: bool) 
         p.text(inner.y + i, x, text, t.attr(pair, bold=first and pair == PAIR_CYAN), width=w)
 
 
-# ---------------------------------------------------------------- overseer
-def draw_overseer(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
+# ---------------------------------------------------------------- status
+# The overseer's verdicts and the raw message feed used to be two panels, and reading
+# a run meant reading both and joining them in your head: one said what was decided,
+# the other said what was being typed, and neither said what was *happening*. This is
+# the join, and the bottom three lines are the whole point of it.
+#
+#   last     the unit that finished, one sentence, written by the overseer
+#   current  the unit now running, one sentence, written by the overseer
+#            the newest thing the running agent actually said or ran
+#
+# `last` and `current` change once an iteration; the raw line changes every few
+# seconds. Three rows hold a run's whole state, and a transcript is something you go
+# and read on purpose rather than something that scrolls past you.
+STATUS_ROWS = 3
+_PIPELINE = ("actor", "critic", "overseer", "maintainer", "planner")
+
+
+def draw_status(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
     t = p.theme
     counts: Dict[str, int] = {}
     for d in s.decisions:
         counts[d.get("verdict", "?")] = counts.get(d.get("verdict", "?"), 0) + 1
-    inner = p.box(rect, "overseer", num, PAIR_BOX_STAGES,
+    inner = p.box(rect, "status", num, PAIR_BOX_FEED,
                   title2=" ".join(f"{k} {v}" for k, v in sorted(counts.items())) or "")
     if inner.h <= 0:
         return
     x, w = inner.x + 1, inner.w - 2
     y = inner.y
     last = s.decisions[-1] if s.decisions else None
+
+    # 1. the shape of the run so far, and its latest word.
     if last is None:
-        p.text(y, x, "no verdicts yet", t.attr(PAIR_INACTIVE))
-        return
-    # The shape of the run and its latest word share the top line, so the words the
-    # overseer actually wrote get the rest of a panel that is wide rather than tall.
-    # Six letters asked the reader to decode a legend at a glance, which is the one
-    # thing a glance cannot do. The only question the strip answers is whether the
-    # run went through or hit something, so it has two states and one shape.
+        p.text(y, x, "no verdicts yet", t.attr(PAIR_INACTIVE), width=w)
+    else:
+        v = last.get("verdict", "?")
+        tag = f"#{last.get('iteration', '?')} {v}"
+        strip = s.decisions[-max(4, w - len(tag) - 12):]
+        p.text(y, x, "history ", t.attr(PAIR_DIM))
+        for i, d in enumerate(strip):
+            vv = d.get("verdict", "?")
+            p.text(y, x + 8 + i, DOT, t.attr(PAIR_RED if vv in BLOCKED else PAIR_GREEN, bold=True))
+        p.text(y, x + w - len(tag), tag, t.attr(PAIR_RED if v in BLOCKED else PAIR_GREEN, bold=True))
+
+    # 2. where in the loop it is, and for how long.
+    if inner.h >= 2:
+        _stage_line(p, y + 1, x, w, s)
+
+    # 3. the three rows, pinned to the bottom so they never move as the prose above
+    # them grows or shrinks. A person learns where to look once.
+    rows_y = inner.y + inner.h - STATUS_ROWS
+    middle = rows_y - (y + 2)
+    if last is not None and middle > 0:
+        lines = _verdict_lines(s, w, middle)
+        for i, (text, pair) in enumerate(lines[-middle:]):
+            p.text(rows_y - len(lines[-middle:]) + i, x, text, t.attr(pair), width=w)
+    if inner.h >= STATUS_ROWS + 2:
+        _status_rows(p, rows_y, x, w, s)
+
+
+def _verdict_lines(s: Snapshot, w: int, room: int) -> list[tuple[str, int]]:
+    """The overseer's decisions, oldest first, ending with the newest one in full.
+
+    The panel it replaced showed one verdict, because one verdict was all a four-row
+    strip could hold. With the feed's rows added there is room for the window the
+    overseer itself now reads, and a run reads completely differently over twenty
+    decisions than over one: the same reason four times running is a stall, and a
+    single line of it is just a sentence.
+    """
+    last = s.decisions[-1]
     v = last.get("verdict", "?")
-    tag = f"#{last.get('iteration', '?')} {v}"
-    strip_w = max(4, w - len(tag) - 12)
-    strip = s.decisions[-strip_w:]
-    p.text(y, x, "history ", t.attr(PAIR_DIM))
-    for i, d in enumerate(strip):
-        vv = d.get("verdict", "?")
-        p.text(y, x + 8 + i, DOT, t.attr(PAIR_RED if vv in BLOCKED else PAIR_GREEN, bold=True))
-    p.text(y, x + w - len(tag), tag, t.attr(PAIR_RED if v in BLOCKED else PAIR_GREEN, bold=True))
-    left = inner.h - 1
-    if left <= 0:
-        return
+    tag = f"#{last.get('iteration', '?')} {v}  "
     reason = " ".join(str(last.get("reason", "")).split())
     reply = " ".join(str(last.get("reply") or "").split())
-    lines = wrap(reason, w, (1 if reply and left > 1 else left)) if reason else []
-    if reply and len(lines) < left:
-        lines += [("→ " + l if i == 0 else "  " + l)
-                  for i, l in enumerate(wrap(reply, w - 2, left - len(lines)))]
-    for i, l in enumerate(lines[:left]):
-        p.text(y + 1 + i, x, l, t.attr(PAIR_PROMPT if l.startswith(("→", "  ")) else PAIR_DIM), width=w)
+    # The newest decision carries the same tag as the ones above it, so the column
+    # reads as one list rather than a list with a loose sentence under it.
+    newest: list[tuple[str, int]] = [
+        ((tag if i == 0 else " " * len(tag)) + l, PAIR_DIM)
+        for i, l in enumerate(wrap(reason, w - len(tag), 2))
+    ] if reason else []
+    if reply:
+        newest += [(("\u2192 " + l if i == 0 else "  " + l), PAIR_PROMPT)
+                   for i, l in enumerate(wrap(reply, w - 2, max(1, room - len(newest) - 1)))]
+    older = []
+    for d in s.decisions[-(room + 1):-1]:
+        v = d.get("verdict", "?")
+        tag = f"#{d.get('iteration', '?')} {v}"
+        older.append((clip(f"{tag}  {' '.join(str(d.get('reason', '')).split())}", w),
+                      PAIR_RED if v in BLOCKED else PAIR_INACTIVE))
+    return older + newest
+
+
+def _stage_line(p: Painter, y: int, x: int, w: int, s: Snapshot) -> None:
+    """actor→critic→overseer→maintainer→planner, lit where the loop is, with the clock."""
+    t = p.theme
+    cx = x
+    for name in _PIPELINE:
+        if cx > x:
+            p.text(y, cx, "\u2192", t.attr(PAIR_INACTIVE)); cx += 1
+        active = name == s.stage
+        pair = STATE_PAIR.get({"actor": "work", "critic": "critique", "overseer": "oversee",
+                               "maintainer": "reconcile", "planner": "plan"}[name], PAIR_DIM)
+        p.text(y, cx, name, t.attr(pair if active else PAIR_INACTIVE, bold=active), width=max(0, x + w - cx))
+        cx += len(name)
+    if s.stage not in _PIPELINE:
+        word = f" {s.stage}"
+        p.text(y, cx, word, t.attr(STATE_PAIR.get(s.stage, PAIR_DIM), bold=True), width=max(0, x + w - cx))
+        cx += len(word)
+    # How long it has been in this stage is the difference between working and hung,
+    # and it is the one number the pipeline alone cannot show.
+    held = fmt_duration(max(0.0, s.now - s.stage_since)) if s.alive else ""
+    if held and cx + len(held) + 2 <= x + w:
+        p.text(y, x + w - len(held), held, t.attr(PAIR_DIM))
+
+
+_STATUS_LABELS = ("last", "current", "")
+
+
+def _status_rows(p: Painter, y: int, x: int, w: int, s: Snapshot) -> None:
+    """The three rows: what finished, what is running, what it just said."""
+    t = p.theme
+    lw = max(len(l) for l in _STATUS_LABELS) + 2
+    ev = s.last_message
+    raw = ev.text if ev is not None else ""
+    rows = [
+        ("last", s.did or "\u2014", PAIR_TITLE),
+        ("current", s.doing or "\u2014", PAIR_CYAN),
+        ("", " ".join(raw.split()) or "waiting for the first message\u2026",
+         PAIR_RED if ev is not None and ev.kind == "error" else PAIR_DIM),
+    ]
+    for i, (label, text, pair) in enumerate(rows):
+        p.text(y + i, x, label.ljust(lw), t.attr(PAIR_INACTIVE))
+        p.text(y + i, x + lw, clip(text, w - lw), t.attr(pair, bold=pair in (PAIR_TITLE, PAIR_CYAN)), width=w - lw)
 
 
 # ---------------------------------------------------------------- plan

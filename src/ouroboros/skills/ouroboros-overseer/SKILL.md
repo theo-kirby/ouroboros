@@ -15,7 +15,7 @@ would, using the goal document below as their voice.
 Return exactly one JSON object and nothing else:
 
 ```json
-{"verdict": "<one of the verdicts>", "reply": "<text injected into the next iteration's prompt>", "reason": "<one sentence for the log>"}
+{"verdict": "<one of the verdicts>", "reply": "<text injected into the next iteration's prompt>", "reason": "<one sentence for the log>", "did": "<one sentence: the unit that just finished>", "doing": "<one sentence: the unit the next iteration starts>"}
 ```
 
 | verdict | when |
@@ -51,6 +51,25 @@ Rules:
   is a `looping` verdict, and the `reply` must be different from the ones that failed.
 - **Stay in scope.** If the actor drifts from the mission, `continue` with a steer.
 - **Be short.** `reply` under 120 words. It is read by a busy agent.
+
+## `did` and `doing`
+
+These two are not for the loop. They are the two lines a person sees on the
+monitor, and they are the only thing between them and reading a transcript.
+Nothing branches on them, so they cost nothing to get slightly wrong and are
+worth a lot when they are right.
+
+- **`did`** — what the iteration that just ended actually finished, in one plain
+  sentence, past tense, under 120 characters. Name the thing, not the activity:
+  "Added swept clearance to the rollout path, with twelve tests" beats "worked on
+  clearance". If it finished nothing, say that: "Changed three records and no
+  code."
+- **`doing`** — what the next iteration is starting, in one plain sentence,
+  present tense, same length. It follows from your `reply` and from the top of
+  the plan. If you do not know, name the open gap you are steering at.
+
+Write both as a colleague would say them out loud. No JSON, no markdown, no
+role names, no "the actor". Never leave either empty.
 
 ## The goal (the user's voice)
 

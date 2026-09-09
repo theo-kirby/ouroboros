@@ -371,3 +371,138 @@ def test_the_history_strip_has_two_states():
     assert not {"continue", "answer", "done_accepted"} & BLOCKED
     # work thrown away, or not done at all
     assert {"stuck", "revert", "done_rejected"} <= BLOCKED
+
+
+# ------------------------------------------------------------------ the status panel
+class FakeWin:
+    """A screen that remembers what was written where, so a panel can be read back."""
+
+    def __init__(self, h: int, w: int) -> None:
+        self.grid = [[" "] * w for _ in range(h)]
+
+    def addstr(self, y, x, s, attr=0):
+        import curses
+        if not (0 <= y < len(self.grid)):
+            raise curses.error("off screen")
+        row = self.grid[y]
+        for i, ch in enumerate(s):
+            if 0 <= x + i < len(row):
+                row[x + i] = ch
+
+    def lines(self):
+        return [("".join(r)).rstrip() for r in self.grid]
+
+
+def snapshot(**kw):
+    from ouroboros.tui.state import Snapshot
+    base = dict(
+        now=1000.0, status={"state": "work", "iteration": 12}, alive=True, pid=7, iterations=[], stages={},
+        stage="actor", stage_since=940.0, decisions=[], feed=[], feed_role="0012-actor", feed_age=1.0,
+        log_tail=[], plan_short=[], needs_human=None, loadavg=(0, 0, 0), procs=1, cpu_pct=0.0, rss_mb=0.0,
+        stop_after_s=None, max_iterations=None, chains={}, mode="actor-critic",
+    )
+    base.update(kw)
+    return Snapshot(**base)
+
+
+def render(s, h=12, w=76):
+    from ouroboros.tui.panels import Painter, draw_status
+    from ouroboros.tui.theme import Theme
+    win = FakeWin(h, w)
+    draw_status(Painter(win, Theme()), Rect(0, 0, h, w), s, 3)
+    return win.lines()
+
+
+def decision(**kw):
+    base = {"iteration": 12, "verdict": "continue", "reason": "moved the walk forward", "reply": ""}
+    base.update(kw)
+    return base
+
+
+def test_the_three_status_rows_are_the_bottom_of_the_panel():
+    from ouroboros.tui.state import Event
+    s = snapshot(
+        decisions=[decision(did="Added swept clearance to the rollout path, with twelve tests.",
+                            doing="Wiring the pending receipt into the collect leg.")],
+        feed=[Event("think", "hmm"), Event("tool", "$ pytest cli/tests -k walk")],
+    )
+    lines = render(s)
+    assert "last" in lines[-4] and "Added swept clearance" in lines[-4]
+    assert "current" in lines[-3] and "Wiring the pending receipt" in lines[-3]
+    # The raw line carries no label: it is the same "current", said by the agent itself.
+    assert "pytest cli/tests -k walk" in lines[-2] and "current" not in lines[-2]
+
+
+def test_the_panel_keeps_the_history_strip_and_gains_the_stage():
+    s = snapshot(decisions=[decision(iteration=9, verdict="stuck"), decision(iteration=10, verdict="continue")])
+    lines = render(s)
+    assert "history ●●" in lines[1]
+    assert "#10 continue" in lines[1]
+    assert "actor→critic→overseer→maintainer→planner" in lines[2]
+    assert "1m 00s" in lines[2], "how long it has held this stage"
+    assert "continue 1" in lines[-1] and "stuck 1" in lines[-1], "the verdict counts stay on the border"
+
+
+def test_a_stage_outside_the_pipeline_is_named_rather_than_dropped():
+    assert "backoff" in render(snapshot(stage="backoff", decisions=[decision()]))[2]
+
+
+def test_the_overseers_own_words_still_get_the_middle():
+    s = snapshot(decisions=[decision(reason="the actor asked which store to use", verdict="answer",
+                                     reply="Use the existing one.", did="d", doing="c")])
+    body = "\n".join(render(s)[3:-4])
+    assert "#12 answer  the actor asked which store to use" in body
+    assert "→ Use the existing one." in body
+
+
+def test_the_middle_is_the_window_of_verdicts_not_one_of_them():
+    """One line of "stuck" is a sentence; four in a row is a stall. Only the window shows it."""
+    s = snapshot(decisions=[decision(iteration=n, verdict="stuck", reason=f"nothing changed ({n})")
+                            for n in range(1, 9)], stage="actor")
+    body = "\n".join(render(s, h=14))
+    assert "#5 stuck  nothing changed (5)" in body
+    assert "#8 stuck  nothing changed (8)" in body
+    # Newest last, so the eye lands on it right above the three rows.
+    assert body.index("nothing changed (5)") < body.index("nothing changed (8)")
+
+
+def test_the_window_gives_way_to_the_three_rows_when_the_panel_is_short():
+    s = snapshot(decisions=[decision(iteration=n, verdict="continue", reason=f"r{n}", did="D", doing="C")
+                            for n in range(1, 9)])
+    lines = render(s, h=7)
+    assert "D" in lines[-4] and "C" in lines[-3]
+    assert "r1" not in "\n".join(lines), "the older verdicts go first, the rows never do"
+
+
+def test_the_rows_survive_a_panel_with_no_room_for_prose():
+    """min_h is seven: two borders, history, stage, and the three rows. Nothing else."""
+    lines = render(snapshot(decisions=[decision(did="finished the thing", doing="starting the next")]), h=7)
+    assert "finished the thing" in lines[-4] and "starting the next" in lines[-3]
+
+
+def test_an_overseer_that_wrote_no_summary_falls_back_to_what_it_did_write():
+    """The rules overseer cannot summarise. An empty row would read as nothing happening."""
+    s = snapshot(decisions=[decision(reason="no record written", reply="Write the handoff first.")])
+    assert s.did == "no record written"
+    assert s.doing == "Write the handoff first."
+
+
+def test_the_raw_row_is_what_the_agent_said_not_what_a_tool_answered():
+    from ouroboros.tui.state import Event
+    s = snapshot(feed=[Event("text", "I will add the test"), Event("tool_out", "1 passed"), Event("think", "…")])
+    assert s.last_message.text == "I will add the test"
+    assert s.last_message.kind == "text"
+
+
+def test_a_run_with_no_transcript_yet_says_so_once():
+    lines = render(snapshot(decisions=[decision()]))
+    assert "waiting for the first message" in lines[-2]
+
+
+def test_the_status_panel_takes_the_room_both_panels_used_to_have():
+    from ouroboros.tui.app import DEFAULT_ON, PANELS, VIEW
+    placed = compute_layout(Rect(8, 0, 44, 120), VIEW, DEFAULT_ON)
+    assert set(placed) == {"iterations", "activity", "status"}
+    # 12 of 22: the overseer strip's 4 and the feed's 8, in one box.
+    assert placed["status"].h == 24 and placed["status"].w == 120
+    assert "messages" in PANELS, "the raw feed is still reachable, just not on by default"

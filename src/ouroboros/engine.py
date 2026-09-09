@@ -201,7 +201,8 @@ class Engine:
         overseer_cost = float(getattr(self.overseer, "last_cost", 0.0) or 0.0)
         self.budget.add(cost=overseer_cost, usage=getattr(self.overseer, "last_usage", None),
                         harness=_harness_of(self.overseer))
-        self.recorder.decision(iteration=n, verdict=verdict.verdict, reason=verdict.reason, reply=verdict.reply, overseer=verdict.source, cost=overseer_cost)
+        self.recorder.decision(iteration=n, verdict=verdict.verdict, reason=verdict.reason, reply=verdict.reply,
+                               did=verdict.did, doing=verdict.doing, overseer=verdict.source, cost=overseer_cost)
         self.recorder.step(iteration=n, step="oversee", verdict=verdict.verdict, source=verdict.source, reason=verdict.reason)
         if loop is not None:
             self._escalate(n, loop, verdict)
