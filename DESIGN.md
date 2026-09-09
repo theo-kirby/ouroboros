@@ -617,6 +617,29 @@ without touching code and so a harness can load them natively.
   REPORT.md                  # written by `ouroboros report`
 ```
 
+None of that leaves the machine: `.ouroboros/runs/` is gitignored, and it is
+tens of megabytes of transcripts. So the run directory is not the record. The
+record is what `ouroboros archive` writes beside it, in the project's own git:
+
+```
+.ouroboros/
+  AGENTS.md                  # how runs are operated here; written once by `init`, then the project's
+  RUNS.md                    # the index: one row per run. generated; never hand-edited
+  history/<run>.md           # one digest per run: front matter, the read, then the human's notes
+```
+
+`archive` runs automatically at the end of `run` and after `stop`, and can be
+run by hand (`--all` backfills, `--machine` names a box other than this one).
+Everything above the notes marker in a digest is measured from the logs or from
+git; everything below it belongs to whoever writes what the run taught, and a
+rewrite preserves it. `RUNS.md` is generated from the digests' front matter,
+oldest first, the way `STATE.md` is generated from record nodes.
+
+The index leads with **what the run ticked**, not with how many criteria are
+checked at its tip: a charter usually opens with boxes already checked, so the
+tip count flatters. cadex's nt3 tip reads 9 of 13 and nt3 closed none of them.
+The delta is measured against the charter at the merge base.
+
 `status.json` states: `starting`, `work`, `critique`, `oversee`, `reconcile`,
 `plan`, `backoff` (with `why` and `seconds`), `idle`, `stopped`, `killed`.
 `limited` lists blocked harnesses with the minutes left.
@@ -734,7 +757,7 @@ CLI flags override config: `--run-name --for --max-iterations --max-cost --mode
 ouroboros/
   pyproject.toml            # [project.scripts] ouroboros = "ouroboros.cli:main"; pydantic, pyyaml; pytest
   src/ouroboros/
-    cli.py                  # init | design | run | stop | status | report | skills install; menu; preflight; signals
+    cli.py                  # init | design | run | stop | status | report | archive | skills install; menu; preflight; signals
     engine.py               # the state machine (section 6): step(), retry policy, reconcile, plan, critique
     config.py               # pydantic models for config.yml (section 16)
     goal.py                 # the charter parser: sections, done criteria → gap names, ladder, policies, template check
@@ -752,6 +775,8 @@ ouroboros/
     gitguard.py             # branch, commit, tag, diff, revert_to
     budget.py               # BudgetClock, backoff table
     recorder.py             # jsonl, status.json, loop.log, NEEDS_HUMAN.md
+    history.py              # the durable record: .ouroboros/history/<run>.md digests + RUNS.md index
+    operator.py             # .ouroboros/AGENTS.md, the guide for the agent that drives runs in the target repo
     tmux.py                 # the run session: launch, kill
     tui/                    # the status TUI: theme, widgets, layout (from vllmtop), state (run-dir reader), panels, app
     skills/                 # packaged with the wheel; `ouroboros skills install` copies them out
@@ -761,7 +786,7 @@ ouroboros/
     test_engine.py test_pool.py test_critic.py test_goal.py test_overseer.py
     test_memory_handoff.py test_memory_hypergraph.py (needs the hypergraph CLI)
     test_claude_parse.py test_drivers_parse.py test_headless.py test_backend_tmux.py (needs tmux)
-    test_gitguard.py test_recorder.py test_config.py
+    test_gitguard.py test_recorder.py test_config.py test_history.py test_operator.py
   DESIGN.md                 # this file
   README.md  AGENTS.md
 ```

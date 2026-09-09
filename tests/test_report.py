@@ -3,7 +3,8 @@
 import json
 
 from ouroboros.cli import main
-from ouroboros.cli import _billed_split, _cost_by_role, _unverified_reverts
+from ouroboros.cli import _billed_split, _cost_by_role
+from ouroboros.history import unverified_reverts
 from ouroboros.gitguard import GitGuard
 
 
@@ -51,22 +52,22 @@ def test_a_revert_that_never_moved_the_tree_is_reported_as_failed(repo):
 
     # What a silent no-op logs: the head it returned is the commit it should have undone.
     noop = {"iteration": 7, "to": "ok", "sha": bad[:10]}
-    assert _unverified_reverts(repo, "ouroboros/x", [noop]) == [noop]
+    assert unverified_reverts(repo, "ouroboros/x", [noop]) == [noop]
 
     real = g.revert_to("ok")
     good = {"iteration": 8, "to": "ok", "sha": real[:10]}
-    assert _unverified_reverts(repo, "ouroboros/x", [good]) == []
+    assert unverified_reverts(repo, "ouroboros/x", [good]) == []
 
 
 def test_a_revert_recorded_with_an_error_is_always_failed(repo):
     r = {"iteration": 9, "to": "ok", "sha": "deadbeef", "error": "revert refused"}
-    assert _unverified_reverts(repo, "ouroboros/x", [r]) == [r]
+    assert unverified_reverts(repo, "ouroboros/x", [r]) == [r]
 
 
 def test_unverifiable_reverts_are_not_guessed_at(repo):
     """A tag that no longer exists is not evidence of failure."""
-    assert _unverified_reverts(repo, "ouroboros/x", [{"iteration": 1, "to": "gone", "sha": "gone"}]) == []
-    assert _unverified_reverts(repo, "ouroboros/x", [{"iteration": 2}]) == []
+    assert unverified_reverts(repo, "ouroboros/x", [{"iteration": 1, "to": "gone", "sha": "gone"}]) == []
+    assert unverified_reverts(repo, "ouroboros/x", [{"iteration": 2}]) == []
 
 
 def _run_dir(repo, run="r1", **status):

@@ -31,6 +31,21 @@ directory is being written while you read it, so:
 `state=stopped` or `state=killed` means the run is over: give the full read and a
 merge recommendation.
 
+## Then: what came before
+
+`.ouroboros/RUNS.md` is every run against this repo, oldest first, and
+`.ouroboros/history/<run>.md` is one digest each. **Read the previous run's
+digest before you read this one's logs**, starting with the notes below the
+marker: those are what a human concluded, and they are the only part that is not
+derivable from the logs you are about to read.
+
+Two columns in the index carry most of the signal. `ticked` is what a run closed
+on the charter -- not what is checked at its tip, which includes everything the
+charter opened with. `commits` beside it says how much the run wrote. A run with
+a large `commits` and a `ticked` of 0 is the pattern to name out loud, and if
+several runs in a row read that way, say so: that is a charter problem, and no
+amount of loop detection fixes it.
+
 ## Gather
 
 1. `ouroboros status`, then `ouroboros report` (writes `.ouroboros/runs/<run>/REPORT.md`).
@@ -95,3 +110,23 @@ other metric.
     vague, a gate the actor had no way to satisfy.
 
 Keep it short. Link every claim to a file or a commit so the user can check it.
+
+## Last: leave the record better than you found it
+
+A run that is over must leave something the next operator can read.
+
+1. `ouroboros archive` -- rewrites this run's digest and the index. Run it again
+   after a merge: `merged:` is a fact about the base branch and changes without
+   the run changing.
+2. Write **`## What this taught`** in `.ouroboros/history/<run>.md`, below the
+   notes marker. Everything above the marker is measured and will be rewritten;
+   below it is yours and is preserved. Two or three sentences, and only what the
+   numbers cannot say themselves: a criterion that could never close, a model
+   that stalled, a config that burned a window for nothing, a constraint the
+   charter was missing.
+3. Commit the digest and the index with the merge. The run directory is
+   gitignored and does not leave the machine; the digest is the only part of the
+   run that outlives it.
+
+Do not write into the digest what the generated part already says. A number that
+appears twice will disagree with itself eventually.

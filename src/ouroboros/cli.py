@@ -20,6 +20,8 @@ from .budget import BudgetClock
 from .config import DEFAULT_CONFIG_PATH, Config
 from .engine import Engine
 from .gitguard import GitError, GitGuard
+from . import history
+from .history import archive, unverified_reverts
 from . import goal as charter
 from .harness import login, make_harness
 from .harness import backend_headless
@@ -27,6 +29,7 @@ from .harness.backend_headless import kill_active
 from .harness.pool import LimitBoard, PooledHarness
 from .memory import make_memory
 from .memory.handoff import HandoffMemory
+from . import operator
 from .recorder import Recorder
 from .roles.critic import Council, Critic
 from .roles.overseer import AgentOverseer, RulesOverseer
@@ -114,6 +117,11 @@ def cmd_init(args: argparse.Namespace) -> int:
         goal.write_text(GOAL_TEMPLATE.format(name=name))
         print(f"wrote {goal}  <- fill this in (or run the ouroboros-design skill)")
     HandoffMemory(root).ensure()
+    guide = operator.write_guide(repo, name)
+    print(f"wrote {guide.relative_to(repo)}  <- how a run is operated here" if guide
+          else f"{repo / operator.GUIDE_PATH} exists")
+    for path in operator.add_pointer(repo):
+        print(f"pointed {path.relative_to(repo)} at it")
     gi = repo / ".gitignore"
     line = ".ouroboros/runs/"
     if not gi.exists() or line not in gi.read_text():
@@ -312,7 +320,23 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     reason = engine.run()
     print(f"ouroboros stopped: {reason}")
+    _archive(repo, cfg, recorder.run_dir)
     return 0
+
+
+def _archive(repo: Path, cfg: Config, run_dir: Path) -> None:
+    """Write the run's durable record. Never let a failure here lose the run.
+
+    The digest is the only part of a run that outlives its own machine, so it is
+    written by the code that ends a run rather than by a command a human has to
+    remember: ot4 has no `REPORT.md` for exactly that reason.
+    """
+    try:
+        digest, index = archive(repo, cfg, run_dir)
+        print(f"archived {digest.relative_to(repo)} and {index.relative_to(repo)}")
+        print("commit them: the run directory itself is gitignored and does not travel")
+    except Exception as exc:                        # a digest is never worth a traceback
+        print(f"could not archive run {cfg.run!r}: {exc!r}", file=sys.stderr)
 
 
 def _pid_alive(run_dir: Path) -> tuple[int | None, bool]:
@@ -335,6 +359,7 @@ def cmd_stop(args: argparse.Namespace) -> int:
     if not alive:
         print(f"run {cfg.run!r} is not running")
         tmux.kill(tmux.session_name(cfg.run))
+        _archive(repo, cfg, rd)
         return 0
     os.kill(pid, signal.SIGTERM)
     for _ in range(40):
@@ -345,6 +370,7 @@ def cmd_stop(args: argparse.Namespace) -> int:
         os.kill(pid, signal.SIGKILL)
     tmux.kill(tmux.session_name(cfg.run))
     print(f"stopped run {cfg.run!r} (pid {pid})")
+    _archive(repo, cfg, rd)
     return 0
 
 
@@ -419,29 +445,39 @@ def _billed_split(by_role: dict[str, float], money: dict) -> str:
     return ", ".join(f"{r} ${c:.2f}" for r, c in sorted(by_role.items(), key=lambda kv: -kv[1]))
 
 
-def _unverified_reverts(repo: Path, branch: str, reverts: list[dict]) -> list[dict]:
-    """Reverts git cannot confirm: the recorded head's tree still differs from the tag.
+def cmd_archive(args: argparse.Namespace) -> int:
+    """Write the durable record by hand: one run, or every run in `.ouroboros/runs/`.
 
-    A revert that silently no-ops still writes its log line, so counting log lines
-    overstates what was undone. Ask git instead.
+    `run` and `stop` already do this. The command exists for the two cases they
+    cannot cover -- backfilling runs that finished before there was a history,
+    and refreshing a digest after its branch was merged, since `merged:` is a
+    fact about the base branch and changes without the run changing.
     """
-    git = GitGuard(repo, branch)
-    if not git.is_repo():
-        return []
-    failed = []
-    for r in reverts:
-        if r.get("error"):
-            failed.append(r)
-            continue
-        tag, sha = r.get("to"), r.get("sha")
-        if not tag or not sha:
-            continue
-        try:
-            if git.git("rev-parse", f"{sha}^{{tree}}") != git.git("rev-parse", f"{tag}^{{tree}}"):
-                failed.append(r)
-        except GitError:
-            continue  # tag or commit is gone; not something the report can judge
-    return failed
+    repo = repo_root()
+    cfg = load_config(args, repo)
+    runs = [cfg.run]
+    if args.all:
+        root = repo / ".ouroboros" / "runs"
+        runs = sorted(d.name for d in root.iterdir() if d.is_dir()) if root.exists() else []
+        if not runs:
+            print(f"no run directories under {root}", file=sys.stderr)
+            return 1
+    written = []
+    for name in runs:
+        cfg.run = name
+        rd = run_dir_for(repo, name)
+        if not rd.exists():
+            print(f"no run directory for {name!r}", file=sys.stderr)
+            return 1
+        facts = history.gather(repo, cfg, rd, machine=args.machine)
+        written.append(history.write_digest(repo, facts))
+        print(f"{name}: {facts.iterations} iterations, {facts.commits} commits, "
+              f"{facts.ticked} of {facts.criteria_total} criteria ticked, "
+              + (f"merged {facts.merged[:8]}" if facts.merged else "not merged"))
+    for path in written:
+        print(f"wrote {path.relative_to(repo)}")
+    print(f"wrote {history.write_index(repo).relative_to(repo)}")
+    return 0
 
 
 def cmd_report(args: argparse.Namespace) -> int:
@@ -454,7 +490,7 @@ def cmd_report(args: argparse.Namespace) -> int:
     reverts = [s for s in steps if s.get("step") == "revert"]
     by_role, uncosted = _cost_by_role(steps, decisions)
     cost = sum(by_role.values())
-    failed_reverts = _unverified_reverts(repo, cfg.branch, reverts)
+    failed_reverts = unverified_reverts(repo, cfg.branch, reverts)
     counts: dict[str, int] = {}
     for d in decisions:
         counts[d["verdict"]] = counts.get(d["verdict"], 0) + 1
@@ -585,6 +621,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     rep = sub.add_parser("report", parents=[common], help="write REPORT.md for the morning")
     rep.set_defaults(fn=cmd_report)
+
+    ar = sub.add_parser("archive", parents=[common],
+                        help="write .ouroboros/history/<run>.md and RUNS.md (run and stop do this too)")
+    ar.add_argument("--all", action="store_true", help="every run directory, not just this config's run")
+    ar.add_argument("--machine", help="record this machine name instead of the hostname (for backfill)")
+    ar.set_defaults(fn=cmd_archive)
 
     d = sub.add_parser("design", parents=[common], help="write the charter by interview, in claude, codex, or pi")
     d.add_argument("--harness", choices=["claude", "codex", "pi"])
