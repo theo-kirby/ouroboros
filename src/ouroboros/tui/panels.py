@@ -509,7 +509,7 @@ def draw_status(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
         # The spacing goes before the verdict list does: a verdict row is one of three,
         # the blank rows are what make the summaries readable at all.
         reserve = STATUS_SPACED if bottom - cy >= STATUS_SPACED else STATUS_MIN
-        for text, pair in _verdict_lines(s, w)[: max(0, bottom - cy - reserve)]:
+        for text, pair in _fit_verdicts(_verdict_lines(s, w), max(0, bottom - cy - reserve)):
             p.text(cy, x, text, t.attr(pair), width=w)
             cy += 1
 
@@ -519,6 +519,17 @@ def draw_status(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
     # precisely so that they have somewhere to go.
     if bottom - cy >= STATUS_MIN:
         _status_rows(p, cy, x, w, bottom - cy, s)
+
+
+def _fit_verdicts(lines: list[tuple[str, int]], room: int) -> list[tuple[str, int]]:
+    """The newest verdicts that fit. A reply row stays only with the verdict it answers."""
+    if room <= 0 or not lines:
+        return []
+    has_reply = lines[-1][1] == PAIR_PROMPT
+    if has_reply and room >= 2:
+        return lines[-room:]
+    verdicts = lines[:-1] if has_reply else lines
+    return verdicts[-room:]
 
 
 def _verdict_lines(s: Snapshot, w: int) -> list[tuple[str, int]]:

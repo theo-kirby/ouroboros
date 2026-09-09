@@ -547,3 +547,14 @@ def test_the_status_panel_takes_the_room_both_panels_used_to_have():
     # 12 of 22: the overseer strip's 4 and the feed's 8, in one box.
     assert placed["status"].h == 24 and placed["status"].w == 120
     assert "messages" in PANELS, "the raw feed is still reachable, just not on by default"
+
+
+def test_a_short_list_keeps_the_newest_verdict_and_a_reply_only_with_it():
+    from ouroboros.tui.panels import _fit_verdicts, PAIR_PROMPT
+    from ouroboros.tui.theme import PAIR_DIM
+    rows = [("#2 continue  a", PAIR_DIM), ("#3 continue  b", PAIR_DIM), ("#4 answer  c", PAIR_DIM),
+            ("→ use the existing one", PAIR_PROMPT)]
+    assert [r[0][:2] for r in _fit_verdicts(rows, 1)] == ["#4"], "one row: the newest verdict, not the reply alone"
+    assert [r[0][:2] for r in _fit_verdicts(rows, 2)] == ["#4", "→ "]
+    assert [r[0][:2] for r in _fit_verdicts(rows, 3)] == ["#3", "#4", "→ "]
+    assert _fit_verdicts(rows, 0) == []
