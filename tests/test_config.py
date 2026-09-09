@@ -20,4 +20,16 @@ def test_config_roundtrip(tmp_path):
     back = Config.load(p)
     assert back.branch == "ouroboros/x"
     assert back.role("actor").timeout_seconds == 2700
-    assert back.role("overseer").model == "haiku"
+    assert back.role("critic").timeout_seconds == 600 and back.critic == "agent"
+    assert back.active_roles == ["actor", "critic"]
+    assert not back.maintainer and not back.planner
+
+
+def test_old_config_keys_are_ignored_not_fatal(tmp_path):
+    """A config from before the merge names roles that no longer exist; it still loads."""
+    p = tmp_path / "c.yml"
+    p.write_text("run: x\nmode: actor-critic\noverseer: agent\ncouncil: []\nroles:\n  overseer: {model: haiku}\nplan:\n  enabled: true\n")
+    cfg = Config.load(p)
+    assert cfg.active_roles == ["actor", "critic"] and cfg.plan.every == 5
+    cfg.maintainer = cfg.planner = True
+    assert cfg.active_roles == ["actor", "critic", "maintainer", "planner"]

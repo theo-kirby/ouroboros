@@ -70,7 +70,6 @@ class RunFacts:
     state: str = "?"
     stop_reason: str = "-"
     branch: str = ""
-    mode: str = ""
     memory: str = ""
     models: dict[str, str] = field(default_factory=dict)
     iterations: int = 0
@@ -111,7 +110,7 @@ def gather(repo: Path, cfg: Config, run_dir: Path, *, machine: str | None = None
     """
     rec = Recorder(run_dir, echo=lambda *_: None)
     steps = rec.read_jsonl(rec.iterations)
-    decisions = rec.read_jsonl(rec.overseer)
+    decisions = rec.read_decisions()
     st = rec.read_status() or {}
     commits = [s for s in steps if s.get("step") == "commit"]
     reverts = [s for s in steps if s.get("step") == "revert"]
@@ -125,15 +124,14 @@ def gather(repo: Path, cfg: Config, run_dir: Path, *, machine: str | None = None
         state=str(st.get("state") or "?"),
         stop_reason=str(st.get("stop_reason") or st.get("why") or "-"),
         branch=str(st.get("branch") or cfg.branch),
-        mode=cfg.mode,
         memory=str(st.get("memory") or cfg.memory),
-        models={n: f"{r.harness}:{r.model or 'default'}" for n, r in sorted(cfg.roles.items())},
+        models={n: f"{cfg.role(n).harness}:{cfg.role(n).model or 'default'}" for n in cfg.active_roles},
         iterations=len(commits),
         changed=sum(1 for c in commits if c.get("changed")),
         recorded=sum(1 for c in commits if c.get("recorded")),
         reverts=len(reverts),
         bets=[s for s in steps if s.get("step") == "plan"],
-        decisions=[d for d in decisions if d.get("verdict") in ("answer", "done_rejected", "stuck", "revert")],
+        decisions=[d for d in decisions if d.get("verdict") in ("answer", "done_rejected", "stuck", "looping", "reject", "revert")],
         usage_lines=[str(u) for u in (st.get("usage_lines") or [])],
         money={h: float(c) for h, c in (st.get("money") or {}).items()},
     )
@@ -297,7 +295,6 @@ def front_matter(facts: RunFacts) -> list[str]:
         f"criteria_total: {facts.criteria_total}",
         f"merged: {facts.merged or 'no'}",
         f"branch: {facts.branch}",
-        f"mode: {facts.mode}",
         f"memory: {facts.memory}",
         f"actor: {facts.models.get('actor', '?')}",
         "---",
@@ -349,7 +346,7 @@ def digest(facts: RunFacts, notes: str = "") -> str:
         out += [f"- #{b.get('iteration')}: {b.get('bet') or 'no bet landed'}" for b in facts.bets[:15]]
 
     if facts.decisions:
-        out += ["", "## Decisions the overseer made", ""]
+        out += ["", "## Decisions the critic made", ""]
         out += [f"- #{d.get('iteration')} {d.get('verdict')}: {d.get('reason')}" for d in facts.decisions[:15]]
 
     out += ["", NOTES_MARKER, ""]

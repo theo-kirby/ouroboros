@@ -19,7 +19,7 @@ This module measures the other thing. Three signals, deliberately mechanical:
 
 They are mechanical because an agent asked "are you looping?" will always find a
 reason why this time is different. Judgment goes on top of the measurement,
-never instead of it: the numbers reach the overseer, which is free to disagree
+never instead of it: the numbers reach the critic, which is free to disagree
 with them, and the escalation ladder runs on the numbers regardless.
 
 Nothing here stops a run. A loop is a thing to break out of, not a thing to die
@@ -245,7 +245,7 @@ class LoopDetector:
         }
 
     def describe(self) -> str:
-        """The three numbers, for the overseer's signal block."""
+        """The three numbers, for the critic's signal block."""
         return (
             f"- iterations in a row changing only bookkeeping: {self.no_product}\n"
             f"- iterations in a row with the frontier unmoved: {self.no_frontier}\n"

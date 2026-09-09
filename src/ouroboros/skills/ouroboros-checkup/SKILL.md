@@ -1,6 +1,6 @@
 ---
 name: ouroboros-checkup
-description: Check in on an Ouroboros run, live or finished. Reads the run directory, git, and the plan - what landed, whether the loop is moving or going in circles, bets the planner changed, decisions the overseer made on the user's behalf, critic rejects, usage, and either a merge recommendation or a mid-run correction. Use when the user asks how a run is going or how one went.
+description: Check in on an Ouroboros run, live or finished. Reads the run directory, git, and the plan - what landed, whether the loop is moving or going in circles, decisions the critic made on the user's behalf, rejects and reverts, usage, and either a merge recommendation or a mid-run correction. Use when the user asks how a run is going or how one went.
 ---
 
 # Check in on a run
@@ -53,8 +53,9 @@ amount of loop detection fixes it.
 2. `.ouroboros/runs/<run>/NEEDS_HUMAN.md` if it exists: read it first, it is the
    one thing that blocked the loop.
 3. `.ouroboros/runs/<run>/iterations.jsonl`: steps `actor`, `commit`, `critique`,
-   `oversee`, `loop`, `revert`, `reconcile`, `plan`. `overseer.jsonl` for every
-   verdict with its reason and reply. `loop.log` for backoffs, limit waits, and
+   `loop`, `revert`, `reconcile`, `plan` (older runs also have `oversee`).
+   `critic.jsonl` (older runs: `overseer.jsonl`) for every verdict with its
+   reason, reply, and `fix_first`. `loop.log` for backoffs, limit waits, and
    harness switches.
 4. The plan: `PLAN.md` and the `plan` view nodes under `.hypergraph/graph/plan/`
    (hypergraph repos) or `.ouroboros/plan.md` and `.ouroboros/bets.md`.
@@ -72,7 +73,7 @@ write twenty thousand lines and move nothing.
   (`no_product` / `no_frontier` / `repeat_bet`), `streak`, `escalation` (1 name it,
   2 re-plan, 3 rotate the model) and `acted`. Report the **first** firing and the
   **longest** streak, not every row.
-- **`looping` verdicts** in `overseer.jsonl`.
+- **`looping` verdicts** in `critic.jsonl`.
 - **Count what actually moved.** Nodes that changed status, and charter criteria
   ticked. If that count is near zero over a long run, say so plainly at the top,
   whatever the diff size says.
@@ -92,7 +93,7 @@ other metric.
 4. **Bets the planner changed.** Each `Bet:` record with its `## Why`. Mark the
    ones the user might want to overrule, and say how: edit `.ouroboros/goal.md`
    (a new charter version) or tell the next run's planner in the ladder.
-5. **Decisions the overseer made for you.** Every `answer` verdict: the question
+5. **Decisions the critic made for you.** Every `answer` verdict: the question
    the actor asked and the answer given. Every `done_rejected` with the reason.
 6. **Critic rejects and reverts.** What was thrown away and why; whether a
    reverted patch under `.ouroboros/runs/<run>/reverted/` holds anything worth

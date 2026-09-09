@@ -1,4 +1,10 @@
-"""The loop. One iteration = actor call -> verify record -> commit -> overseer -> budget."""
+"""The loop. One iteration = actor call -> verify record -> commit -> critic -> budget.
+
+Two roles run every iteration: the actor, which writes, and the critic, which reads
+the change and the memory and writes the next prompt. Housekeeping is the actor's
+iteration when the memory says it is due; a separate maintainer and planner exist
+but are off unless the config turns them on.
+"""
 
 from __future__ import annotations
 
@@ -19,7 +25,7 @@ from .memory.base import MemoryAdapter
 from .recorder import Recorder
 from .roles.actor import build_actor_prompt
 from .loops import LoopDetector, loop_reply
-from .roles.overseer import HISTORY_WINDOW, Overseer, RulesOverseer, Signals, Verdict
+from .roles.critic import HISTORY_WINDOW, Critic, RulesCritic, Signals, Verdict
 
 Sleeper = Callable[[float], None]
 
@@ -53,7 +59,7 @@ class IterationOutcome:
     commit: str | None
     changed: bool
     recorded: bool
-    critique: object | None = None
+    housekeeping: bool = False
 
 
 def _harness_of(role) -> str | None:
@@ -70,10 +76,9 @@ class Engine:
     git: GitGuard
     recorder: Recorder
     budget: BudgetClock
-    overseer: Overseer = field(default_factory=RulesOverseer)
-    maintainer: Harness | None = None
-    planner: Harness | None = None
-    critic: object | None = None   # Critic or Council; used in actor-critic and council modes
+    critic: Critic = field(default_factory=RulesCritic)
+    maintainer: Harness | None = None   # only called when config.maintainer is on
+    planner: Harness | None = None      # only called when config.planner is on
     sleeper: Sleeper = time.sleep
     goal_text: str = ""
     # loop state
@@ -90,6 +95,7 @@ class Engine:
     stuck_iterations: int = 0
     loops: LoopDetector = None   # type: ignore[assignment]  # built in __post_init__
     forced_plan: str | None = None   # a loop escalation demanding the next planner pass
+    last_housekeeping: int = -1      # the iteration the actor last ran the maintainer's pass
     outcomes: list[IterationOutcome] = field(default_factory=list)
 
     def __post_init__(self) -> None:
@@ -104,7 +110,8 @@ class Engine:
     def run(self) -> str:
         """Run until a stop condition. Returns the stop reason. Never raises for harness trouble."""
         chain = " -> ".join(getattr(self.harness, "names", [self.harness.name]))
-        self.recorder.log(f"run {self.config.run}: branch={self.git.branch} harness={chain} memory={self.memory.name} mode={self.config.mode}")
+        self.recorder.log(f"run {self.config.run}: branch={self.git.branch} harness={chain} memory={self.memory.name} "
+                          f"roles={'+'.join(self.config.active_roles)}")
         self._status("starting")
         try:
             self.memory.start(run=self.config.run, goal_text=self.goal_text, run_dir=self.recorder.run_dir, branch=self.git.branch)
@@ -134,22 +141,36 @@ class Engine:
         self.iteration += 1
         n = self.iteration
         role = self.config.role("actor")
-        prompt = build_actor_prompt(goal_text=self.goal_text, memory=self.memory, iteration=n, injected=self.injected)
+        # Housekeeping is an iteration, not a side call: the actor runs the maintainer's
+        # pass, the critic judges it like any other change, and it shows in the history.
+        housekeeping = self._housekeeping_prompt()
+        if housekeeping:
+            prompt = housekeeping
+        else:
+            prompt = build_actor_prompt(goal_text=self.goal_text, memory=self.memory, iteration=n, injected=self.injected)
         before = self.memory.snapshot()
         head_before = self.git.head()
-        self._status("work", iteration=n)
+        self._status("work", iteration=n, housekeeping=bool(housekeeping))
 
-        result = self._call_actor(prompt, role.timeout_seconds, role.model)
+        result = self._call_actor(prompt, role.timeout_seconds, role.model, housekeeping=bool(housekeeping))
 
         recorded = self.memory.verify_recorded(before)
         worked = result.ok or result.timed_out  # the actor ran; a timeout still may have landed work
         changed = self.git.has_changes() or self.git.head() != head_before  # the actor may commit on its own
-        summary = self.memory.last_summary() if recorded else (result.error or "no record")[:60]
+        if recorded:
+            summary = self.memory.last_summary()
+        elif housekeeping:
+            summary = "housekeeping"
+        else:
+            summary = (result.error or "no record")[:60]
         commit = self.git.commit(f"ouroboros #{n}: {summary}", allow_empty=False)  # no marker commits; the ok tag marks the iteration
-        self.recorder.step(iteration=n, step="commit", sha=commit[:10], changed=changed, recorded=recorded, cost=result.cost_usd)
+        self.recorder.step(iteration=n, step="commit", sha=commit[:10], changed=changed, recorded=recorded, cost=result.cost_usd,
+                           housekeeping=True if housekeeping else None)
         progressed = worked and (changed or recorded)
         if progressed:
             self.memory.mark_iteration()
+        if housekeeping and result.ok:
+            self.memory.mark_reconciled()
 
         check_problem = None
         try:
@@ -181,29 +202,32 @@ class Engine:
         self.loops.observe_iteration(files=files, frontier=frontier, subject=summary)
         loop = self.loops.report()
 
-        critique = self._critique(n, result.text, head_before, commit) if (worked and changed) else None
-        self._status("oversee", iteration=n)
+        # The critic runs every iteration, changed or not: an iteration that changed
+        # nothing is exactly the one that needs a verdict (stuck) and a redirect.
+        self._status("critique", iteration=n)
         signals = Signals(
             result.text, changed, recorded, self.no_change_streak, self.error_streak, result.error,
             iteration=n, diff_stat=self.git.diff_stat(head_before, commit),
-            history=self.recorder.read_jsonl(self.recorder.overseer)[-HISTORY_WINDOW:],
+            diff=self._diff(head_before, commit) if changed else "",
+            history=self.recorder.read_decisions()[-HISTORY_WINDOW:],
             memory=self._memory_context(),
-            critique=critique.describe() if critique else "",
             loop=self.loops.describe(),
             loop_fired=loop.describe() if loop else "",
+            housekeeping=bool(housekeeping),
         )
         try:
-            verdict = self.overseer.judge(signals)
-        except Exception as exc:  # an overseer bug must not stop the loop
-            self.recorder.log(f"overseer raised {exc!r}; using rules")
-            verdict = RulesOverseer().judge(signals)
-            verdict.reason = f"rules fallback (overseer raised): {verdict.reason}"
-        overseer_cost = float(getattr(self.overseer, "last_cost", 0.0) or 0.0)
-        self.budget.add(cost=overseer_cost, usage=getattr(self.overseer, "last_usage", None),
-                        harness=_harness_of(self.overseer))
+            verdict = self.critic.judge(signals)
+        except Exception as exc:  # a critic bug must not stop the loop
+            self.recorder.log(f"critic raised {exc!r}; using rules")
+            verdict = RulesCritic().judge(signals)
+            verdict.reason = f"rules fallback (critic raised): {verdict.reason}"
+        critic_cost = float(getattr(self.critic, "last_cost", 0.0) or 0.0)
+        self.budget.add(cost=critic_cost, usage=getattr(self.critic, "last_usage", None),
+                        harness=_harness_of(self.critic))
         self.recorder.decision(iteration=n, verdict=verdict.verdict, reason=verdict.reason, reply=verdict.reply,
-                               did=verdict.did, doing=verdict.doing, overseer=verdict.source, cost=overseer_cost)
-        self.recorder.step(iteration=n, step="oversee", verdict=verdict.verdict, source=verdict.source, reason=verdict.reason)
+                               did=verdict.did, doing=verdict.doing, fix_first=verdict.fix_first, source=verdict.source)
+        self.recorder.step(iteration=n, step="critique", verdict=verdict.verdict, source=verdict.source,
+                           reason=verdict.reason, cost=critic_cost)
         if loop is not None:
             self._escalate(n, loop, verdict)
 
@@ -214,13 +238,12 @@ class Engine:
             verdict.reply = f"{nudge}\n\n{verdict.reply}".strip()
             idle = policy == "report_done"
 
-        if critique is not None and critique.rejected:
-            self.recorder.log(f"[{n}] critic rejected: {critique.describe()[:300]}")
-            if verdict.verdict != "revert":
-                verdict.verdict = "revert" if self.config.git.revert_on_reject else verdict.verdict
-                verdict.reason = f"critic rejected: {'; '.join(critique.reasons)[:200]} | overseer: {verdict.reason}"
-            verdict.reply = f"The critic rejected the last iteration. Fix this first:\n{critique.must_fix or '; '.join(critique.reasons)}\n\n{verdict.reply}".strip()
-        if verdict.verdict == "revert" and self.config.git.revert_on_reject and self.last_ok_tag:
+        if verdict.rejected and not (self.config.git.revert_on_reject and self.last_ok_tag):
+            # Fix forward: the rejected commit stays, gets no ok tag, and the reply says what to fix.
+            self.recorder.log(f"[{n}] rejected, kept on the branch ({'revert_on_reject is off' if not self.config.git.revert_on_reject else 'nothing accepted yet to revert to'}): {verdict.reason[:200]}")
+            verdict.reply = f"The critic rejected the last iteration. Fix this first:\n{verdict.reply}".strip()
+            self.error_streak = 0
+        elif verdict.rejected:
             try:
                 sha = self.git.revert_to(self.last_ok_tag, patch_out=self.recorder.run_dir / "reverted" / f"{n:04d}.patch")
             except GitError as exc:
@@ -240,6 +263,8 @@ class Engine:
             self.git.tag(tag)
             self.last_ok_tag = tag
 
+        if verdict.fix_first:
+            verdict.reply = f"Fix these first, before the unit:\n{verdict.fix_first}\n\n{verdict.reply}".strip()
         if result.error and verdict.verdict == "continue":
             note = f"The previous iteration ended with an error: {result.error[:500]}. Recover and continue."
             verdict.reply = f"{note}\n\n{verdict.reply}".strip()
@@ -247,9 +272,12 @@ class Engine:
             verdict.reply = f"{verdict.reply}\n\nThe memory checker reports a problem. Fix it first:\n{check_problem}".strip()
         self.injected = verdict.reply or None
 
-        if progressed and verdict.verdict != "revert":
+        if progressed and not verdict.rejected:
             self.since_plan += 1
-            self._maybe_reconcile(n)
+            if housekeeping and result.ok:
+                self._maybe_plan(n, "after housekeeping")
+            elif self.config.maintainer:
+                self._maybe_reconcile(n)
             if self.forced_plan:
                 self._maybe_plan(n, f"loop escalation: {self.forced_plan}")
                 self.forced_plan = None
@@ -262,14 +290,14 @@ class Engine:
                         done_accepted=(verdict.verdict == "done_accepted") if verdict.verdict.startswith("done") else None,
                         stuck=(verdict.verdict == "stuck"))
         self._status("idle", iteration=n, last_verdict=verdict.verdict)
-        out = IterationOutcome(n, result, verdict, commit, changed, recorded, critique)
+        out = IterationOutcome(n, result, verdict, commit, changed, recorded, bool(housekeeping))
         self.outcomes.append(out)
         if idle and self.budget.should_stop() is None:
             self._sleep(parse_duration(self.config.idle_interval) or 1800.0, "done accepted; report_done policy")
         # A stuck verdict means the actor ran fine and changed nothing -- waiting on a
         # clock, a quota, or an instruction it cannot act on. Repeating it at full speed
-        # buys nothing and still pays for a critic, maintainer, planner and overseer call
-        # every time, so slow down the same way a run of failed iterations does. The stop
+        # buys nothing and still pays for a critic call every time, so slow down the same
+        # way a run of failed iterations does. The stop
         # condition (stop.max_stuck) ends a run that is never going to recover.
         self.stuck_iterations = self.stuck_iterations + 1 if verdict.verdict == "stuck" else 0
         if self.stuck_iterations and self.budget.should_stop() is None:
@@ -295,17 +323,17 @@ class Engine:
         act = self.loops.should_act(loop)
         self.recorder.step(iteration=n, step="loop", signal=loop.signal, streak=loop.streak,
                            escalation=step, acted=act, evidence=loop.evidence[:4])
-        # Only a `continue` is overruled. If the overseer already saw something
-        # worse -- a revert, an unanswered question -- that judgement wins.
+        # Only a `continue` is overruled. If the critic already saw something
+        # worse -- a reject, an unanswered question -- that judgement wins.
         if verdict.verdict == "continue":
             verdict.verdict = "looping"
-            verdict.reason = f"{loop.signal} x{loop.streak}; overseer said continue"
+            verdict.reason = f"{loop.signal} x{loop.streak}; critic said continue"
         # Naming the loop costs nothing, so the actor hears about it every time.
         verdict.reply = f"{loop_reply(loop, step)}\n\n{verdict.reply}".strip()
         if not act:
             return
         self.recorder.log(f"[{n}] loop: {loop.signal} x{loop.streak} (escalation {step}/3)")
-        if step >= 2:
+        if step >= 2 and self.plan_enabled:
             self.forced_plan = f"{loop.signal} x{loop.streak}"
         if step >= 3 and self.config.loop.rotate:
             self._rotate_actor(f"{loop.signal} x{loop.streak}")
@@ -325,6 +353,28 @@ class Engine:
             return
         board.block(name, why=f"loop escalation: {why}"[:120])
         self.recorder.log(f"loop: actor harness {name} rotated out ({why})")
+
+    def _housekeeping_prompt(self) -> str | None:
+        """The maintainer's pass, for the actor to run as this iteration.
+
+        Only when no separate maintainer holds the job and the memory says a
+        reconcile is due. Never two iterations in a row: a pass that fails to
+        clear the tail must not eat the whole night trying.
+        """
+        if self.config.maintainer or self.last_housekeeping == self.iteration - 1:
+            return None
+        try:
+            if not self.memory.needs_reconcile():
+                return None
+            prompt = self.memory.reconcile_prompt()
+        except Exception as exc:
+            self.recorder.log(f"housekeeping check raised {exc!r}")
+            return None
+        if not prompt:
+            return None
+        self.last_housekeeping = self.iteration
+        self.recorder.log(f"[{self.iteration}] housekeeping: the actor runs the reconcile pass")
+        return prompt
 
     def _maybe_reconcile(self, n: int) -> None:
         try:
@@ -361,8 +411,7 @@ class Engine:
     # ------------------------------------------------------------------
     @property
     def plan_enabled(self) -> bool:
-        enabled = self.config.plan.enabled
-        return True if enabled is None else bool(enabled)
+        return bool(self.config.planner)
 
     def _plan_signals(self) -> str:
         outs = self.outcomes[-self.config.plan.every :]
@@ -435,10 +484,11 @@ class Engine:
             return self.memory.bets_size()
         return self.memory.snapshot()
 
-    def _call_actor(self, prompt: str, timeout: float, model: str | None) -> Result:
+    def _call_actor(self, prompt: str, timeout: float, model: str | None, *, housekeeping: bool = False) -> Result:
         """Call the harness. Retry on retriable errors with backoff, forever. One retry on other errors."""
         role = self.config.role("actor")
         n = self.iteration
+        transcript = "housekeeping" if housekeeping else "actor"
         resume = self.session_id if (role.resume_for > 1 and 0 < self.session_uses < role.resume_for) else None
         retriable_attempts = 0
         plain_attempts = 0
@@ -447,12 +497,13 @@ class Engine:
             try:
                 result = self.harness.run(
                     prompt, cwd=self.repo, timeout=timeout, resume=resume, model=model,
-                    log_path=self.recorder.transcript_path(n, "actor", attempt),
+                    log_path=self.recorder.transcript_path(n, transcript, attempt),
                 )
             except Exception as exc:
                 result = Result(exit_code=-1, error=f"harness raised {exc!r}")
             self.budget.usage.record(result.usage)
-            self.recorder.step(iteration=n, step="actor", attempt=attempt, exit=result.exit_code, timed_out=result.timed_out, error=(result.error or None) and result.error[:200], session=result.session_id, turns=result.turns)
+            self.recorder.step(iteration=n, step="actor", attempt=attempt, exit=result.exit_code, timed_out=result.timed_out, error=(result.error or None) and result.error[:200], session=result.session_id, turns=result.turns,
+                               housekeeping=True if housekeeping else None)
             if result.ok or result.timed_out:
                 self.recorder.clear_needs_human()
                 break
@@ -486,32 +537,18 @@ class Engine:
                 self.session_id, self.session_uses = result.session_id, 1
         return result
 
-    def _critique(self, n: int, actor_text: str, head_before: str, commit: str):
-        if self.critic is None or self.config.mode not in ("actor-critic", "council"):
-            return None
-        self._status("critique", iteration=n)
+    def _diff(self, head_before: str, commit: str | None) -> str:
         try:
-            diff = self.git.diff(head_before, commit)
+            return self.git.diff(head_before, commit or "HEAD")
         except Exception as exc:
-            self.recorder.log(f"diff for critic failed: {exc!r}")
-            diff = ""
-        try:
-            critique = self.critic.grade(iteration=n, actor_output=actor_text, diff=diff)
-        except Exception as exc:  # a critic bug must not stop the loop
-            self.recorder.log(f"critic raised {exc!r}; accepting")
-            return None
-        cost = float(getattr(self.critic, "last_cost", 0.0) or 0.0)
-        self.budget.add(cost=cost, usage=getattr(self.critic, "last_usage", None),
-                        harness=_harness_of(self.critic))
-        self.recorder.step(iteration=n, step="critique", verdict=critique.verdict, source=critique.source,
-                           reasons="; ".join(critique.reasons)[:300], must_fix=critique.must_fix[:300] or None, cost=cost)
-        return critique
+            self.recorder.log(f"diff for the critic failed: {exc!r}")
+            return ""
 
     def _memory_context(self) -> str:
         try:
-            return self.memory.overseer_context() or ""
+            return self.memory.critic_context() or ""
         except Exception as exc:
-            self.recorder.log(f"overseer_context raised {exc!r}")
+            self.recorder.log(f"critic_context raised {exc!r}")
             return ""
 
     def _sleep(self, seconds: float, why: str) -> None:

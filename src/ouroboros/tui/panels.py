@@ -20,17 +20,27 @@ _SUP = ("⁰", "¹", "²", "³", "⁴", "⁵", "⁶", "⁷", "⁸", "⁹")
 
 VERDICT_PAIR = {
     "continue": PAIR_GREEN, "answer": PAIR_CYAN, "done_rejected": PAIR_YELLOW, "done_accepted": PAIR_PURPLE,
-    "stuck": PAIR_MAGENTA, "revert": PAIR_RED,
+    "stuck": PAIR_MAGENTA, "looping": PAIR_MAGENTA, "reject": PAIR_RED, "revert": PAIR_RED,
 }
 # The history strip is read at a glance, and a glance holds two things, not six: the
 # iteration went through, or it ran into something. `answer` and `done_accepted` are
 # the loop working; the rest is work thrown away or not done at all.
 DOT = "●"
-BLOCKED = {"stuck", "revert", "done_rejected"}
+# `revert` is what older runs called a reject.
+BLOCKED = {"stuck", "looping", "reject", "revert", "done_rejected"}
 STATE_PAIR = {
-    "work": PAIR_GREEN, "critique": PAIR_CYAN, "oversee": PAIR_YELLOW, "reconcile": PAIR_PURPLE, "plan": PAIR_MAGENTA,
+    "work": PAIR_GREEN, "critique": PAIR_CYAN, "oversee": PAIR_CYAN, "reconcile": PAIR_PURPLE, "plan": PAIR_MAGENTA,
     "idle": PAIR_DIM, "backoff": PAIR_RED, "starting": PAIR_DIM, "stopped": PAIR_RED,
 }
+# The engine state each stage of the pipeline is drawn in.
+_STAGE_STATE = {"actor": "work", "critic": "critique", "maintainer": "reconcile", "planner": "plan"}
+_PIPELINE = ("actor", "critic", "maintainer", "planner")
+
+
+def _pipeline_of(s: Snapshot) -> tuple[str, ...]:
+    """The roles this run actually calls, in order. A role that is off is not a stage."""
+    active = tuple(r for r in _PIPELINE if r in (s.roles or {}))
+    return active if active else _PIPELINE
 
 
 class Painter:
@@ -96,18 +106,18 @@ def meter(p: Painter, y: int, x: int, w: int, label: str, value: float, vmax: fl
 
 
 def _pipeline(p: Painter, y: int, x: int, w: int, s: Snapshot) -> int:
-    """actor→critic→overseer→maintainer→planner with the active stage lit; returns the width used."""
+    """actor→critic→maintainer→planner with the active stage lit; returns the width used."""
     t = p.theme
     cx = x
-    for name in ("actor", "critic", "overseer", "maintainer", "planner"):
+    pipeline = _pipeline_of(s)
+    for name in pipeline:
         if cx > x:
             p.text(y, cx, "→", t.attr(PAIR_INACTIVE)); cx += 1
         active = name == s.stage
-        pair = STATE_PAIR.get({"actor": "work", "critic": "critique", "overseer": "oversee",
-                               "maintainer": "reconcile", "planner": "plan"}[name], PAIR_DIM)
+        pair = STATE_PAIR.get(_STAGE_STATE[name], PAIR_DIM)
         p.text(y, cx, name, t.attr(pair if active else PAIR_INACTIVE, bold=active), width=max(0, x + w - cx))
         cx += len(name)
-    if s.stage not in ("actor", "critic", "overseer", "maintainer", "planner"):
+    if s.stage not in pipeline:
         word = f" {s.stage}"
         p.text(y, cx, word, t.attr(STATE_PAIR.get(s.stage, PAIR_DIM), bold=True), width=max(0, x + w - cx))
         cx += len(word)
@@ -164,7 +174,7 @@ def draw_run(p: Painter, rect: Rect, s: Snapshot) -> None:
     st = s.status or {}
     state = st.get("state", "no status")
     inner = p.box(rect, f"ouroboros · {st.get('run', '?')}", 0, PAIR_BOX_RUN,
-                  title2=f"{s.mode} · {st.get('memory', '?')} · {st.get('branch', '?')}")
+                  title2=f"{st.get('memory', '?')} · {st.get('branch', '?')}")
     if inner.h <= 0:
         return
     y, x, w = inner.y, inner.x + 1, inner.w - 2
@@ -242,8 +252,7 @@ def draw_stages(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
         if i:
             p.text(y, cx, "→", t.attr(PAIR_INACTIVE)); cx += 1
         active = name == s.stage
-        pair = STATE_PAIR.get({"actor": "work", "critic": "critique", "overseer": "oversee",
-                               "maintainer": "reconcile", "planner": "plan"}.get(name, ""), PAIR_DIM)
+        pair = STATE_PAIR.get(_STAGE_STATE.get(name, ""), PAIR_DIM)
         label = f"[{name}]" if active else f" {name} "
         p.text(y, cx, label, t.attr(pair if active else PAIR_INACTIVE, bold=active), width=max(0, x + w - cx))
         cx += len(label)
@@ -299,11 +308,10 @@ def draw_loop(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
         if cx > x:
             p.text(y, cx, "→", t.attr(PAIR_INACTIVE)); cx += 1
         active = name == s.stage
-        pair = STATE_PAIR.get({"actor": "work", "critic": "critique", "overseer": "oversee",
-                               "maintainer": "reconcile", "planner": "plan"}[name], PAIR_DIM)
+        pair = STATE_PAIR.get(_STAGE_STATE[name], PAIR_DIM)
         p.text(y, cx, name, t.attr(pair if active else PAIR_INACTIVE, bold=active), width=max(0, x + w - cx))
         cx += len(name)
-    if s.stage not in ("actor", "critic", "overseer", "maintainer", "planner"):
+    if s.stage not in _PIPELINE:
         p.text(y, min(cx + 2, x + w), s.stage, t.attr(STATE_PAIR.get(s.stage, PAIR_DIM), bold=True), width=max(0, x + w - cx - 2))
     if inner.h < 2:
         return
@@ -331,8 +339,8 @@ def draw_loop(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
     if inner.h >= 5 and its:
         last = its[-1]
         line = f"last #{last.n}: {fmt_duration(last.actor_seconds)} actor · {last.verdict or '…'}"
-        if last.critique:
-            line += f" · critic {last.critique}"
+        if last.housekeeping:
+            line += " · housekeeping"
         if last.error:
             line += f" · {last.error}"
         p.text(y + 4, x, line, t.attr(PAIR_DIM), width=w)
@@ -375,7 +383,7 @@ def draw_iterations(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
         p.text(y + ch_h - 2, x, f"{note:>6}", t.attr(PAIR_INACTIVE))
     last = its[-1] if its else None
     foot = (f"last #{last.n}: {fmt_duration(last.actor_seconds)} actor · {last.verdict or '…'}"
-            + (f" · critic {last.critique}" if last.critique else "")) if last else ""
+            + (" · housekeeping" if last.housekeeping else "")) if last else ""
     p.text(y + inner.h - 1, x, foot, t.attr(PAIR_DIM), width=w)
 
 
@@ -453,13 +461,13 @@ def draw_feed(p: Painter, rect: Rect, s: Snapshot, num: int, show_output: bool) 
 
 
 # ---------------------------------------------------------------- status
-# The overseer's verdicts and the raw message feed used to be two panels, and reading
+# The critic's verdicts and the raw message feed used to be two panels, and reading
 # a run meant reading both and joining them in your head: one said what was decided,
 # the other said what was being typed, and neither said what was *happening*. This is
 # the join, and the bottom three lines are the whole point of it.
 #
-#   last     the unit that finished, one sentence, written by the overseer
-#   current  the unit now running, one sentence, written by the overseer
+#   last     the unit that finished, one sentence, written by the critic
+#   current  the unit now running, one sentence, written by the critic
 #            the newest thing the running agent actually said or ran
 #
 # `last` and `current` change once an iteration; the raw line changes every few
@@ -469,7 +477,6 @@ def draw_feed(p: Painter, rect: Rect, s: Snapshot, num: int, show_output: bool) 
 # a glance holds: enough to see the same reason repeat, not so many that the list
 # pushes the summaries into a single clipped row each.
 VERDICT_ROWS = 3
-_PIPELINE = ("actor", "critic", "overseer", "maintainer", "planner")
 
 
 def draw_status(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
@@ -555,20 +562,24 @@ def _verdict_lines(s: Snapshot, w: int) -> list[tuple[str, int]]:
 
 
 def _stage_line(p: Painter, y: int, x: int, w: int, s: Snapshot) -> None:
-    """actor→critic→overseer→maintainer→planner, lit where the loop is, with the clock."""
+    """actor→critic→maintainer→planner, lit where the loop is, with the clock."""
     t = p.theme
     cx = x
-    for name in _PIPELINE:
+    pipeline = _pipeline_of(s)
+    for name in pipeline:
         if cx > x:
             p.text(y, cx, "\u2192", t.attr(PAIR_INACTIVE)); cx += 1
         active = name == s.stage
-        pair = STATE_PAIR.get({"actor": "work", "critic": "critique", "overseer": "oversee",
-                               "maintainer": "reconcile", "planner": "plan"}[name], PAIR_DIM)
+        pair = STATE_PAIR.get(_STAGE_STATE[name], PAIR_DIM)
         p.text(y, cx, name, t.attr(pair if active else PAIR_INACTIVE, bold=active), width=max(0, x + w - cx))
         cx += len(name)
-    if s.stage not in _PIPELINE:
+    if s.stage not in pipeline:
         word = f" {s.stage}"
         p.text(y, cx, word, t.attr(STATE_PAIR.get(s.stage, PAIR_DIM), bold=True), width=max(0, x + w - cx))
+        cx += len(word)
+    elif s.stage == "actor" and (s.status or {}).get("housekeeping"):
+        word = " housekeeping"
+        p.text(y, cx, word, t.attr(PAIR_PURPLE, bold=True), width=max(0, x + w - cx))
         cx += len(word)
     # How long it has been in this stage is the difference between working and hung,
     # and it is the one number the pipeline alone cannot show.
@@ -627,7 +638,7 @@ def draw_plan(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
         return
     x, w = inner.x + 1, inner.w - 2
     if not s.plan_short:
-        p.text(inner.y, x, "no plan yet (the planner writes it after the first reconcile)", t.attr(PAIR_INACTIVE), width=w)
+        p.text(inner.y, x, "no plan file (with the planner off, the critic's reply names the next unit)", t.attr(PAIR_INACTIVE), width=w)
         return
     lines: list[str] = []
     for i, item in enumerate(s.plan_short):
@@ -644,13 +655,13 @@ def draw_time(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
         return
     x, w = inner.x + 1, inner.w - 2
     total = sum(st.total for n, st in s.stages.items() if n != "commit") or 1.0
-    rows = [(n, s.stages[n].total) for n in ("actor", "critic", "overseer", "maintainer", "planner")]
+    rows = [(n, s.stages[n].total) for n in _pipeline_of(s) if n in s.stages]
     for i, (name, secs) in enumerate(rows[: inner.h]):
         meter(p, inner.y + i, x, w, name, secs, total, f"{secs / total * 100:3.0f}% {fmt_duration(secs):>7}")
 
 
 # ---------------------------------------------------------------- harnesses
-_ROLE_SHORT = {"actor": "act", "critic": "crit", "overseer": "over", "maintainer": "maint", "planner": "plan"}
+_ROLE_SHORT = {"actor": "act", "critic": "crit", "maintainer": "maint", "planner": "plan"}
 
 
 def _roles_line(r, width: int) -> str:

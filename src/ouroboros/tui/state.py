@@ -21,11 +21,13 @@ FEED_BYTES = 400_000
 FEED_EVENTS = 120
 LOG_LINES = 40
 
-STAGES = ("actor", "commit", "critic", "overseer", "maintainer", "planner")
+# `oversee` is what runs before the overseer and the critic were one role wrote;
+# it lands on the critic's row so an old run still reads.
+STAGES = ("actor", "commit", "critic", "maintainer", "planner")
 STATE_TO_STAGE = {
-    "work": "actor", "critique": "critic", "oversee": "overseer", "reconcile": "maintainer", "plan": "planner",
+    "work": "actor", "critique": "critic", "oversee": "critic", "reconcile": "maintainer", "plan": "planner",
 }
-STEP_TO_STAGE = {"actor": "actor", "critique": "critic", "oversee": "overseer", "reconcile": "maintainer", "plan": "planner"}
+STEP_TO_STAGE = {"actor": "actor", "critique": "critic", "oversee": "critic", "reconcile": "maintainer", "plan": "planner"}
 
 
 # ---------------------------------------------------------------- transcript events
@@ -187,15 +189,15 @@ class Iteration:
     changed: bool = False
     recorded: bool = False
     verdict: str = ""
-    critique: str = ""
     reverted: bool = False
+    housekeeping: bool = False
     actor_seconds: float = 0.0
     cost: float = 0.0
     bet: str | None = None
     error: str | None = None
 
 
-ROLE_ORDER = ("actor", "critic", "overseer", "maintainer", "planner")
+ROLE_ORDER = ("actor", "critic", "maintainer", "planner")
 
 
 @dataclass
@@ -328,7 +330,6 @@ class Snapshot:
     stop_after_s: float | None
     max_iterations: int | None
     chains: dict[str, list[str]]
-    mode: str
     roles: dict = field(default_factory=dict)   # role -> [(harness, model), ...]
     switches: int = 0
     reconciles: int = 0
@@ -357,7 +358,7 @@ class Snapshot:
     def usage_parts(self) -> list[tuple[str, float | None]]:
         return usage_parts(self.usage, self.money, self.now)
 
-    # The three lines the status panel exists for. Two are written by the overseer,
+    # The three lines the status panel exists for. Two are written by the critic,
     # one sentence each; the third is whatever the running agent said last. Each has
     # a fallback that is true rather than blank, because an empty row on a monitor
     # reads as "nothing is happening" and that is usually the wrong thing to say.
@@ -367,13 +368,13 @@ class Snapshot:
 
     @property
     def did(self) -> str:
-        """One sentence for the unit that finished, or the overseer's log line."""
+        """One sentence for the unit that finished, or the critic's log line."""
         d = self._last_decision
         return oneline(d.get("did")) or oneline(d.get("reason"))
 
     @property
     def doing(self) -> str:
-        """One sentence for the unit now running, or the steer the overseer gave."""
+        """One sentence for the unit now running, or the steer the critic gave."""
         d = self._last_decision
         return oneline(d.get("doing")) or oneline(d.get("reply"))
 
@@ -494,11 +495,11 @@ def derive_iterations(steps: list[dict]) -> tuple[list[Iteration], dict[str, Sta
             it.changed = bool(s.get("changed"))
             it.recorded = bool(s.get("recorded"))
             it.cost = float(s.get("cost") or 0)
+            it.housekeeping = bool(s.get("housekeeping"))
             stages["commit"].count += 1
-        elif step == "oversee":
-            it.verdict = s.get("verdict") or ""
-        elif step == "critique":
-            it.critique = s.get("verdict") or ""
+        elif step in ("critique", "oversee"):
+            # An old run wrote both; the overseer's came last and was the one that counted.
+            it.verdict = s.get("verdict") or it.verdict or ""
         elif step == "revert":
             it.reverted = True
         elif step == "plan":
@@ -647,7 +648,7 @@ def _newest_transcript(run_dir: Path) -> Path | None:
 
 
 def load_snapshot(run_dir: Path, *, repo: Path, plan_md: str = "PLAN.md", stop_after_s: float | None = None,
-                  max_iterations: int | None = None, chains: dict[str, list[str]] | None = None, mode: str = "single",
+                  max_iterations: int | None = None, chains: dict[str, list[str]] | None = None,
                   roles: dict | None = None) -> Snapshot:
     now = time.time()
     status = None
@@ -659,7 +660,7 @@ def load_snapshot(run_dir: Path, *, repo: Path, plan_md: str = "PLAN.md", stop_a
             status = None
     pid, alive = _pid(run_dir)
     steps = _read_jsonl(run_dir / "iterations.jsonl")
-    decisions = _read_jsonl(run_dir / "overseer.jsonl")
+    decisions = _read_jsonl(run_dir / "critic.jsonl") or _read_jsonl(run_dir / "overseer.jsonl")
     iterations, stages, reconciles, plans = derive_iterations(steps)
     state = (status or {}).get("state", "?")
     stage = STATE_TO_STAGE.get(state, state)
@@ -687,6 +688,6 @@ def load_snapshot(run_dir: Path, *, repo: Path, plan_md: str = "PLAN.md", stop_a
         stage_since=stage_since, decisions=decisions, feed=feed, feed_role=feed_role, feed_age=feed_age,
         log_tail=log_tail, plan_short=_plan_short(repo, plan_md), needs_human=needs_human, loadavg=loadavg,
         procs=procs, cpu_pct=cpu, rss_mb=rss, stop_after_s=stop_after_s, max_iterations=max_iterations,
-        chains=chains or {}, roles=roles or {}, mode=mode, switches=switches, reconciles=reconciles, plans=plans,
+        chains=chains or {}, roles=roles or {}, switches=switches, reconciles=reconciles, plans=plans,
         frontier=frontier_counts(repo),
     )

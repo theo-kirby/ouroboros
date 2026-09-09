@@ -21,7 +21,10 @@ class Recorder:
         (run_dir / "transcripts").mkdir(exist_ok=True)
         (run_dir / "reverted").mkdir(exist_ok=True)
         self.iterations = run_dir / "iterations.jsonl"
-        self.overseer = run_dir / "overseer.jsonl"
+        # One line per critic decision. Runs before the critic and the overseer were
+        # one role wrote `overseer.jsonl`; reading falls back to it.
+        self.decisions = run_dir / "critic.jsonl"
+        self.legacy_decisions = run_dir / "overseer.jsonl"
         self.status_path = run_dir / "status.json"
         self.needs_human_path = run_dir / "NEEDS_HUMAN.md"
         self.log_path = run_dir / "loop.log"
@@ -38,7 +41,10 @@ class Recorder:
         ))
 
     def decision(self, **record) -> None:
-        self._append(self.overseer, record)
+        self._append(self.decisions, record)
+
+    def read_decisions(self) -> list[dict]:
+        return self.read_jsonl(self.decisions if self.decisions.exists() else self.legacy_decisions)
 
     def log(self, line: str) -> None:
         stamped = f"{_ts()} {line}"

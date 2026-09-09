@@ -9,7 +9,7 @@ import pytest
 from ouroboros.config import LoopConfig
 from ouroboros.loops import (LoopDetector, content_words, is_product_change, loop_reply,
                              normalise, similarity)
-from ouroboros.roles.overseer import RulesOverseer, Signals
+from ouroboros.roles.critic import RulesCritic, Signals
 
 
 # -- what counts as work ----------------------------------------------------
@@ -195,12 +195,12 @@ def test_the_reply_names_the_loop_and_grows_with_the_step():
     assert "different model" in loop_reply(report, 3)
 
 
-# -- what the overseer is told ----------------------------------------------
+# -- what the critic is told ------------------------------------------------
 
-def test_the_rules_overseer_returns_looping_when_a_signal_has_fired():
+def test_the_rules_critic_returns_looping_when_a_signal_has_fired():
     s = Signals("all good", changed=True, recorded=True, no_change_streak=0, error_streak=0,
                 loop_fired="8 iterations in a row changed only bookkeeping")
-    v = RulesOverseer().judge(s)
+    v = RulesCritic().judge(s)
     assert v.verdict == "looping"
     assert "not the work" in v.reply
 
@@ -209,10 +209,10 @@ def test_nothing_changing_still_reads_as_stuck_not_looping():
     """`stuck` is no diff at all; `looping` is diffs that move nothing. Keep them apart."""
     s = Signals("", changed=False, recorded=True, no_change_streak=5, error_streak=0,
                 loop_fired="30 iterations in a row left the frontier unchanged")
-    assert RulesOverseer().judge(s).verdict == "stuck"
+    assert RulesCritic().judge(s).verdict == "stuck"
 
 
-def test_the_counters_reach_the_overseers_signal_block():
+def test_the_counters_reach_the_critics_signal_block():
     d = detector(product_after=2)
     for _ in range(3):
         d.observe_iteration(files=[".hypergraph/a.md"], frontier=None, subject="Record")

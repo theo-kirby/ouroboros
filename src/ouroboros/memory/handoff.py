@@ -119,7 +119,7 @@ class HandoffMemory(BaseMemory):
             )
         return "\n\n".join(parts)
 
-    def overseer_context(self) -> str:
+    def critic_context(self) -> str:
         parts = []
         if self.plan.exists() and self.plan.read_text().strip():
             parts.append(f"### Plan (`{self._rel(self.plan)}`)\n\n{self.plan.read_text().strip()[:4000]}")

@@ -57,22 +57,32 @@ def test_derive_iterations_and_stage_durations():
     steps = [
         {"ts": "2026-09-06T19:00:00+00:00", "iteration": 1, "step": "actor"},
         {"ts": "2026-09-06T19:00:01+00:00", "iteration": 1, "step": "commit", "changed": True, "recorded": True, "cost": 2.0},
-        {"ts": "2026-09-06T19:00:31+00:00", "iteration": 1, "step": "critique", "verdict": "accept"},
-        {"ts": "2026-09-06T19:01:31+00:00", "iteration": 1, "step": "oversee", "verdict": "continue"},
+        {"ts": "2026-09-06T19:00:31+00:00", "iteration": 1, "step": "critique", "verdict": "continue"},
         {"ts": "2026-09-06T19:11:31+00:00", "iteration": 2, "step": "actor", "error": "timeout"},
-        {"ts": "2026-09-06T19:11:32+00:00", "iteration": 2, "step": "commit", "changed": False, "recorded": False, "cost": 0},
-        {"ts": "2026-09-06T19:11:40+00:00", "iteration": 2, "step": "oversee", "verdict": "revert"},
+        {"ts": "2026-09-06T19:11:32+00:00", "iteration": 2, "step": "commit", "changed": False, "recorded": False, "cost": 0, "housekeeping": True},
+        {"ts": "2026-09-06T19:11:40+00:00", "iteration": 2, "step": "critique", "verdict": "reject"},
         {"ts": "2026-09-06T19:11:41+00:00", "iteration": 2, "step": "revert"},
         {"ts": "2026-09-06T19:21:41+00:00", "iteration": 2, "step": "reconcile"},
         {"ts": "2026-09-06T19:26:41+00:00", "iteration": 2, "step": "plan", "bet": "Bet: x"},
     ]
     its, stages, reconciles, plans = derive_iterations(steps)
     assert [i.n for i in its] == [1, 2]
-    assert its[0].changed and its[0].recorded and its[0].verdict == "continue" and its[0].critique == "accept" and its[0].cost == 2.0
-    assert its[1].reverted and its[1].error == "timeout" and its[1].bet == "Bet: x" and its[1].actor_seconds == 600.0
-    assert stages["critic"].last == 30.0 and stages["overseer"].count == 2 and stages["overseer"].avg == 34.0
+    assert its[0].changed and its[0].recorded and its[0].verdict == "continue" and its[0].cost == 2.0
+    assert its[1].reverted and its[1].housekeeping and its[1].error == "timeout" and its[1].bet == "Bet: x" and its[1].actor_seconds == 660.0
+    assert stages["critic"].count == 2 and stages["critic"].last == 8.0 and stages["critic"].avg == 19.0
     assert stages["maintainer"].last == 600.0 and stages["planner"].last == 300.0 and stages["commit"].count == 2
     assert (reconciles, plans) == (1, 1)
+
+
+def test_an_old_run_with_an_overseer_step_still_reads():
+    """Before the merge each iteration wrote `critique` then `oversee`; the overseer's verdict counted."""
+    steps = [
+        {"ts": "2026-09-06T19:00:00+00:00", "iteration": 1, "step": "actor"},
+        {"ts": "2026-09-06T19:00:31+00:00", "iteration": 1, "step": "critique", "verdict": "accept"},
+        {"ts": "2026-09-06T19:01:31+00:00", "iteration": 1, "step": "oversee", "verdict": "answer"},
+    ]
+    its, stages, _, _ = derive_iterations(steps)
+    assert its[0].verdict == "answer" and stages["critic"].count == 2
 
 
 def test_load_snapshot_from_a_run_dir(tmp_path):
@@ -83,7 +93,7 @@ def test_load_snapshot_from_a_run_dir(tmp_path):
         {"ts": "2026-09-06T19:00:00+00:00", "iteration": 1, "step": "actor"},
         {"ts": "2026-09-06T19:00:01+00:00", "iteration": 1, "step": "commit", "changed": True, "recorded": True, "cost": 1.5},
     )) + "\n")
-    (run / "overseer.jsonl").write_text(json.dumps({"iteration": 1, "verdict": "continue", "reason": "ok", "reply": ""}) + "\n")
+    (run / "critic.jsonl").write_text(json.dumps({"iteration": 1, "verdict": "continue", "reason": "ok", "reply": ""}) + "\n")
     (run / "loop.log").write_text("2026-09-06T19:00:00+00:00 harness: claude -> codex\n2026-09-06T19:00:01+00:00 [1] actor: ok\n")
     (run / "transcripts" / "0001-actor.json").write_text("\n".join(jl({"type": "assistant", "message": {"content": [{"type": "text", "text": "hello"}]}})) + "\n")
     (tmp_path / "PLAN.md").write_text("# plan\n\n## short\n\n- do A [rec: x-1]\n- do B\n\n## medium\n\n- C\n")
@@ -110,12 +120,11 @@ def test_layout_and_widgets():
 
 # ------------------------------------------------------------------ harnesses
 def _roles():
-    """A night like cadex nt2: claude everywhere but the critic, codex behind it all."""
+    """A night like cadex nt2, with the maintainer and planner on: claude everywhere but the critic, codex behind it all."""
     return {
         "actor": [("claude", "claude-fable-5-1"), ("codex", "gpt-6-astra")],
         "critic": [("codex", "gpt-6-astra")],
-        "overseer": [("claude", "claude-opus-5"), ("codex", "gpt-6-astra")],
-        "maintainer": [("claude", "claude-fable-5-1"), ("codex", "gpt-6-astra")],
+        "maintainer": [("claude", "claude-opus-5"), ("codex", "gpt-6-astra")],
         "planner": [("claude", "claude-fable-5-1"), ("codex", "gpt-6-astra")],
     }
 
@@ -134,12 +143,12 @@ def _usage():
 def test_roster_turns_roles_into_one_row_per_harness():
     claude, codex = harness_roster(_roles(), _usage())
     assert claude.name == "claude"
-    assert claude.roles == ["actor", "overseer", "maintainer", "planner"]
+    assert claude.roles == ["actor", "maintainer", "planner"]
     assert claude.backs == []
     assert claude.models == ["claude-fable-5-1", "claude-opus-5"]
     assert codex.roles == ["critic"]
     # Codex stands behind every other role without being first choice for them.
-    assert codex.backs == ["actor", "overseer", "maintainer", "planner"]
+    assert codex.backs == ["actor", "maintainer", "planner"]
 
 
 def test_roster_shows_the_long_window_and_the_rise_this_run_caused():
@@ -270,7 +279,7 @@ def _snap(**kw):
                 stages={s: StageStat() for s in STAGES}, stage="actor", stage_since=0.0,
                 decisions=[], feed=[], feed_role="", feed_age=None, log_tail=[], plan_short=[],
                 needs_human=None, loadavg=(0.0, 0.0, 0.0), procs=0, cpu_pct=0.0, rss_mb=0.0,
-                stop_after_s=None, max_iterations=None, chains={}, mode="single")
+                stop_after_s=None, max_iterations=None, chains={})
     stages = kw.pop("stages", None)
     if stages:
         base["stages"] = {**{s: StageStat() for s in STAGES}, **stages}
@@ -367,7 +376,7 @@ def test_a_window_past_its_reset_reads_as_empty_not_as_whatever_it_last_said():
 
 def test_the_history_strip_has_two_states():
     from ouroboros.tui.panels import BLOCKED
-    # work that went through, including the overseer answering and accepting done
+    # work that went through, including the critic answering and accepting done
     assert not {"continue", "answer", "done_accepted"} & BLOCKED
     # work thrown away, or not done at all
     assert {"stuck", "revert", "done_rejected"} <= BLOCKED
@@ -399,7 +408,7 @@ def snapshot(**kw):
         now=1000.0, status={"state": "work", "iteration": 12}, alive=True, pid=7, iterations=[], stages={},
         stage="actor", stage_since=940.0, decisions=[], feed=[], feed_role="0012-actor", feed_age=1.0,
         log_tail=[], plan_short=[], needs_human=None, loadavg=(0, 0, 0), procs=1, cpu_pct=0.0, rss_mb=0.0,
-        stop_after_s=None, max_iterations=None, chains={}, mode="actor-critic",
+        stop_after_s=None, max_iterations=None, chains={},
     )
     base.update(kw)
     return Snapshot(**base)
@@ -461,16 +470,21 @@ def test_the_panel_keeps_the_history_strip_and_gains_the_stage():
     lines = render(s)
     assert "history ●●" in lines[1]
     assert "#10 continue" in lines[1]
-    assert "actor→critic→overseer→maintainer→planner" in lines[2]
+    assert "actor→critic→maintainer→planner" in lines[2]
     assert "1m 00s" in lines[2], "how long it has held this stage"
     assert "continue 1" in lines[-1] and "stuck 1" in lines[-1], "the verdict counts stay on the border"
+
+
+def test_the_pipeline_shows_only_the_roles_the_run_calls():
+    two = snapshot(decisions=[decision()], roles={"actor": [("claude", None)], "critic": [("codex", None)]})
+    assert "actor→critic " in render(two)[2] and "maintainer" not in render(two)[2]
 
 
 def test_a_stage_outside_the_pipeline_is_named_rather_than_dropped():
     assert "backoff" in render(snapshot(stage="backoff", decisions=[decision()]))[2]
 
 
-def test_the_overseers_own_words_still_get_the_middle():
+def test_the_critics_own_words_still_get_the_middle():
     s = snapshot(decisions=[decision(reason="the actor asked which store to use", verdict="answer",
                                      reply="Use the existing one.", did="d", doing="c")])
     body = "\n".join(render(s)[3:-4])
@@ -521,8 +535,8 @@ def test_the_spacing_outlives_the_verdict_list():
     assert lines[3].strip("│ ") == "" and lines[4].startswith("│ LAST") and lines[6].startswith("│ CURRENT")
 
 
-def test_an_overseer_that_wrote_no_summary_falls_back_to_what_it_did_write():
-    """The rules overseer cannot summarise. An empty row would read as nothing happening."""
+def test_a_critic_that_wrote_no_summary_falls_back_to_what_it_did_write():
+    """The rules critic cannot summarise. An empty row would read as nothing happening."""
     s = snapshot(decisions=[decision(reason="no record written", reply="Write the handoff first.")])
     assert s.did == "no record written"
     assert s.doing == "Write the handoff first."
@@ -544,7 +558,7 @@ def test_the_status_panel_takes_the_room_both_panels_used_to_have():
     from ouroboros.tui.app import DEFAULT_ON, PANELS, VIEW
     placed = compute_layout(Rect(8, 0, 44, 120), VIEW, DEFAULT_ON)
     assert set(placed) == {"iterations", "activity", "status"}
-    # 12 of 22: the overseer strip's 4 and the feed's 8, in one box.
+    # 12 of 22: the verdict strip's 4 and the feed's 8, in one box.
     assert placed["status"].h == 24 and placed["status"].w == 120
     assert "messages" in PANELS, "the raw feed is still reachable, just not on by default"
 

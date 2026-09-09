@@ -37,10 +37,13 @@ does not rewrite it. Keep it true.
 ## The shape of a run
 
 A run is a loop of iterations against a charter. Each iteration an **actor**
-does one unit of work and commits it, a **critic** accepts or rejects it, an
-**overseer** decides whether the loop continues, a **maintainer** folds what
-happened into memory, and a **planner** re-bets. It runs on a branch
-(`ouroboros/<run>`), inside tmux, for as long as the charter's stop rules allow.
+does one unit of work and commits it, and a **critic** reads the change and the
+memory, accepts or rejects it, answers as the sleeping user would, and writes
+the message the next iteration starts from. When the memory says a reconcile
+is due, the actor's next iteration is housekeeping instead of a unit. A
+separate maintainer and planner exist but are off unless the config turns them
+on. It runs on a branch (`ouroboros/<run>`), inside tmux, for as long as the
+charter's stop rules allow.
 
 The human owns exactly one document: `.ouroboros/goal.md`, the charter. No agent
 role may write it. Everything else -- the plan, the bets, the record -- is the

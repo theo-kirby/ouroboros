@@ -16,10 +16,13 @@ def test_cost_covers_every_role_not_just_the_actor():
         {"step": "plan", "cost": 0.25},
         {"step": "revert"},  # not a role call; must not count as uncosted
     ]
+    # decision lines from before the merge carried the overseer's cost; they still count
     decisions = [{"cost": 0.1}, {"cost": 0.4}]
     by_role, uncosted = _cost_by_role(steps, decisions)
     assert by_role == {"actor": 3.0, "maintainer": 0.5, "planner": 0.25, "overseer": 0.5}
     assert sum(by_role.values()) == 4.25
+    steps.append({"step": "critique", "cost": 0.3})
+    assert _cost_by_role(steps, [])[0]["critic"] == 0.3
     assert uncosted == 0
 
 

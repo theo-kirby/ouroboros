@@ -167,7 +167,7 @@ def test_config_chain():
     cfg = Config.model_validate({"roles": {"actor": {"harness": "claude", "model": "opus",
                                                      "fallback": [{"harness": "codex", "model": "gpt-5-codex"}, {"harness": "pi"}]}}})
     assert cfg.role("actor").chain == [("claude", "opus"), ("codex", "gpt-5-codex"), ("pi", None)]
-    assert Config().role("overseer").chain == [("claude", "haiku")]
+    assert Config().role("critic").chain == [("claude", None)]
     assert cfg.limits.cooldown_seconds == 1800
 
 

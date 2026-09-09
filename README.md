@@ -40,12 +40,15 @@ plan as they learn, but cannot edit the charter.
 ## The loop
 
 - **Actor:** picks one task, does the work, tests it, and records the result.
-- **Critic:** reviews the change in `actor-critic` or `council` mode.
-  Rejected changes are reverted by default.
-- **Overseer:** answers the actor’s questions, gets it unstuck, and checks
-  whether claims of completion hold up.
-- **Maintainer:** periodically updates shared project state from the records.
-- **Planner:** revises the next steps after that update.
+  When the memory says a reconcile is due, its next iteration is housekeeping.
+- **Critic:** one read-only call after every actor turn. It reviews the change
+  against the quality bar, answers the actor's questions as you would, refuses
+  claims of completion that do not hold up, names loops, and writes the message
+  the next iteration starts from. Rejected changes are reverted by default.
+
+Two more roles exist and are off by default: a **maintainer** that runs the
+reconcile pass as a separate call, and a **planner** that writes bets into a
+plan. Turn them on in the config if the memory rots or the plan drifts.
 
 If an agent hits a usage limit, Ouroboros switches to a configured fallback
 or waits for access to return. Set roles and limits in `.ouroboros/config.yml`:
@@ -53,8 +56,7 @@ or waits for access to return. Set roles and limits in `.ouroboros/config.yml`:
 ```yaml
 roles:
   actor: { harness: claude, timeout: 90m, fallback: [{ harness: codex }] }
-  critic: { harness: codex, timeout: 15m }
-mode: actor-critic
+  critic: { harness: codex, timeout: 10m, fallback: [{ harness: claude }] }
 stop: { after: 8h, max_usage: 0.8 }
 ```
 

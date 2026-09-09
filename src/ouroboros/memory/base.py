@@ -36,8 +36,8 @@ class MemoryAdapter(Protocol):
     def check_report(self) -> str | None:
         """Problems the memory's own checker sees after a commit, or None."""
 
-    def overseer_context(self) -> str:
-        """Short text for the overseer: the frontier and the current plan."""
+    def critic_context(self) -> str:
+        """Short text for the critic: the frontier and the current plan."""
 
     def planner_prompt(self, signals: str) -> str | None:
         """The planner role prompt, or None when this memory has no plan layer."""
@@ -78,7 +78,7 @@ class BaseMemory:
     def reconcile_prompt(self) -> str | None:
         return None
 
-    def overseer_context(self) -> str:
+    def critic_context(self) -> str:
         return ""
 
     def planner_prompt(self, signals: str) -> str | None:

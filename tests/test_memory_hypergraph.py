@@ -131,7 +131,8 @@ def test_engine_runs_maintainer_pass(hg_repo):
 
     actor = FakeHarness([], default=records)
     maintainer = FakeHarness([], default=lambda cwd, p: Result(text="reconciled", cost_usd=0.2))
-    eng = make_engine(hg_repo, actor, overseer=FakeHarnessOverseer(), max_iterations=3)
+    eng = make_engine(hg_repo, actor, critic=FakeCritic(), max_iterations=3)
+    eng.config.maintainer = True
     eng.memory = mem
     eng.maintainer = maintainer
     eng.goal_text = GOAL
@@ -146,19 +147,48 @@ def test_engine_runs_maintainer_pass(hg_repo):
     assert eng.outcomes[0].recorded and eng.outcomes[2].recorded
 
 
-class FakeHarnessOverseer:
+class FakeCritic:
     name = "fake"
 
     def judge(self, s):
-        from ouroboros.roles.overseer import Verdict
+        from ouroboros.roles.critic import Verdict
         return Verdict("continue", "", "ok", source="fake")
+
+
+def test_the_actor_runs_the_reconcile_pass_when_no_maintainer_is_on(hg_repo):
+    """Default shape: two roles. A due reconcile is the actor's next iteration, judged like any other."""
+    mem = HypergraphMemory(hg_repo, reconcile_every=99, pressure=99)
+    prompts = []
+
+    def actor(cwd: Path, prompt: str) -> Result:
+        prompts.append(prompt)
+        if "You are the maintainer" in prompt[:200]:
+            (cwd / "STATE.md").write_text("# State\n\n## Frontier\n\n- [open] **gap** (`gap-1`)\n")
+            return Result(text="reconciled", session_id="s", cost_usd=0.1)
+        parent = re.search(r"--parent (\S+)", prompt).group(1)
+        (cwd / "work.txt").open("a").write("x\n")
+        mint(cwd, "unit", parent)
+        return Result(text="did a unit", session_id="s", cost_usd=0.1)
+
+    eng = make_engine(hg_repo, FakeHarness([], default=actor), critic=FakeCritic(), max_iterations=3)
+    eng.memory = mem
+    eng.goal_text = GOAL_WITH_GAPS
+    eng.run()
+    # the directive's gap impacts make a reconcile due at once, so #1 is housekeeping; #2 and #3 work
+    assert ["You are the maintainer" in p[:200] for p in prompts] == [True, False, False]
+    assert not mem.needs_reconcile() and mem.since_reconcile == 2
+    steps = eng.recorder.read_jsonl(eng.recorder.iterations)
+    assert [s.get("housekeeping") for s in steps if s.get("step") == "commit"] == [True, None, None]
+    assert not any(s.get("step") == "reconcile" for s in steps)
+    assert git(hg_repo, "log", "-1", "--format=%s", "ouroboros/t~2") == "ouroboros #1: housekeeping"
 
 
 def test_failed_iterations_do_not_trigger_reconcile(hg_repo):
     from fake_harness import crashes
     mem = HypergraphMemory(hg_repo, reconcile_every=1, pressure=99)
     maintainer = FakeHarness([], default=lambda cwd, p: Result(text="reconciled"))
-    eng = make_engine(hg_repo, FakeHarness([], default=crashes("boom")), overseer=FakeHarnessOverseer(), max_iterations=2)
+    eng = make_engine(hg_repo, FakeHarness([], default=crashes("boom")), critic=FakeCritic(), max_iterations=2)
+    eng.config.maintainer = True
     eng.memory = mem
     eng.maintainer = maintainer
     eng.goal_text = GOAL
@@ -199,15 +229,15 @@ def test_directive_without_criteria_declares_none(hg_repo):
     assert not mem.needs_reconcile()
 
 
-def test_overseer_context_has_frontier_and_tail(hg_repo):
+def test_critic_context_has_frontier_and_tail(hg_repo):
     from ouroboros.memory.hypergraph import frontier_of
     mem = HypergraphMemory(hg_repo)
     (hg_repo / "STATE.md").write_text("# t\n\n## Frontier\n\n- [open] **Gap A** (`a-1`) — todo\n\n## Architecture\n\n- root\n")
-    ctx = mem.overseer_context()
+    ctx = mem.critic_context()
     assert "Gap A" in ctx and "Unreconciled record nodes" in ctx and "Architecture" not in ctx
     assert frontier_of("# x\n\n## Frontier\n\n(empty)\n") == "(empty)"
     (hg_repo / "PLAN.md").write_text("# plan\n\n## short\n\n- do A\n")
-    assert "Plan (agent-owned" in mem.overseer_context() and "do A" in mem.overseer_context()
+    assert "Plan (agent-owned" in mem.critic_context() and "do A" in mem.critic_context()
 
 
 GOAL_WITH_LADDER = GOAL_WITH_GAPS + (
@@ -268,7 +298,8 @@ def test_engine_runs_planner_after_reconcile(hg_repo):
     actor = FakeHarness([], default=records)
     maintainer = FakeHarness([], default=lambda cwd, p: Result(text="reconciled", cost_usd=0.2))
     planner = FakeHarness([], default=bets)
-    eng = make_engine(hg_repo, actor, overseer=FakeHarnessOverseer(), max_iterations=3, planner=planner)
+    eng = make_engine(hg_repo, actor, critic=FakeCritic(), max_iterations=3, planner=planner)
+    eng.config.maintainer = eng.config.planner = True
     eng.memory = mem
     eng.maintainer = maintainer
     eng.goal_text = GOAL_WITH_LADDER

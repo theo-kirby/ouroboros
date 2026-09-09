@@ -31,8 +31,7 @@ from .memory import make_memory
 from .memory.handoff import HandoffMemory
 from . import operator
 from .recorder import Recorder
-from .roles.critic import Council, Critic
-from .roles.overseer import AgentOverseer, RulesOverseer
+from .roles.critic import AgentCritic, RulesCritic
 
 GOAL_TEMPLATE = """# Goal: {name}
 
@@ -76,7 +75,7 @@ How to decide for me when I am not here:
 
 creative
 
-(creative | maintain | report_done; with the planner on, an empty frontier gets new directions either way)
+(creative | maintain | report_done; under creative the critic names new directions when the frontier runs dry)
 
 ## Quality bar
 
@@ -136,8 +135,6 @@ def load_config(args: argparse.Namespace, repo: Path) -> Config:
     cfg = Config.load(path) if path.exists() else Config(run=repo.name)
     if getattr(args, "run_name", None):
         cfg.run = args.run_name
-    if getattr(args, "mode", None):
-        cfg.mode = args.mode
     if getattr(args, "harness", None):
         cfg.roles.setdefault("actor", cfg.role("actor")).harness = args.harness
     if getattr(args, "model", None):
@@ -152,8 +149,12 @@ def load_config(args: argparse.Namespace, repo: Path) -> Config:
         cfg.stop.max_usage = args.max_usage
     if getattr(args, "allow_dirty", False):
         cfg.git.allow_dirty = True
-    if getattr(args, "overseer", None):
-        cfg.overseer = args.overseer
+    if getattr(args, "critic", None):
+        cfg.critic = args.critic
+    if getattr(args, "maintainer", None) is not None:
+        cfg.maintainer = args.maintainer
+    if getattr(args, "planner", None) is not None:
+        cfg.planner = args.planner
     if getattr(args, "memory", None):
         cfg.memory = args.memory
     return cfg
@@ -178,7 +179,7 @@ def preflight(cfg: Config, repo: Path) -> str | None:
         return (f"the charter at {goal_path} is not filled in: " + "; ".join(reasons)
                 + ". Run `ouroboros design` (or /ouroboros-design in Claude Code), or edit it by hand")
     chains = {}
-    for role_name in ("actor", "overseer", "maintainer", "planner", "critic"):
+    for role_name in cfg.active_roles:
         for harness_name, _model in cfg.role(role_name).chain:
             try:
                 make_harness(harness_name)
@@ -208,8 +209,9 @@ def cmd_preflight(args: argparse.Namespace) -> int:
     if problem:
         print(f"not ready: {problem}", file=sys.stderr)
         return 2
-    print(f"ready: run {cfg.run!r} on branch {cfg.branch}, mode {cfg.mode}, memory {cfg.memory}")
-    print("  roles: " + ", ".join(f"{n}={r.harness}:{r.model or 'default'}" for n, r in sorted(cfg.roles.items())))
+    print(f"ready: run {cfg.run!r} on branch {cfg.branch}, memory {cfg.memory}")
+    print("  roles: " + ", ".join(f"{n}={cfg.role(n).harness}:{cfg.role(n).model or 'default'}" for n in cfg.active_roles)
+          + ("" if cfg.critic == "agent" else "  (critic: rules only)"))
     stop = [f"{k}={v}" for k, v in cfg.stop.model_dump().items() if v is not None]
     print("  stops at: " + (", ".join(stop) or "nothing — it will run until you stop it"))
     return 0
@@ -223,7 +225,7 @@ def _pools(cfg: Config, log) -> dict[str, PooledHarness]:
     )
     return {
         name: PooledHarness([(make_harness(h), m) for h, m in cfg.role(name).chain], board, log=log)
-        for name in ("actor", "overseer", "maintainer", "planner", "critic")
+        for name in cfg.active_roles
     }
 
 
@@ -259,7 +261,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     try:
         memory = make_memory(
-            cfg.memory, repo, recent=cfg.handoff.recent, plan=(True if cfg.plan.enabled is None else cfg.plan.enabled),
+            cfg.memory, repo, recent=cfg.handoff.recent, plan=cfg.planner,
             plan_view=cfg.plan.view, plan_md=cfg.plan.md, max_new_directions=cfg.plan.max_new_directions,
             **cfg.hypergraph.model_dump(),
         )
@@ -305,33 +307,20 @@ def cmd_run(args: argparse.Namespace) -> int:
         if not tmux_usable():
             recorder.log("backend tmux requested but no run session is reachable; calls run headless")
     pools = _pools(cfg, recorder.log)
-    if cfg.overseer == "agent":
-        orole = cfg.role("overseer")
-        overseer = AgentOverseer(
-            pools["overseer"], goal_text=goal_text, cwd=repo, timeout=orole.timeout_seconds,
-            model=orole.model, transcript_path=lambda n, a: recorder.transcript_path(n, "overseer", a),
+    if cfg.critic == "agent":
+        crole = cfg.role("critic")
+        critic = AgentCritic(
+            pools["critic"], goal_text=goal_text, cwd=repo, timeout=crole.timeout_seconds,
+            model=crole.model, transcript_path=lambda n, a: recorder.transcript_path(n, "critic", a),
             log=recorder.log,
         )
     else:
-        overseer = RulesOverseer()
-
-    critic = None
-    if cfg.mode in ("actor-critic", "council"):
-        crole = cfg.role("critic")
-        critics = [Critic(pools["critic"], goal_text=goal_text, cwd=repo, timeout=crole.timeout_seconds, model=crole.model,
-                          transcript_path=lambda n, a: recorder.transcript_path(n, "critic", a), log=recorder.log)]
-        if cfg.mode == "council":
-            for i, extra in enumerate(cfg.council, start=1):
-                h = PooledHarness([(make_harness(extra.harness), extra.model)], pools["actor"].board, log=recorder.log)
-                critics.append(Critic(h, goal_text=goal_text, cwd=repo, timeout=crole.timeout_seconds, model=extra.model,
-                                      transcript_path=lambda n, a, i=i: recorder.transcript_path(n, f"critic{i}", a),
-                                      log=recorder.log, name=f"critic{i}:{extra.harness}"))
-        critic = critics[0] if len(critics) == 1 else Council(critics)
+        critic = RulesCritic()
 
     engine = Engine(
         config=cfg, repo=repo, harness=pools["actor"], memory=memory, critic=critic,
-        git=git, recorder=recorder, budget=BudgetClock(cfg.stop), goal_text=goal_text, overseer=overseer,
-        maintainer=pools["maintainer"], planner=pools["planner"],
+        git=git, recorder=recorder, budget=BudgetClock(cfg.stop), goal_text=goal_text,
+        maintainer=pools.get("maintainer"), planner=pools.get("planner"),
     )
     # a re-run of the same run name continues where the last one stopped
     prior = recorder.read_jsonl(recorder.iterations)
@@ -406,9 +395,9 @@ def cmd_status(args: argparse.Namespace) -> int:
         from .tui import run_tui
         return run_tui(
             rec.run_dir, repo=repo, plan_md=cfg.plan.md, stop_after_s=cfg.stop.after_seconds,
-            max_iterations=cfg.stop.max_iterations, mode=cfg.mode,
-            chains={name: [h for h, _ in cfg.role(name).chain] for name in ("actor", "overseer", "maintainer", "planner", "critic")},
-            roles={name: cfg.role(name).chain for name in ("actor", "critic", "overseer", "maintainer", "planner")},
+            max_iterations=cfg.stop.max_iterations,
+            chains={name: [h for h, _ in cfg.role(name).chain] for name in cfg.active_roles},
+            roles={name: cfg.role(name).chain for name in cfg.active_roles},
         )
     while True:
         st = rec.read_status()
@@ -440,6 +429,8 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 # The report is the only thing the user reads in the morning, so it must not
 # flatter the run: cost covers every role, and a revert counts only if git agrees.
+# `oversee` is the step older runs wrote for the overseer, before it and the critic
+# were one role; their decision lines carried that role's cost.
 ROLE_OF_STEP = {"commit": "actor", "critique": "critic", "oversee": "overseer",
                 "reconcile": "maintainer", "plan": "planner"}
 
@@ -509,7 +500,7 @@ def cmd_report(args: argparse.Namespace) -> int:
     cfg = load_config(args, repo)
     rec = Recorder(run_dir_for(repo, cfg.run), echo=lambda *_: None)
     steps = rec.read_jsonl(rec.iterations)
-    decisions = rec.read_jsonl(rec.overseer)
+    decisions = rec.read_decisions()
     commits = [s for s in steps if s.get("step") == "commit"]
     reverts = [s for s in steps if s.get("step") == "revert"]
     by_role, uncosted = _cost_by_role(steps, decisions)
@@ -550,8 +541,8 @@ def cmd_report(args: argparse.Namespace) -> int:
     plan_file = plan_md if plan_md.exists() else repo / ".ouroboros" / "plan.md"
     if plan_file.exists() and plan_file.read_text().strip():
         lines += ["", f"## The plan now (`{plan_file.relative_to(repo)}`)", "", plan_file.read_text().strip()[:6000]]
-    lines += ["", "## Overseer verdicts", ""] + [f"- {k}: {v}" for k, v in sorted(counts.items())] + [""]
-    answered = [d for d in decisions if d["verdict"] in ("answer", "done_rejected", "stuck", "revert")]
+    lines += ["", "## Critic verdicts", ""] + [f"- {k}: {v}" for k, v in sorted(counts.items())] + [""]
+    answered = [d for d in decisions if d["verdict"] in ("answer", "done_rejected", "stuck", "looping", "reject", "revert")]
     if answered:
         lines += ["## Decisions made for you (overrule in the morning)", ""]
         lines += [f"- #{d['iteration']} {d['verdict']}: {d['reason']}" for d in answered] + [""]
@@ -623,11 +614,12 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--max-cost", type=float, help="stop at this API-equivalent cost in USD (informational on subscriptions)")
     r.add_argument("--max-usage", type=float, metavar="FRACTION",
                    help="stop when a subscription's weekly window passes this fraction, e.g. 0.8 for 80%%")
-    r.add_argument("--mode")
     r.add_argument("--harness", choices=["claude", "codex", "pi"])
     r.add_argument("--model")
     r.add_argument("--allow-dirty", action="store_true")
-    r.add_argument("--overseer", choices=["agent", "rules"])
+    r.add_argument("--critic", choices=["agent", "rules"], help="rules: the deterministic critic, no model call")
+    r.add_argument("--maintainer", action="store_true", default=None, help="a separate maintainer role (default: the actor does housekeeping)")
+    r.add_argument("--planner", action="store_true", default=None, help="a separate planner role (default: the critic's reply names the next unit)")
     r.add_argument("--memory", choices=["auto", "hypergraph", "handoff"])
     r.add_argument("--foreground", action="store_true", help="do not wrap in tmux")
     r.set_defaults(fn=cmd_run)

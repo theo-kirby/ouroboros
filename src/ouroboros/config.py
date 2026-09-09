@@ -90,7 +90,7 @@ class StopConfig(BaseModel):
     max_iterations: int | None = None
     max_cost_usd: float | None = None
     max_usage: float | None = None   # 0..1 of a subscription window; 0.8 = stop at 80%
-    # A loop the overseer calls stuck every iteration is spending on nothing. Backoff
+    # A loop the critic calls stuck every iteration is spending on nothing. Backoff
     # slows it first (60s, 120s, 300s, then 600s), so this many verdicts is hours of
     # mostly sleeping, not minutes: a run that will not recover, not a passing stall.
     max_stuck: int | None = 25       # consecutive `stuck` verdicts; null to never stop
@@ -136,8 +136,7 @@ class LoopConfig(BaseModel):
 
 
 class PlanConfig(BaseModel):
-    """The self-evolving plan layer (DESIGN.md section 20)."""
-    enabled: bool | None = None   # None = on for every memory adapter that supports it
+    """The plan layer the planner writes (DESIGN.md section 20). `Config.planner` turns it on."""
     every: int = 5                # handoff repos: planner pass every N work iterations (hypergraph: after each reconcile)
     view: str = "plan"
     md: str = "PLAN.md"
@@ -149,17 +148,23 @@ class Config(BaseModel):
     goal: str = ".ouroboros/goal.md"
     memory: str = "auto"  # auto | hypergraph | handoff
     backend: str = "headless"
-    mode: str = "single"   # single | actor-critic | council
-    council: list[FallbackConfig] = Field(default_factory=list)   # council mode: extra critics beside roles.critic
-    overseer: str = "agent"  # agent | rules
+    # Two roles run every iteration: the actor, and the critic that judges it and
+    # writes the next prompt. `rules` is the critic with no model behind it -- the
+    # same deterministic fallback that runs when the agent call fails.
+    critic: str = "agent"  # agent | rules
+    # Two more are separate calls that ot4 showed cost more than they moved. Off,
+    # their work does not vanish: when the memory says a reconcile is due, the actor
+    # runs the maintainer's pass as its iteration, and the critic's reply names the
+    # next unit instead of a planner writing bets.
+    maintainer: bool = False
+    planner: bool = False
     idle_interval: str = "30m"  # sleep between iterations after done_accepted under report_done
     roles: dict[str, RoleConfig] = Field(
         default_factory=lambda: {
             "actor": RoleConfig(),
-            "overseer": RoleConfig(model="haiku", timeout="3m"),
+            "critic": RoleConfig(timeout="10m"),
             "maintainer": RoleConfig(timeout="20m"),
             "planner": RoleConfig(timeout="20m"),
-            "critic": RoleConfig(timeout="15m"),
         }
     )
     git: GitConfig = Field(default_factory=GitConfig)
@@ -176,6 +181,11 @@ class Config(BaseModel):
 
     def role(self, name: str) -> RoleConfig:
         return self.roles.get(name) or RoleConfig()
+
+    @property
+    def active_roles(self) -> list[str]:
+        """The roles this config will call, in pipeline order."""
+        return ["actor", "critic"] + (["maintainer"] if self.maintainer else []) + (["planner"] if self.planner else [])
 
     @classmethod
     def load(cls, path: Path) -> "Config":

@@ -140,9 +140,8 @@ def test_reset_in_and_epoch_forms():
 
 def test_codex_strict_schema_adds_what_openai_requires():
     from ouroboros.harness.codex import strict_schema
-    from ouroboros.roles.critic import CRITIQUE_SCHEMA
-    from ouroboros.roles.overseer import VERDICT_SCHEMA
-    for schema in (CRITIQUE_SCHEMA, VERDICT_SCHEMA):
+    from ouroboros.roles.critic import VERDICT_SCHEMA
+    for schema in (VERDICT_SCHEMA,):
         s = strict_schema(schema)
         assert s["additionalProperties"] is False and s["required"] == list(schema["properties"])
         assert "additionalProperties" not in schema           # the original is untouched

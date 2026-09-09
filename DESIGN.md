@@ -85,7 +85,7 @@ ten minutes.
 |---|---|
 | How to drive a harness | Headless subprocess by default. A tmux TUI driver is a second backend. |
 | Memory between iterations | `hypergraph-protocol` when `.hypergraph/config.yml` exists. Handoff documents when it does not. |
-| Who answers questions and judges "done" | An overseer agent. Rules as fallback. |
+| Who judges the change, answers questions, and writes the next prompt | One critic agent, read-only, every iteration. Rules as fallback. |
 | Git | Auto-commit every iteration on `ouroboros/<run-name>`. |
 
 ## 5. Architecture
@@ -98,9 +98,8 @@ ouroboros run
       │    └── Backend       .................. headless | tmux
       ├── Memory adapter     .................. hypergraph | handoff  (section 7)
       │    └── Charter parser ................. goal.md → gaps, ladder, policies (section 20)
-      ├── Critic / Council   .................. grades the diff, actor-critic and council modes (section 10)
-      ├── Overseer           .................. answers, judges, unsticks (section 8)
-      ├── Planner            .................. bets into the plan view after each reconcile (section 20)
+      ├── Critic             .................. grades the diff, answers, judges done, writes the next prompt (section 8)
+      ├── Planner            .................. optional: bets into the plan view after each reconcile (section 20)
       ├── Git guard          .................. branch, commit, tag, revert (section 11)
       ├── Budget clock       .................. time, iterations, cost (section 12)
       └── Recorder           .................. JSONL log, status, report (section 15)
@@ -124,14 +123,13 @@ failure; it is a recorded event and the loop continues.
 
 | Step | What happens | Who runs it |
 |---|---|---|
-| **ORIENT** | Read the charter, the memory (STATE.md, the plan, the unreconciled tail, or the recent handoffs), the overseer's message. Pick the next unit from the plan's `short` horizon or a frontier node. | actor (headless call) |
+| **ORIENT** | Read the charter, the memory (STATE.md, the plan, the unreconciled tail, or the recent handoffs), the critic's message. Pick the next unit from the plan's `short` horizon, a frontier node, or the critic's steer. When the memory says a reconcile is due, this iteration is **housekeeping** instead: the actor runs the reconcile pass (section 7) as its unit. | actor (headless call) |
 | **WORK** | Do one bounded unit of work. Budget: N units (default 1). | actor (same call) |
 | **RECORD** | Write the memory entry for that unit (hypergraph record node or handoff file). | actor (same call) |
 | **COMMIT** | Git guard commits whatever changed on the run branch. No change, no commit. | ouroboros (local) |
-| **CRITIC** | `actor-critic` and `council` modes, only when something changed. Reads the diff with read-only tools. `accept` or `reject` with `must_fix`. | critic (headless call) |
-| **OVERSEE** | Read the actor's final message, the frontier and plan, the critique, the diff stat. Did it ask a question? Did it claim done? Is it stuck? Answer as the user would. | overseer (headless call, cheap model) |
-| **RECONCILE** | Hypergraph only. Fold recorded impacts into the state graph. Runs after `reconcile_every` iterations with changes or records, at `pressure` unreconciled nodes, or at once after a directive that declared gaps. | maintainer (headless call) |
-| **PLAN** | After every successful RECONCILE, and after `done_accepted`. One `Bet:` record folded into the plan view. Handoff repos: every `plan.every` worked iterations. | planner (headless call) |
+| **CRITIC** | Every iteration, changed or not. Reads the diff, the actor's final message, the frontier and plan, and the loop's signals, with read-only tools. Grades the change against the quality bar, answers a question as the user would, refuses a false "done", names a loop, and writes the message the next iteration starts from. `reject` reverts the iteration. | critic (headless call) |
+| **RECONCILE** | Hypergraph only. Fold recorded impacts into the state graph. Due after `reconcile_every` iterations with changes or records, at `pressure` unreconciled nodes, or at once after a directive that declared gaps. By default it is the actor's next iteration (housekeeping). With `maintainer: true` it is a separate call after the critic. | actor, or maintainer when on |
+| **PLAN** | Only with `planner: true`. After every successful RECONCILE, and after `done_accepted`. One `Bet:` record folded into the plan view. Handoff repos: every `plan.every` worked iterations. Off, the critic's `reply` names the next unit. | planner (headless call) |
 
 **ORIENT, WORK, and RECORD are one call**, not three. The prompt tells the
 agent to do all three. Splitting them wastes context and money. The recorder
@@ -143,20 +141,20 @@ memory from disk. Optional: `resume_for: N` keeps one session for N iterations,
 then resets. Default is 1 (always fresh). A session is only resumed on the
 harness that minted it.
 
-**The actor's last message is data.** The overseer reads it. It does not reach
-a human. Any question in it gets answered by the overseer and injected as the
+**The actor's last message is data.** The critic reads it. It does not reach
+a human. Any question in it gets answered by the critic and injected as the
 first line of the next prompt.
 
 **A failed iteration is quiet.** When the actor call fails (after the retry
 policy of section 12), nothing is committed, the reconcile counter does not
-tick, no maintainer runs, and the error rides into the next prompt. Repeated
+tick, and the error rides into the next prompt. Repeated
 failures back off 1m, 2m, 5m, 10m.
 
 **A stuck iteration is expensive.** `stuck` means the opposite of a failure: the
 actor ran fine and changed nothing, because it is waiting on a clock, a quota,
 or an instruction it cannot act on. Nothing about repeating it immediately makes
-it truer, and every repeat still pays for a critic, a maintainer, a planner and
-an overseer call. So a run of `stuck` verdicts backs off on the same table --
+it truer, and every repeat still pays for a critic call. So a run of `stuck`
+verdicts backs off on the same table --
 1m, 2m, 5m, 10m, then 10m forever -- and `stop.max_stuck` (25 by default) ends a
 run that is not coming back. Any verdict other than `stuck` clears the streak.
 The nt3 run on cadex is why this exists: 113 consecutive stuck iterations, at
@@ -237,7 +235,7 @@ Rules Ouroboros enforces for hypergraph mode:
 - RECONCILE triggers: every `reconcile_every: 5` iterations with changes or records, **or** when ORIENT
   reports a fat unreconciled tail (the skill's own pressure trigger).
 - The critic sees the diff, which includes the record node file. A unit with
-  no record node is reported to the overseer as `handoff recorded: NO` and the
+  no record node is reported to the critic as `handoff recorded: NO` and the
   next prompt starts with "record first".
 - `hypergraph check` runs after every commit. A failing check does not stop
   the loop. Its output is appended to the next prompt as the first thing to fix.
@@ -281,10 +279,14 @@ class MemoryAdapter(Protocol):
     def reconcile_prompt(self) -> str | None
 ```
 
-## 8. The overseer
+## 8. The critic
 
-The overseer is the sleeping user. It is a cheap, fast headless call with tools
-off, a JSON schema, and three turns at most. It gets:
+The critic is the reviewer and the sleeping user in one. It used to be two
+roles, and each was half blind: the critic graded the diff without seeing the
+plan, the overseer steered from the plan without seeing the diff. nt3 ran 200
+iterations and closed no criterion because every role agreed with every other.
+Both are judgment jobs over the same evidence, so they are one read-only call
+now, after every actor turn, changed or not. It gets:
 
 - the charter (the user's voice),
 - what is true now: the STATE.md frontier, the unreconciled count, and the
@@ -292,9 +294,10 @@ off, a JSON schema, and three turns at most. It gets:
   handoff's `## Next`,
 - the actor's final message,
 - the loop's signals: changed, recorded, no-change streak, error streak, the
-  critic's verdict when one ran,
-- the git diff stat for the iteration,
-- the last 3 overseer decisions (so it does not flip-flop).
+  loop detector's counters, whether the iteration was housekeeping,
+- the git diff stat and the diff itself (truncated), with read-only tools to
+  open what the diff touches,
+- the last 20 decisions (so it does not flip-flop, and so it can see a loop).
 
 "Done" is judged against the frontier, never against the checklist in the
 charter (section 21 says why).
@@ -302,31 +305,45 @@ charter (section 21 says why).
 It returns strict JSON:
 
 ```json
-{ "verdict": "continue | answer | done_rejected | done_accepted | stuck | looping | revert",
-  "reply": "text injected into the next prompt",
-  "reason": "one sentence for the log" }
+{ "verdict": "continue | answer | done_rejected | done_accepted | stuck | looping | reject",
+  "reply": "text injected into the next prompt: the fix, the answer, or the next unit and why",
+  "reason": "one sentence for the log",
+  "did": "one sentence for the monitor: the unit that just finished",
+  "doing": "one sentence for the monitor: the unit the next iteration starts",
+  "fix_first": "housekeeping the actor must do before its unit; empty when the memory is clean" }
 ```
 
 Triggers, in order:
 
-| Signal in the actor output | Overseer action |
+| Signal | Critic action |
 |---|---|
-| Ends with a question | Answer it using the goal doc's **question policy**. Inject the answer. |
-| Claims "done" or "complete" | Check against **done criteria**. Usually `done_rejected` + "here is what is still open". |
+| The diff has a real defect against the quality bar | `reject`. The loop reverts to the last accepted commit (when `git.revert_on_reject` is on; else the commit stays and gets no ok tag) and `reply` says what to fix. Style is not a defect; a wrong reject throws away good work. |
+| Ends with a question | `answer` it using the goal doc's **question policy**. Inject the answer. |
+| Claims "done" or "complete" | Check against the frontier. Usually `done_rejected` + "here is what is still open". |
 | No file changes for 3 iterations | `stuck`. Inject a nudge from the **exhaustion policy**. |
-| Files change but nothing moves (section 6b) | `looping`. Name the loop with its evidence, then force a re-plan, then change the model. |
-| Same error 3 times in a row | `revert` to the last accepted commit, inject "that path is dead, record it as a dead end". |
-| Anything else | `continue`. |
+| Files change but nothing moves (section 6b) | `looping`. Name the loop with its evidence, then (with the planner on) force a re-plan, then change the model. |
+| Same error 3 times in a row | `reject`: "that path is dead, record it as a dead end". |
+| Anything else | `continue`, with `reply` naming the next unit when it is not obvious. |
 
-**Rules fallback.** If the overseer call fails, times out, or returns bad JSON
-twice, a fixed reply applies:
+**The critic writes the plan one sentence at a time.** There is no planner by
+default. The top of the `short` horizon, the highest open gap, the next rung of
+the ladder: the critic picks and says why in the `reply`. When the frontier runs
+dry it proposes the next direction from the mission.
 
-> Decide for yourself. Pick the option that is most reversible. Write your
-> assumption in the record. Continue.
+**The one that judges never writes.** The critic is trustworthy because it has
+no stake in the branch. Housekeeping it wants done -- a record that does not
+link, a wrong impact, a stale frontier -- goes in `fix_first`, and the actor
+does it at the top of its next iteration.
 
-The loop never waits on the overseer either.
+**Rules fallback.** If the critic call fails, times out, or returns bad JSON
+twice, a deterministic critic answers from the signals alone: reject on three
+identical errors, stuck on three unchanged iterations, looping when the detector
+fired, done_rejected on a done claim, answer on a question, otherwise continue.
+`critic: rules` in the config runs only this, with no model call at all.
 
-**Done is never trusted from the actor.** Only the overseer can say
+The loop never waits on the critic either.
+
+**Done is never trusted from the actor.** Only the critic can say
 `done_accepted`, and only when the goal doc's done criteria are met. Even then,
 the goal doc's **exhaustion policy** decides what happens next (section 13).
 
@@ -373,7 +390,7 @@ reachable session (a `--foreground` run, no tmux) calls fall back to headless.
 
 Starts the harness's normal TUI in a tmux pane. Sends the prompt with
 `send-keys`. Polls `capture-pane`. Detects the idle prompt and question
-dialogs with per-harness regexes. Types the overseer's answer.
+dialogs with per-harness regexes. Types the critic's answer.
 
 Use it only when a harness has a feature headless mode does not. It is
 fragile. The design isolates it behind the same `Harness` protocol so the loop
@@ -381,13 +398,12 @@ engine never knows which backend ran.
 
 ### Mixed harnesses
 
-Every role in a mode has its own harness and model:
+Every role has its own harness and model:
 
 ```yaml
 roles:
-  actor:    { harness: claude, model: opus }
-  critic:   { harness: codex,  model: gpt-5-codex }
-  overseer: { harness: claude, model: haiku }
+  actor:  { harness: claude, model: opus }
+  critic: { harness: codex,  model: gpt-5-codex }
 ```
 
 Different harnesses disagree in useful ways. A Codex critic on Claude work is
@@ -415,7 +431,7 @@ limits:
 Rules:
 
 - One **limit board** per run, shared by every role, because limits belong to
-  an account, not to a role. A limit seen by the overseer blocks that harness
+  an account, not to a role. A limit seen by the critic blocks that harness
   for the actor too.
 - A result is classified as `ok | timeout | limit | auth | transient | error`.
   A driver that knows the structured error (Codex `usage_limit_reached`, an
@@ -441,26 +457,32 @@ rules on every Codex call until this landed.
 
 ## 10. Modes
 
-A mode is the set of roles that run per iteration. Three are built:
+Two roles run every iteration; two more can be turned on:
 
-| Mode | Pipeline | Use when |
+| Role | Runs | Off by default? |
 |---|---|---|
-| `single` | actor → overseer | cheap, simple goals; the first night ran this |
-| `actor-critic` | actor → critic → overseer | default for a production repo. A `reject` reverts the iteration and puts `must_fix` at the top of the next prompt. |
-| `council` | actor → critic×N → overseer | high-stakes work. `roles.critic` plus every entry of `config.council`; a majority of rejects rejects, ties accept. |
+| actor | every iteration; writes code, records, and does housekeeping when it is due | no |
+| critic | every iteration; read-only; the whole of section 8 | no (`critic: rules` drops the model call) |
+| maintainer | `maintainer: true`: the reconcile pass as a separate call instead of an actor iteration | yes |
+| planner | `planner: true`: a `Bet:` after each reconcile, folded into the plan view | yes |
 
-The critic runs only when the iteration changed something. It reads with
-read-only tools (`Read, Grep, Glob` for Claude, a read-only sandbox for Codex,
-`read,grep,find,ls` for Pi), returns strict JSON, and fails open: a critic that
-crashes or returns garbage twice counts as `accept`.
+The maintainer and the planner were on for nt1 through ot4 and cost more than
+they moved: up to five model calls per iteration, and a plan that restated itself
+(section 6b). Off, their work does not vanish. Housekeeping becomes an actor
+iteration the critic judges like any other, and the plan becomes one sentence in
+the critic's reply. Turn them back on if the memory rots or the plan drifts.
+
+The critic reads with read-only tools (`Read, Grep, Glob` for Claude, a
+read-only sandbox for Codex, `read,grep,find,ls` for Pi), returns strict JSON,
+and fails to rules, never open: a critic that crashes or returns garbage twice
+is replaced by the deterministic one for that iteration.
 
 ```yaml
-mode: council
+critic: agent
+maintainer: false
+planner: false
 roles:
-  critic: { harness: codex, timeout: 15m }
-council:
-  - { harness: claude, model: sonnet }
-  - { harness: pi, model: openai-codex/gpt-5 }
+  critic: { harness: codex, timeout: 10m, fallback: [{ harness: claude }] }
 ```
 
 Not built, deliberately: `ping-pong` (alternate harnesses per iteration) and
@@ -477,7 +499,7 @@ yet.
   counts a moved HEAD as change.
 - After a `continue`, `answer`, `done_rejected`, or `done_accepted` verdict:
   tag `ouroboros/<run>/ok-<n>`. This is the revert target.
-- After a critic `reject` or an overseer `revert`: revert commits back to the
+- After a `reject`: revert commits back to the
   last `ok-*` tag (never a history rewrite). The reverted diff is saved to
   `runs/<run>/reverted/<n>.patch` so the memory can cite it as a dead end.
 - Reconcile and plan passes commit as `reconcile:` / `plan:` (the agent's own
@@ -501,7 +523,7 @@ stop:
   max_cost_usd: 50        # API-equivalent dollars; see the note below
   max_usage: 0.8          # 0..1 of a subscription window; the meter for a subscription
   until: "2026-09-06T07:30"
-  on_done_accepted: 3     # overseer accepted "done" this many times in a row
+  on_done_accepted: 3     # the critic accepted "done" this many times in a row
   max_stuck: 25           # consecutive `stuck` verdicts; null to never stop
 ```
 
@@ -522,7 +544,7 @@ in one line, and it is why cost is tracked per harness rather than as a total.
 
 Subscription readings are recorded in call order, including failed attempts
 before a fallback switches providers. An earlier actor reading must not overwrite
-later critic, overseer, maintainer, or planner readings. The TUI treats a window
+later critic, maintainer, or planner readings. The TUI treats a window
 whose reset time has passed as **reset · awaiting reading**, until the provider
 reports a fresh window; it does not invent 0% or 100% from the clock or a limit error.
 
@@ -572,7 +594,7 @@ through an interview. Its sections are fixed; `goal.py` parses them:
 ## Exhaustion policy  — creative | maintain | report_done
    - creative:  the planner proposes three directions, picks one, continues
    - maintain:  tests, flakes, docs, refactors, forever
-   - report_done: overseer may accept done; loop idles and polls every idle_interval
+   - report_done: the critic may accept done; loop idles and polls every idle_interval
 ## Quality bar        — what the critic grades against (with Constraints).
 ## Reconcile          — hypergraph only: prose for the maintainer and planner.
 ```
@@ -592,12 +614,12 @@ the actor chain names first, by skill name when installed and inline otherwise.
 | Skill | What it does |
 |---|---|
 | `ouroboros-design` | The interview (built). Reads the repo first. Then asks, in rounds: mission, done criteria as claims, each rung of the horizon ladder, constraints, question policy, exhaustion policy, quality bar, run shape. Refuses to finish until every rung has at least 3 concrete items. Writes the charter `goal.md` and a matching `config.yml`; never the plan. |
-| `ouroboros-checkup` | The check-in (built), for a live run or a finished one. Blockers first, then what landed, **whether the loop is moving or going in circles** (section 6b), the bets the planner changed (so you can overrule), decisions the overseer made for you, critic rejects and reverts, how the frontier moved, what to review hardest, then either a merge recommendation or the one correction worth making mid-run, and charter changes to consider. |
+| `ouroboros-checkup` | The check-in (built), for a live run or a finished one. Blockers first, then what landed, **whether the loop is moving or going in circles** (section 6b), the bets a planner changed (so you can overrule), decisions the critic made for you, rejects and reverts, how the frontier moved, what to review hardest, then either a merge recommendation or the one correction worth making mid-run, and charter changes to consider. |
 | `ouroboros-launch` | Starting one (built). Reads `RUNS.md` and the last digest's notes before anything else, pushes back on a charter criterion no single run can tick, runs `ouroboros preflight`, names the run and its stops, launches, and says what to watch. Most of what wastes a run is decided in the twenty minutes before it starts. |
-| `ouroboros-planner` | Internal. The planner role: one `Bet:` record per pass, folded into the `plan` view (section 20). |
+| `ouroboros-planner` | Internal, optional. The planner role: one `Bet:` record per pass, folded into the `plan` view (section 20). |
 | `ouroboros-actor` | Internal. The role prompt for WORK. Includes the memory adapter's orient and record instructions. |
-| `ouroboros-critic` | Internal. The role prompt for CRITIC. Grades against the quality bar, returns strict JSON. |
-| `ouroboros-overseer` | Internal. The sleeping user. Returns strict JSON (section 8). |
+| `ouroboros-critic` | Internal. The role prompt for CRITIC: the reviewer and the sleeping user. Returns strict JSON (section 8). |
+| `ouroboros-maintainer` | Internal. The reconcile pass. The actor runs it as a housekeeping iteration, or a maintainer role runs it when one is on. |
 
 Role prompts live as skills, not as Python strings, so you can edit them
 without touching code and so a harness can load them natively.
@@ -609,10 +631,11 @@ without touching code and so a harness can load them natively.
   run.yml                    # frozen config + start time + version
   pid                        # the loop's pid; status and stop read it
   loop.log                   # every step, backoff, harness switch, limit wait
-  iterations.jsonl           # one line per step: actor | commit | critique | oversee | revert | reconcile | plan
-  overseer.jsonl             # every decision the overseer made for you (verdict, reason, reply)
+  iterations.jsonl           # one line per step: actor | commit | critique | loop | revert | reconcile | plan
+  critic.jsonl               # every decision the critic made for you (verdict, reason, reply, did, doing, fix_first)
+                             # (runs from before the merge have overseer.jsonl and an `oversee` step; readers accept both)
   status.json                # state, iteration, harness, usage windows, elapsed, last verdict, limit blocks
-  transcripts/NNNN-<role>[-attempt].json   # raw harness output (+ .stderr); roles: actor, critic[N], overseer, maintainer, planner
+  transcripts/NNNN-<role>[-attempt].json   # raw harness output (+ .stderr); roles: actor, housekeeping, critic, maintainer, planner
   reverted/NNNN.patch        # what a revert threw away
   NEEDS_HUMAN.md             # only exists while something needs you (auth failure)
   REPORT.md                  # written by `ouroboros report`
@@ -656,7 +679,7 @@ thread every two seconds. A run strip on top: state, iteration, time in stage,
 elapsed and left with a gradient bar, the harness chain with the active one
 green and limited ones red, a usage row of one meter per window, pid alive;
 the pipeline
-`actor→critic→overseer→maintainer→planner` sits in the strip with the active
+`actor→critic→maintainer→planner` sits in the strip with the active
 stage lit. Below it the default view is chart-first, an overview and not an
 analysis: **iterations** (outcome strip over a braille chart of actor minutes),
 **activity** (harness CPU over time), and **status**. **time by stage**,
@@ -665,7 +688,7 @@ split), **messages**, **plan**, **loop**, **stages** and **log** are off by
 default and reachable through the help. Panels toggle by their superscript
 number.
 
-**status** is what a person actually watches, and it is where the overseer panel
+**status** is what a person actually watches, and it is where the verdict panel
 and the message feed went. They were two panels holding half an answer each --
 one said what was decided, the other said what was being typed, and joining them
 was the reader's job. It carries, top to bottom: the verdict history strip and
@@ -673,8 +696,8 @@ the latest verdict; the pipeline with the stage lit and how long it has been
 held; the last three verdicts, one line each, newest last, with the newest one's
 reply under it; and then the rows that are the point of it:
 
-    last     the unit that finished    (one sentence, written by the overseer)
-    current  the unit now running      (one sentence, written by the overseer)
+    last     the unit that finished    (one sentence, written by the critic)
+    current  the unit now running      (one sentence, written by the critic)
              the newest line the running agent said or ran
 
 The verdict list is capped at three so the summaries get the room: they wrap into
@@ -683,10 +706,10 @@ both are long, and the raw line holds the bottom row. A blank row sits between t
 list and `LAST` and between `LAST` and `CURRENT`, and the labels are the loud ones
 on the panel; when the panel is short the verdict rows go before the blank ones.
 
-`did` and `doing` are two extra fields on the overseer's JSON verdict
-(`roles/overseer.py`). The overseer writes them because it is the only role that
-runs every iteration, sees the actor's whole output, and is cheap; nothing in the
-engine branches on them, and when the overseer is `rules` the panel falls back to
+`did` and `doing` are two extra fields on the critic's JSON verdict
+(`roles/critic.py`). The critic writes them because it is the role that runs
+every iteration and sees the actor's whole output; nothing in the engine
+branches on them, and when the critic is `rules` the panel falls back to
 the reason and the reply, which are always there. When the panel is short the
 verdict list is the first thing given up and the summaries the last. Details: **stages** (the pipeline with the active stage lit and
 per-stage run counts, last, average, total durations from `iterations.jsonl`),
@@ -696,18 +719,18 @@ iteration), **load** (a braille chart of the harness process tree's CPU, procs
 and RSS, loadavg, limit blocks), **messages** (the newest
 transcript tailed live: assistant text, tool calls with the command or path,
 errors, the result line; `o` shows tool output too; Claude stream-json, Codex
-and Pi event lines all parse), **overseer** (a history strip of one dot per
-verdict -- green for an iteration that went through, red for one that hit
-something: `stuck`, `revert`, or a `done` the overseer rejected -- then the
-last verdict with its reason and reply. Six lettered glyphs asked a reader to
-decode a legend at a glance, which is the one thing a glance cannot do; the
-only question the strip answers is whether the run is moving), **plan · short** (the `short` plan node's items, read from the
+and Pi event lines all parse), the verdict history strip inside **status** (one
+dot per verdict -- green for an iteration that went through, red for one that hit
+something: `stuck`, `looping`, `reject`, or a `done` the critic rejected. Six
+lettered glyphs asked a reader to decode a legend at a glance, which is the one
+thing a glance cannot do; the only question the strip answers is whether the run
+is moving), **plan · short** (the `short` plan node's items, read from the
 hypergraph plan view or the handoff plan file), and **loop.log**. For the feed
 to be live the headless backend streams each call's stdout to the transcript
 file line by line, and Claude runs with `stream-json` in every backend.
 
 `ouroboros report` renders the run into `REPORT.md`: bets changed, the plan as
-it stands, verdict counts, the decisions the overseer made for you, cost.
+it stands, verdict counts, the decisions the critic made for you, cost.
 
 ## 16. Config
 
@@ -719,16 +742,15 @@ run: run                    # branch ouroboros/<run>, run dir .ouroboros/runs/<r
 goal: .ouroboros/goal.md    # the charter
 memory: auto                # auto | hypergraph | handoff
 backend: headless           # headless | tmux (one window per harness call)
-mode: single                # single | actor-critic | council
-overseer: agent             # agent | rules
+critic: agent               # agent | rules (rules: the deterministic fallback only, no model call)
+maintainer: false           # true: the reconcile pass is a separate call, not an actor iteration
+planner: false              # true: a planner writes bets after each reconcile; off, the critic's reply names the next unit
 idle_interval: 30m          # sleep after done_accepted under report_done
 roles:                      # each role: harness, model, timeout, resume_for, fallback
   actor:      { harness: claude, model: null, timeout: 45m, resume_for: 1, fallback: [] }
-  overseer:   { harness: claude, model: haiku, timeout: 3m }
-  maintainer: { harness: claude, timeout: 20m }
-  planner:    { harness: claude, timeout: 20m }
-  critic:     { harness: claude, timeout: 15m }
-council: []                 # extra critics in council mode: [{harness, model}]
+  critic:     { harness: claude, timeout: 10m }
+  maintainer: { harness: claude, timeout: 20m }   # only called with maintainer: true
+  planner:    { harness: claude, timeout: 20m }   # only called with planner: true
 git:
   branch: null              # -> ouroboros/<run>
   tag_on_accept: true
@@ -745,7 +767,7 @@ stop:                       # all optional; none set = run until killed
 handoff:
   recent: 3                 # handoff files shown to the actor
 hypergraph:
-  reconcile_every: 5        # maintainer pass after this many worked iterations
+  reconcile_every: 5        # housekeeping is due after this many worked iterations
   pressure: 3               # ...or at this many unreconciled record nodes
   budget_units: 1           # dispatch budget per iteration
 limits:
@@ -753,8 +775,7 @@ limits:
   max_cooldown: 3h
   transient_strikes: 3      # 429/overloaded errors in a row that count as a limit
   reserve: {}               # harness -> 0..1: stop using it at this much of a long window
-plan:
-  enabled: null             # null = on; false turns the planner and plan view off
+plan:                       # only with planner: true
   every: 5                  # handoff repos: planner pass every N worked iterations
   view: plan                # the hypergraph view name
   md: PLAN.md               # its rendered snapshot
@@ -772,8 +793,8 @@ loop:                       # motion-without-progress detection (section 6b)
 A fallback is `{ harness: codex, model: null }`; the chain is the role's own
 harness first, then its fallbacks in order (section 9).
 
-CLI flags override config: `--run-name --for --max-iterations --max-cost --mode
---harness --model --allow-dirty --overseer --memory --foreground`.
+CLI flags override config: `--run-name --for --max-iterations --max-cost
+--harness --model --allow-dirty --critic --maintainer --planner --memory --foreground`.
 
 ## 17. Repo layout
 
@@ -795,7 +816,7 @@ ouroboros/
     memory/
       base.py  hypergraph.py  handoff.py   # orient/record prompts, verify, reconcile, plan view, planner prompt
     roles/
-      actor.py  critic.py  overseer.py     # prompt assembly, JSON parsing, rules fallback, council
+      actor.py  critic.py                  # prompt assembly, JSON parsing, the rules critic
     gitguard.py             # branch, commit, tag, diff, revert_to
     budget.py               # BudgetClock, backoff table
     recorder.py             # jsonl, status.json, loop.log, NEEDS_HUMAN.md
@@ -804,10 +825,10 @@ ouroboros/
     tmux.py                 # the run session: launch, kill
     tui/                    # the status TUI: theme, widgets, layout (from vllmtop), state (run-dir reader), panels, app
     skills/                 # packaged with the wheel; `ouroboros skills install` copies them out
-      ouroboros-actor/  ouroboros-critic/  ouroboros-overseer/  ouroboros-maintainer/
+      ouroboros-actor/  ouroboros-critic/  ouroboros-maintainer/
       ouroboros-planner/  ouroboros-design/  ouroboros-launch/  ouroboros-checkup/   (each SKILL.md)
-  tests/                    # 104 tests; fake_harness.py scripts actors, critics, overseers
-    test_engine.py test_pool.py test_critic.py test_goal.py test_overseer.py
+  tests/                    # 290 tests; fake_harness.py scripts actors and critics
+    test_engine.py test_pool.py test_critic.py test_goal.py
     test_memory_handoff.py test_memory_hypergraph.py (needs the hypergraph CLI)
     test_claude_parse.py test_drivers_parse.py test_headless.py test_backend_tmux.py (needs tmux)
     test_gitguard.py test_recorder.py test_config.py test_history.py test_operator.py
@@ -828,11 +849,14 @@ harness depends on skill discovery.
 3. **Hypergraph adapter.** Orient / dispatch / record / reconcile mapping.
    Directive node per charter version. `check` after commit.
 4. **Codex and Pi drivers.** Fallback chains and the limit board.
-5. **Critic + modes.** `actor-critic`, `council`, revert on reject, tags.
+5. **Critic.** Revert on reject, tags. (Modes and the council were built, then removed when the critic and the overseer became one role.)
 6. **Skills.** `ouroboros-design` interview, `ouroboros-launch` start, `ouroboros-checkup` report.
 7. **tmux backend.** One window per call.
 8. **Charter and plan** (section 20): gaps from criteria, the plan view, the
-   planner role, the overseer on the frontier.
+   planner role, the critic on the frontier.
+9. **Two roles** (2026-09-09): the critic and the overseer merged into one
+   read-only call; the maintainer and the planner off by default, housekeeping
+   as an actor iteration.
 
 ## 19. Open questions, resolved
 
@@ -842,7 +866,7 @@ harness depends on skill discovery.
    `api-equivalent` and no price table exists. Time and iterations are the
    real caps.
 2. **Reject means revert.** Decided: on (`git.revert_on_reject`). A critic
-   reject reverts the iteration and the next actor starts from `must_fix`.
+   reject reverts the iteration and the next actor starts from the `reply`.
 3. **Skills for Codex and Pi.** Decided: the role prompt text is inlined in
    every loop call; `skills install` copies the same folders into each
    harness's skill directory for interactive use, and `ouroboros design` runs
@@ -882,8 +906,8 @@ charter version; Ouroboros mints a new directive record for it.
 | Grain | Size | Where it lives | Who writes it |
 |---|---|---|---|
 | Unit | one iteration | the dispatch record node of the iteration | actor |
-| Gap | several units | open, broken, blocked state nodes on the frontier | maintainer, from declared impacts |
-| Bet | a direction | `Bet:` decision records, folded into the `plan` view (`short`, `medium`, `long`) | planner |
+| Gap | several units | open, broken, blocked state nodes on the frontier | the reconcile pass (actor housekeeping, or a maintainer), from declared impacts |
+| Bet | a direction | `Bet:` decision records, folded into the `plan` view (`short`, `medium`, `long`); or, with the planner off, one sentence in the critic's reply | planner, or the critic |
 | Mission | the whole | the charter | human |
 
 Grains are sizes, not times (decided 2026-09-06 before nt2). Agents have no
@@ -909,8 +933,9 @@ medium, month and year to long.
    `plan/NEW short`, `plan/NEW medium`, `plan/NEW long`, one per ladder rung.
    Each node's `## Current` is the ranked plan at that grain, with citations.
    The `short` node holds the next two or three units, never a task list.
-3. **The planner writes bets.** A planner pass runs right after every maintainer
-   pass (about every five iterations), and after a `done_accepted` verdict. It
+3. **The planner writes bets** (when it is on; off by default since 2026-09-09,
+   the critic's reply carries the next unit). A planner pass runs right after
+   every reconcile (about every five iterations), and after a `done_accepted` verdict. It
    reads the charter, `STATE.md`, `PLAN.md`, the pending plan impacts, and the
    night's record nodes. It writes exactly one `Bet:` decision record whose
    impacts target the plan view, then, as the plan view's single writer, folds
@@ -920,10 +945,10 @@ medium, month and year to long.
 4. **Single writer per view.** The maintainer writes the state graph and never
    the plan view. The planner writes the plan view and never the state graph.
    Actors write neither.
-5. **The overseer reads the frontier and the plan,** not the checklist. "Done"
+5. **The critic reads the frontier and the plan,** not the checklist. "Done"
    means no charter-derived gap is open.
 6. **The check-in leads with the bets the planner changed this run,** each with its
-   why, then the current `PLAN.md`, then the decisions the overseer made for
+   why, then the current `PLAN.md`, then the decisions the critic made for
    you.
 
 ### Planner authority

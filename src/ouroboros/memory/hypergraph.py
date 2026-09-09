@@ -231,7 +231,7 @@ class HypergraphMemory(BaseMemory):
                 f"{goal_text.strip()}\n\n**Done criteria as gaps** (one open state node each; work closes them through "
                 f"declared impacts):\n\n{gap_lines}{dropped_text}\n\n"
                 f"## Method\n\nOuroboros iterations on branch `{branch}`: orient, one dispatched unit, record, commit; "
-                "a maintainer pass reconciles on pressure; a planner pass writes bets after each reconcile.\n\n"
+                "a reconcile pass folds the tail on pressure; with the planner on, a bet follows each reconcile.\n\n"
                 "## Result\n\nDirective recorded. Work follows as child nodes.\n"
             )
             impacts = [
@@ -403,7 +403,7 @@ class HypergraphMemory(BaseMemory):
             "or a frontier node (open / broken / blocked) in STATE.md that serves it. Say which in `## Why`.\n\n"
             "**Forbidden in a work iteration, no exceptions:** the hypergraph-reconcile skill, `hypergraph update`, "
             "`hypergraph new state`, `hypergraph views add`, editing anything under `.hypergraph/graph/state/`, "
-            "editing STATE.md. You are a contributor: you record; a separate maintainer pass reconciles. If the "
+            "editing STATE.md. You are a contributor: you record; a separate reconcile pass folds the tail. If the "
             "tail looks fat, say so in `## Result` and keep working. Even when the done criteria are met, the "
             "next unit is a rung of the horizon ladder, never a reconcile.",
         ]
@@ -417,7 +417,7 @@ class HypergraphMemory(BaseMemory):
         plan = self.plan_text()
         if plan:
             parts.append("## Plan (agent-owned bets: short / medium / long)\n\nPick this iteration's unit from `short` unless the "
-                         "overseer's message or a broken frontier node says otherwise.\n\n" + plan)
+                         "critic's message or a broken frontier node says otherwise.\n\n" + plan)
         count, out = self.unreconciled()
         parts.append(f"## Unreconciled tail ({count} node(s))\n\n```\n{out.strip()[-4000:]}\n```")
         recent = self.record_files()[-self.recent :]
@@ -478,7 +478,7 @@ class HypergraphMemory(BaseMemory):
     def plan_md_text(self) -> str:
         return self.plan_md.read_text().strip() if self.plan_md.exists() else ""
 
-    def overseer_context(self) -> str:
+    def critic_context(self) -> str:
         parts = []
         if self.state_md.exists():
             frontier = frontier_of(self.state_md.read_text())

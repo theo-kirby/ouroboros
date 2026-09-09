@@ -16,7 +16,7 @@ from fake_harness import (FakeHarness, asks_question, claims_done, crashes, no_r
 
 
 def make_engine(repo: Path, harness: FakeHarness, *, max_iterations=5, resume_for=1, sleeps=None,
-                overseer=None, goal_text=None, stop=None, planner=None):
+                critic=None, goal_text=None, stop=None, planner=None):
     cfg = Config(run="t", stop=stop or StopConfig(max_iterations=max_iterations))
     cfg.roles["actor"].resume_for = resume_for
     git_ = GitGuard(repo, cfg.branch)
@@ -30,8 +30,9 @@ def make_engine(repo: Path, harness: FakeHarness, *, max_iterations=5, resume_fo
         if len(sleeps) > 50:  # a real run would keep going; a test must fail loudly
             raise KeyboardInterrupt("too many backoffs in a test")
 
-    kw = {"overseer": overseer} if overseer is not None else {}
-    # a planner of its own, so actor scripts are not consumed by planner passes
+    kw = {"critic": critic} if critic is not None else {}
+    # a planner of its own, so actor scripts are not consumed by planner passes; the
+    # planner role itself is off unless a test turns `cfg.planner` on
     kw["planner"] = planner if planner is not None else FakeHarness([], default=nothing())
     eng = Engine(config=cfg, repo=repo, harness=harness, memory=mem, git=git_, recorder=rec,
                  budget=BudgetClock(cfg.stop), sleeper=fake_sleep,
@@ -130,7 +131,7 @@ def test_same_error_three_times_reverts_to_last_ok(repo):
     eng = make_engine(repo, h, max_iterations=4)
     eng.run()
     verdicts = [o.verdict.verdict for o in eng.outcomes]
-    assert verdicts[3] == "revert"
+    assert verdicts[3] == "reject"
     # failed iterations make no commits, so there was nothing to revert and no patch to save
     assert not (repo / ".ouroboros" / "runs" / "t" / "reverted" / "0004.patch").exists()
     # the tree matches the last accepted tag
@@ -151,7 +152,7 @@ def test_status_and_logs_written(repo):
     rd = repo / ".ouroboros" / "runs" / "t"
     st = eng.recorder.read_status()
     assert st["state"] == "stopped" and st["iteration"] == 1
-    assert (rd / "iterations.jsonl").exists() and (rd / "overseer.jsonl").exists()
+    assert (rd / "iterations.jsonl").exists() and (rd / "critic.jsonl").exists()
     assert (rd / "transcripts").is_dir()
 
 
@@ -243,6 +244,7 @@ def test_handoff_planner_runs_every_n_iterations(repo: Path):
     planner = FakeHarness([], default=plans)
     h = FakeHarness([works()] * 4)
     eng = make_engine(repo, h, max_iterations=4, planner=planner)
+    eng.config.planner = True
     eng.config.plan.every = 2
     eng.run()
     assert len(planner.prompts) == 2 and "You are the planner" in planner.prompts[0]
@@ -253,18 +255,61 @@ def test_handoff_planner_runs_every_n_iterations(repo: Path):
     assert "unit A" in h.prompts[2]                          # the actor reads the plan next iteration
 
 
-def test_plan_disabled_skips_planner(repo: Path):
+def test_planner_is_off_by_default(repo: Path):
     planner = FakeHarness([], default=nothing())
     eng = make_engine(repo, FakeHarness([works()] * 2), max_iterations=2, planner=planner)
-    eng.config.plan.enabled = False
     eng.config.plan.every = 1
     eng.run()
     assert planner.prompts == []
 
 
+def test_maintainer_is_off_by_default_and_the_actor_does_housekeeping(repo: Path, monkeypatch):
+    """With no maintainer role, a due reconcile becomes the actor's next iteration."""
+    actor = FakeHarness([], default=works())
+    eng = make_engine(repo, actor, max_iterations=3)
+    maintainer = FakeHarness([], default=nothing())
+    eng.maintainer = maintainer
+    due = {"n": 1}
+    monkeypatch.setattr(eng.memory, "needs_reconcile", lambda: due["n"] > 0)
+    monkeypatch.setattr(eng.memory, "reconcile_prompt", lambda: "You are the maintainer for one reconcile pass")
+    done = []
+    monkeypatch.setattr(eng.memory, "mark_reconciled", lambda: (done.append(True), due.update(n=0)))
+    eng.run()
+    assert maintainer.prompts == []
+    assert actor.prompts[0].startswith("You are the maintainer")           # iteration 1 was housekeeping
+    assert "You are one iteration" in actor.prompts[1]                      # then back to work
+    assert done == [True]
+    assert eng.outcomes[0].housekeeping and not eng.outcomes[1].housekeeping
+    steps = eng.recorder.read_jsonl(eng.recorder.iterations)
+    assert [s.get("housekeeping") for s in steps if s.get("step") == "commit"] == [True, None, None]
+    assert eng.outcomes[0].verdict.verdict == "continue" and "handoff" not in eng.outcomes[0].verdict.reply
+
+
+def test_housekeeping_never_runs_two_iterations_in_a_row(repo: Path, monkeypatch):
+    actor = FakeHarness([], default=works())
+    eng = make_engine(repo, actor, max_iterations=4)
+    monkeypatch.setattr(eng.memory, "needs_reconcile", lambda: True)       # never satisfied
+    monkeypatch.setattr(eng.memory, "reconcile_prompt", lambda: "You are the maintainer for one reconcile pass")
+    eng.run()
+    assert [p.startswith("You are the maintainer") for p in actor.prompts] == [True, False, True, False]
+
+
+def test_a_separate_maintainer_when_turned_on(repo: Path, monkeypatch):
+    actor = FakeHarness([], default=works())
+    eng = make_engine(repo, actor, max_iterations=2)
+    eng.config.maintainer = True
+    maintainer = FakeHarness([], default=nothing())
+    eng.maintainer = maintainer
+    monkeypatch.setattr(eng.memory, "needs_reconcile", lambda: True)
+    monkeypatch.setattr(eng.memory, "reconcile_prompt", lambda: "reconcile")
+    eng.run()
+    assert len(maintainer.prompts) == 2 and all("You are one iteration" in p for p in actor.prompts)
+
+
 @pytest.mark.parametrize("own_commit", [False, True])
 def test_noop_reconcile_does_not_create_marker_commit(repo, monkeypatch, own_commit):
     eng = make_engine(repo, FakeHarness([]))
+    eng.config.maintainer = True
     def maintain(cwd, prompt):
         if own_commit:
             (cwd / "maintained.txt").write_text("reconciled")
@@ -298,6 +343,7 @@ def test_newer_planner_usage_is_not_overwritten_by_actor(repo):
 
     eng = make_engine(repo, FakeHarness([actor]), max_iterations=1,
                       planner=FakeHarness([planner]))
+    eng.config.planner = True
     eng.config.plan.every = 1
     eng.run()
     assert eng.budget.usage.latest['claude'].windows['five_hour'].utilization == .96
@@ -314,9 +360,9 @@ def test_unchanged_iterations_do_not_schedule_bookkeeping(repo, monkeypatch):
 
 
 def test_stuck_verdicts_slow_down(repo):
-    # An actor that changes nothing: the rules overseer calls it stuck from the third
-    # iteration on. Repeating that at full speed still pays for a critic, maintainer,
-    # planner and overseer call every time, so the streak has to back off.
+    # An actor that changes nothing: the rules critic calls it stuck from the third
+    # iteration on. Repeating that at full speed still pays for a critic call every
+    # time, so the streak has to back off.
     h = FakeHarness([], default=nothing())
     sleeps = []
     eng = make_engine(repo, h, max_iterations=7, sleeps=sleeps)
@@ -411,6 +457,7 @@ def test_a_loop_forces_a_planner_pass_that_is_told_not_to_repeat_itself(repo):
     planner = FakeHarness([], default=nothing())
     h = FakeHarness([], default=records_only())
     eng = make_engine(repo, h, max_iterations=6, planner=planner)
+    eng.config.planner = True
     eng.config.loop = LoopConfig(product_after=1, frontier_after=None, escalate_every=1)
     eng.loops.cfg = eng.config.loop
     eng.run()

@@ -22,7 +22,7 @@ def run_dir(repo: Path, name: str, *, steps: list[dict], decisions: list[dict] =
     d = repo / ".ouroboros" / "runs" / name
     (d / "transcripts").mkdir(parents=True, exist_ok=True)
     (d / "iterations.jsonl").write_text("".join(json.dumps(s) + "\n" for s in steps))
-    (d / "overseer.jsonl").write_text("".join(json.dumps(s) + "\n" for s in decisions))
+    (d / "critic.jsonl").write_text("".join(json.dumps(s) + "\n" for s in decisions))
     (d / "run.yml").write_text("run: x\nstarted: 2026-09-08T17:30:00\n")
     (d / "status.json").write_text(json.dumps({
         "ts": "2026-09-09T06:47:49+00:00", "state": "killed", "elapsed_s": 67138,

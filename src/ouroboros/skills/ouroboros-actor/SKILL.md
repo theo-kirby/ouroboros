@@ -30,7 +30,7 @@ Ouroboros runs you again and again, without a human watching. You are iteration
 
 {orient}
 
-## Message from the overseer
+## Message from the critic
 
 {injected}
 

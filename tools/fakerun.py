@@ -4,7 +4,7 @@
 Each scenario is a whole self-contained fake repo under `.ouroboros/synthetic/`, which
 is gitignored. It gets its own `.git` (so `repo_root()` stops there), its own config,
 STATE.md and PLAN.md, and a run directory with the same files a real run writes:
-status.json, iterations.jsonl, overseer.jsonl, loop.log and transcripts.
+status.json, iterations.jsonl, critic.jsonl, loop.log and transcripts.
 
     python tools/fakerun.py                 # build every scenario
     python tools/fakerun.py night           # build one
@@ -82,9 +82,9 @@ SAID = [
     "No change needed. The behaviour the critic flagged is the documented one, and the test that "
     "looked wrong is asserting the documented case.",
 ]
-# The two sentences the overseer writes for the monitor's `last` and `current` rows.
+# The two sentences the critic writes for the monitor's `last` and `current` rows.
 # They are the whole reading a person gets at a glance, so the synthetic ones have to
-# be the shape a real overseer would write: one clause, a thing named, no role words.
+# be the shape a real critic would write: one clause, a thing named, no role words.
 FINISHED = [
     "Added the 25T horn to the library from the manufacturer STEP, with its tooth count measured.",
     "Keyed the tessellation cache on the placement hash, so a reload cannot share a mesh.",
@@ -202,7 +202,7 @@ class Voice:
     def critic_ok(self):  return self._pick(CRITIC_OK, 240)
     def critic_no(self):  return self._pick(CRITIC_NO, 240)
     def must_fix(self):   return self._pick(MUST_FIX, 200)
-    def overseer(self):   return self._pick(OVERSEER_WHY, 160)
+    def why(self):        return self._pick(OVERSEER_WHY, 160)
     def finished(self):   return self._pick(FINISHED, 160)
     def starting(self):   return self._pick(STARTING, 160)
     def bet(self):        return self._pick(BETS, 90)
@@ -236,15 +236,12 @@ def slug(rng) -> str:
 # --------------------------------------------------------------------------- scenarios
 def scenario(name: str) -> dict:
     """Everything that differs between scenarios, in one place."""
-    common = dict(run=name, branch=f"ouroboros/{name}", mode="actor-critic", state="work",
+    common = dict(run=name, branch=f"ouroboros/{name}", state="work",
                   stop_after_s=15 * 3600, iterations=40, limited={}, needs_human=None,
                   reverts=(), timeouts=(), gaps=(6, 14), plan_items=4, alive=True, hostile=False,
                   actor_median_s=360,
                   roles={"actor": [("claude", MODELS["claude"]), ("codex", MODELS["codex"])],
-                         "critic": [("codex", MODELS["codex"])],
-                         "overseer": [("claude", "claude-opus-5"), ("codex", MODELS["codex"])],
-                         "maintainer": [("claude", MODELS["claude"]), ("codex", MODELS["codex"])],
-                         "planner": [("claude", MODELS["claude"]), ("codex", MODELS["codex"])]},
+                         "critic": [("codex", MODELS["codex"]), ("claude", "claude-opus-5")]},
                   usage={"claude": (0.18, 0.41), "codex": (0.09, 0.22)})
     if name == "night":
         # No `elapsed_s`: the night is as long as its own iterations took, which is the
@@ -318,9 +315,9 @@ def write_repo(root: Path, spec: dict, rng, v: Voice) -> None:
         for r, c in spec["roles"].items())
     (root / ".ouroboros").mkdir(exist_ok=True)
     (root / ".ouroboros" / "config.yml").write_text(
-        f"run: {spec['run']}\nmode: {spec['mode']}\nmemory: auto\nbackend: headless\n"
+        f"run: {spec['run']}\nmemory: auto\nbackend: headless\ncritic: agent\nmaintainer: false\nplanner: false\n"
         f"roles:\n{roles_yaml}\nstop:\n  after: 15h\n  max_usage: 0.8\n"
-        f"plan:\n  enabled: true\n  every: 5\n  md: PLAN.md\n")
+        f"plan:\n  every: 5\n  md: PLAN.md\n")
     # `gaps_total` and `gaps_unchecked` are counted off the charter's done criteria,
     # so the goal file needs real ones or the frontier panel reads zero.
     closed = total - open_gaps
@@ -389,36 +386,30 @@ def write_run(run_dir: Path, spec: dict, rng, v: Voice) -> None:
             logged.append((clock, f"harness: claude -> codex ({MODELS['codex']})"))
 
         clock += rng.uniform(1.0, 4.0)
+        # Every sixth iteration is the actor's housekeeping turn: the reconcile pass,
+        # run as an iteration, so it shows in the history like any other.
+        housekeeping = n % 6 == 0 and not slow
         events.append((clock, {"iteration": n, "step": "commit", "sha": sha(rng),
-                               "changed": not slow, "recorded": not slow and not reverted, "cost": cost}))
-        clock += rng.uniform(18.0, 75.0)
-        events.append((clock, {"iteration": n, "step": "critique", "verdict": "reject" if reverted else "accept",
-                               "source": "critic:codex",
-                               "reasons": v.critic_no() if reverted else v.critic_ok(),
-                               "must_fix": v.must_fix() if reverted else None, "cost": 0.0}))
+                               "changed": not slow, "recorded": not slow and not reverted and not housekeeping,
+                               "cost": cost, **({"housekeeping": True} if housekeeping else {})}))
+        # One critic call per iteration: it grades the diff and writes the next prompt.
+        clock += rng.uniform(22.0, 95.0)
+        ov = "reject" if reverted else ("stuck" if n % 97 == 0 else ("answer" if n % 41 == 0 else "continue"))
+        reason = v.critic_no() if reverted else v.why()
+        events.append((clock, {"iteration": n, "step": "critique", "verdict": ov, "source": "critic:codex",
+                               "reason": reason, "cost": 0.0}))
+        decisions.append((clock, {"iteration": n, "verdict": ov, "reason": reason,
+                                  "reply": v.must_fix() if reverted else (v.reply() if ov == "answer" else ""),
+                                  "did": v.finished(), "doing": v.starting(),
+                                  "fix_first": "" if n % 13 else "Record `quiet-reef` cites a state slug that does not exist; fix the impact line.",
+                                  "source": "critic:codex"}))
         if reverted:
             logged.append((clock, f"[{n}] critic rejected: {v.must_fix()}"))
-        clock += rng.uniform(4.0, 22.0)
-        ov = "revert" if reverted else ("stuck" if n % 97 == 0 else ("answer" if n % 41 == 0 else "continue"))
-        events.append((clock, {"iteration": n, "step": "oversee", "verdict": ov, "source": "agent",
-                               "reason": v.overseer()}))
-        decisions.append((clock, {"iteration": n, "verdict": ov, "reason": v.overseer(),
-                                  "reply": v.reply() if ov == "answer" else "", "overseer": "agent",
-                                  "did": v.finished(), "doing": v.starting(),
-                                  "cost": round(rng.uniform(0.0, 0.4), 4)}))
         if reverted:
             clock += rng.uniform(2.0, 12.0)
             events.append((clock, {"iteration": n, "step": "revert",
                                    "to": f"ouroboros/{spec['run']}/ok-{n - 1:04d}", "sha": sha(rng)}))
             (run_dir / "reverted" / f"{n:04d}.patch").write_text("diff --git a/x b/x\n" + v.blurb(400))
-        if n % 5 == 0:
-            clock += rng.uniform(45.0, 150.0)
-            events.append((clock, {"iteration": n, "step": "reconcile", "exit": 0, "timed_out": False,
-                                   "sha": sha(rng), "cost": round(rng.uniform(0.3, 2.0), 4)}))
-            clock += rng.uniform(120.0, 330.0)
-            events.append((clock, {"iteration": n, "step": "plan", "why": "after reconcile",
-                                   "bet": f"{slug(rng)} — Bet: {v.bet()}", "exit": 0, "timed_out": False,
-                                   "sha": sha(rng), "cost": round(rng.uniform(0.5, 3.0), 4)}))
         logged.append((clock, f"[{n}] commit {sha(rng)}  changed={not slow}  recorded={not slow and not reverted}"))
 
     # A scenario that names its wall clock has the timeline scaled onto it, shape kept.
@@ -430,7 +421,7 @@ def write_run(run_dir: Path, spec: dict, rng, v: Voice) -> None:
     log = [f"{ts((c * scale) - elapsed)} {line}" for c, line in logged]
 
     (run_dir / "iterations.jsonl").write_text("".join(json.dumps(s) + "\n" for s in steps))
-    (run_dir / "overseer.jsonl").write_text("".join(json.dumps(d) + "\n" for d in decisions))
+    (run_dir / "critic.jsonl").write_text("".join(json.dumps(d) + "\n" for d in decisions))
     (run_dir / "loop.log").write_text("\n".join(log[-400:]) + "\n")
     if spec["needs_human"]:
         (run_dir / "NEEDS_HUMAN.md").write_text(f"# Needs a human\n\n{ts(0)}\n\n{spec['needs_human']}\n")
@@ -530,19 +521,19 @@ def tick(name: str) -> None:
     run_dir = HOME / name / ".ouroboros" / "runs" / spec["run"]
     status = json.loads((run_dir / "status.json").read_text())
     n = int(status.get("iteration", 0)) + 1
-    stage = rng.choice(["work", "critique", "oversee", "reconcile", "plan"])
+    stage = rng.choice(["work", "critique", "critique"])
     cost = round(rng.uniform(0.2, 4.0), 4)
     with (run_dir / "iterations.jsonl").open("a") as f:
         f.write(json.dumps({"ts": ts(0), "iteration": n, "step": "actor", "attempt": 0, "exit": 0,
                             "timed_out": False, "turns": rng.randint(3, 40)}) + "\n")
         f.write(json.dumps({"ts": ts(0), "iteration": n, "step": "commit", "sha": sha(rng),
                             "changed": True, "recorded": True, "cost": cost}) + "\n")
-        f.write(json.dumps({"ts": ts(0), "iteration": n, "step": "oversee", "verdict": "continue",
-                            "source": "agent", "reason": v.overseer()}) + "\n")
-    with (run_dir / "overseer.jsonl").open("a") as f:
-        f.write(json.dumps({"ts": ts(0), "iteration": n, "verdict": "continue", "reason": v.overseer(),
-                            "reply": "", "did": v.finished(), "doing": v.starting(),
-                            "overseer": "agent", "cost": 0.1}) + "\n")
+        f.write(json.dumps({"ts": ts(0), "iteration": n, "step": "critique", "verdict": "continue",
+                            "source": "critic:codex", "reason": v.why(), "cost": 0.1}) + "\n")
+    with (run_dir / "critic.jsonl").open("a") as f:
+        f.write(json.dumps({"ts": ts(0), "iteration": n, "verdict": "continue", "reason": v.why(),
+                            "reply": "", "did": v.finished(), "doing": v.starting(), "fix_first": "",
+                            "source": "critic:codex"}) + "\n")
     with (run_dir / "loop.log").open("a") as f:
         f.write(f"{ts(0)} [{n}] actor: exit=0, turns={rng.randint(3, 40)}\n")
     # Usage only ever climbs, which is the point of the meter.

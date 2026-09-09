@@ -58,15 +58,15 @@ the user to correct it. Never accept a vague answer; ask for the concrete versio
 5. **Question policy.** How to decide when nobody answers. Reversible over
    irreversible; smallest unit in the highest-ranked open item; code wins over
    docs; what to do with pre-existing failures; "never wait for a human".
-6. **Exhaustion policy.** `creative` (the planner proposes new directions),
+6. **Exhaustion policy.** `creative` (the critic names new directions),
    `maintain` (tests, flakes, docs, refactors forever), or `report_done` (idle and
-   poll). Explain that with the planner on, `creative` is the default behaviour of
-   an empty frontier anyway.
+   poll). Explain that `creative` is the default behaviour of an empty frontier
+   anyway.
 7. **Quality bar.** What the critic grades against: gates, commit shape, record
    node rules, doc-with-code rules.
-8. **Run shape.** Duration (`stop.after`), harness chain and fallbacks, mode
-   (`single`, `actor-critic`, `council`), overseer model, planner on or off, memory
-   (`auto` picks hypergraph when the repo has it).
+8. **Run shape.** Duration (`stop.after`), harness chain and fallbacks for the
+   actor and the critic, whether a separate maintainer or planner is on (both off
+   by default), memory (`auto` picks hypergraph when the repo has it).
 
 ## Write the files
 
@@ -80,17 +80,14 @@ the user to correct it. Never accept a vague answer; ask for the concrete versio
 ```yaml
 run: nt2
 memory: auto
-mode: actor-critic
-overseer: agent
+critic: agent            # rules: no model behind the critic
+maintainer: false        # true: a separate maintainer call instead of actor housekeeping
+planner: false           # true: a separate planner writes bets; off, the critic's reply names the next unit
 roles:
-  actor:      { harness: claude, timeout: 90m, fallback: [{ harness: codex }] }
-  critic:     { harness: codex, timeout: 15m }
-  overseer:   { harness: claude, model: haiku, timeout: 5m, fallback: [{ harness: codex }] }
-  maintainer: { harness: claude, timeout: 30m, fallback: [{ harness: codex }] }
-  planner:    { harness: claude, timeout: 20m, fallback: [{ harness: codex }] }
+  actor:  { harness: claude, timeout: 90m, fallback: [{ harness: codex }] }
+  critic: { harness: codex, timeout: 10m, fallback: [{ harness: claude }] }
 stop: { after: 10h, max_usage: 0.8 }   # 0.8 = stop at 80% of a subscription's weekly window
-hypergraph: { reconcile_every: 5, pressure: 3, budget_units: 1 }
-plan: { enabled: true, every: 5, max_new_directions: 1 }   # new directions per planner pass
+hypergraph: { reconcile_every: 5, pressure: 3, budget_units: 1 }   # when housekeeping is due
 ```
 
 - Read both files back to the user in full. Then say: `ouroboros run` starts it,

@@ -27,7 +27,7 @@ RUN_STRIP_H = 8
 # default answer the three questions a run raises, in the order they get asked: is it
 # moving, will the subscription last, and what is actually happening right now.
 #
-# `status` is the answer to the third and it is where the overseer panel and the
+# `status` is the answer to the third and it is where the verdict panel and the
 # message feed went. They were two panels saying half a thing each -- what was decided,
 # and what was being typed -- and joining them was left to the reader. The raw feed is
 # still here as panel 6 for when you want to watch a transcript on purpose.
@@ -36,7 +36,7 @@ DEFAULT_ON = {"iterations", "activity", "status"}
 VIEW = col(
     row(leaf("iterations", 1), leaf("activity", 1), weight=10),
     row(leaf("time", 1), leaf("frontier", 1), weight=6),
-    # 12 of the 22 the default view weighs: what the overseer panel and the feed held
+    # 12 of the 22 the default view weighs: what the verdict panel and the feed held
     # between them, in one box. min_h is 2 borders + history + stage + the summaries
     # with their spacing (STATUS_SPACED).
     leaf("status", weight=12, min_h=9),
@@ -185,10 +185,10 @@ class App:
             "  h / ?      this help",
             "",
             "  status history: ● ran clean (continue, answer, done accepted)",
-            "                  ● blocked (stuck, revert, done rejected)",
+            "                  ● blocked (stuck, looping, reject, done rejected)",
             "",
-            "  status rows: last     the unit that finished (the overseer wrote it)",
-            "               current  the unit now running (the overseer wrote it)",
+            "  status rows: last     the unit that finished (the critic wrote it)",
+            "               current  the unit now running (the critic wrote it)",
             "                        the newest line from the agent itself",
             "",
             "press any key to close",

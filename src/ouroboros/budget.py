@@ -70,9 +70,9 @@ class BudgetClock:
         if s.until_dt is not None and datetime.fromtimestamp(self.now()) >= s.until_dt:
             return f"until {s.until} reached"
         if s.on_done_accepted is not None and self.done_streak >= s.on_done_accepted:
-            return f"overseer accepted done {self.done_streak}x in a row"
+            return f"critic accepted done {self.done_streak}x in a row"
         if s.max_stuck is not None and self.stuck_streak >= s.max_stuck:
-            return f"overseer called the loop stuck {self.stuck_streak}x in a row"
+            return f"critic called the loop stuck {self.stuck_streak}x in a row"
         return None
 
 
