@@ -84,16 +84,22 @@ Edit `.ouroboros/config.yml`:
 ouroboros run --for 24h
 ```
 
-It detaches into tmux. Confirm it is really alive before you tell the user it
-is:
+If you are inside a tmux session (you usually are: the user opened one to talk
+to you in), the loop opens as a new window of that session, `ouroboros-<run>`,
+beside this one. Nothing changes in your window. `--own-session` puts it in a
+detached session of its own instead, and a bare terminal always does that.
+
+Confirm it is really alive before you tell the user it is:
 
 ```
 ouroboros status
 ```
 
-Then tell them, in three lines: what it will work on, when it stops, and what to
-run to look at it (`ouroboros top`, or `ouroboros status`, or the
-`ouroboros-checkup` skill in the morning).
+Then tell them, in three lines: what it will work on, when it stops, and where
+to look. The place to look is another window of this same session running
+`ouroboros top`; `ouroboros status` is the one-shot version, and the
+`ouroboros-checkup` skill is for the morning. You stay here: they can ask you how
+it is going at any time, and you answer from the run directory, not from memory.
 
 ## While it runs
 

@@ -68,18 +68,25 @@ from the logs.
 
 **3. Pre-flight, then launch.**
 
+    ouroboros preflight
     ouroboros run --for 24h
 
 `run` refuses a dirty tree, so `git status` first -- untracked directories count.
 Check the harnesses are authenticated and their usage windows have room; a
 subscription window that is nearly full will stall the run rather than fail it.
 
+Started from inside a tmux session -- yours, where the human is talking to you --
+the loop takes a new window of that session, named `ouroboros-<run>`, and you
+both stay where you are. Tell the human to open another window for
+`ouroboros top`. From a bare terminal, or with `--own-session`, it gets a
+detached session of its own instead.
+
 **4. While it runs**, do not touch the files the loop is working in. A charter
 edit applies at the *next* run start, not this one. To watch:
 
     ouroboros status          # one shot
-    ouroboros top             # the live view
-    tmux attach -t <session>  # the loop's own output
+    ouroboros top             # the live view, in a window of its own
+    <prefix> n                # tmux: the loop's own log is the next window over
 
 **5. Reading it.** Use the `ouroboros-checkup` skill. It works mid-run and after,
 and it leads with the question the numbers hide: is this moving, or going in

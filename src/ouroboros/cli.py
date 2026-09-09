@@ -244,13 +244,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         if not tmux.available():
             print("tmux not found; running in the foreground", file=sys.stderr)
         else:
-            name = tmux.session_name(cfg.run)
-            if tmux.session_exists(name):
-                print(f"tmux session {name} already exists. attach: tmux attach -t {name}")
-                return 1
-            tmux.launch(name, [sys.argv[0], *sys.argv[1:]], str(repo))
-            print(f"started in tmux session {name}\n  attach:  tmux attach -t {name}\n  status:  ouroboros status\n  stop:    ouroboros stop")
-            return 0
+            return _launch_in_tmux(cfg, repo, own_session=bool(getattr(args, "own_session", False)))
 
     git = GitGuard(repo, cfg.branch)
     try:
@@ -337,6 +331,61 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _launch_in_tmux(cfg: Config, repo: Path, *, own_session: bool) -> int:
+    """Put the loop in tmux: a window of the session we are in, or a session of its own.
+
+    The window is the default when there is a session to put it in, because that
+    session is usually the operator's -- an agent and a human already talking about
+    this run -- and the run belongs beside them, not in a session they have to go
+    and find. `ouroboros stop` reads the note left here to know which one to kill.
+    """
+    rd = run_dir_for(repo, cfg.run)
+    pid, alive = _pid_alive(rd)
+    if alive:
+        print(f"run {cfg.run!r} is already running (pid {pid}). watch: ouroboros top   stop: ouroboros stop")
+        return 1
+    argv = [sys.argv[0], *sys.argv[1:]]
+    here = None if own_session else tmux.current_session()
+    if here:
+        target = tmux.launch_window(here, tmux.window_name(cfg.run), argv, str(repo))
+        _tmux_note(rd, "window", target)
+        print(f"started in window {tmux.window_name(cfg.run)} of this tmux session ({here})\n"
+              f"  watch:   ouroboros top      (open another window for it)\n"
+              f"  status:  ouroboros status\n  stop:    ouroboros stop")
+        return 0
+    name = tmux.session_name(cfg.run)
+    if tmux.session_exists(name):
+        print(f"tmux session {name} already exists. attach: tmux attach -t {name}")
+        return 1
+    tmux.launch(name, argv, str(repo))
+    _tmux_note(rd, "session", name)
+    print(f"started in tmux session {name}\n  attach:  tmux attach -t {name}\n  status:  ouroboros status\n  stop:    ouroboros stop")
+    return 0
+
+
+def _tmux_note(run_dir: Path, kind: str, target: str) -> None:
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "tmux").write_text(f"{kind} {target}\n")
+
+
+def _tmux_target(run_dir: Path) -> tuple[str, str] | None:
+    """('window', 'sess:@3') or ('session', 'ouroboros-x'), as `run` left it; None if unknown."""
+    path = run_dir / "tmux"
+    if not path.exists():
+        return None
+    kind, _, target = path.read_text().strip().partition(" ")
+    return (kind, target) if kind in ("window", "session") and target else None
+
+
+def _tmux_kill(cfg: Config, run_dir: Path) -> None:
+    """Take down whatever `run` put in tmux. Never the operator's own session."""
+    note = _tmux_target(run_dir)
+    if note and note[0] == "window":
+        tmux.kill_window(note[1])
+    else:
+        tmux.kill(tmux.session_name(cfg.run))
+
+
 def _archive(repo: Path, cfg: Config, run_dir: Path) -> None:
     """Write the run's durable record. Never let a failure here lose the run.
 
@@ -371,7 +420,7 @@ def cmd_stop(args: argparse.Namespace) -> int:
     pid, alive = _pid_alive(rd)
     if not alive:
         print(f"run {cfg.run!r} is not running")
-        tmux.kill(tmux.session_name(cfg.run))
+        _tmux_kill(cfg, rd)
         _archive(repo, cfg, rd)
         return 0
     os.kill(pid, signal.SIGTERM)
@@ -381,7 +430,7 @@ def cmd_stop(args: argparse.Namespace) -> int:
             break
     else:
         os.kill(pid, signal.SIGKILL)
-    tmux.kill(tmux.session_name(cfg.run))
+    _tmux_kill(cfg, rd)
     print(f"stopped run {cfg.run!r} (pid {pid})")
     _archive(repo, cfg, rd)
     return 0
@@ -622,6 +671,8 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--planner", action="store_true", default=None, help="a separate planner role (default: the critic's reply names the next unit)")
     r.add_argument("--memory", choices=["auto", "hypergraph", "handoff"])
     r.add_argument("--foreground", action="store_true", help="do not wrap in tmux")
+    r.add_argument("--own-session", action="store_true",
+                   help="a detached tmux session of its own, even when started from inside a tmux session")
     r.set_defaults(fn=cmd_run)
 
     s = sub.add_parser("status", parents=[common], help="show the current state (--watch: the live TUI)")

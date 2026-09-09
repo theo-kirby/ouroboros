@@ -24,7 +24,7 @@ From the repo you want the agents to work on:
 ```bash
 ouroboros init                 # create the config and goal template
 ouroboros design               # work through your goal with an agent
-ouroboros run --for 8h         # start in tmux
+ouroboros run --for 8h         # a tmux window beside you, or its own session (--own-session)
 ouroboros top                 # watch progress
 ouroboros stop                # stop early if needed
 ouroboros report              # write a run report

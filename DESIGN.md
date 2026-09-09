@@ -43,9 +43,9 @@ ouroboros skills install      # → ./.claude/skills, ./.agents/skills, ./.pi/sk
                               #   --user → ~/.claude, ~/.codex, ~/.pi/agent (those present) and ~/.agents
 ouroboros init                # → .ouroboros/config.yml + goal.md (the charter)
 ouroboros design              # the charter interview, in claude, codex, or pi (--harness)
-ouroboros run --for 10h       # preflight (git, charter filled in, logins), then tmux session ouroboros-<run>
+ouroboros run --for 10h       # preflight (git, charter filled in, logins), then a tmux window beside you (or a session: --own-session)
 ouroboros status --watch      # the live TUI (also `ouroboros top`); --plain for the text loop
-ouroboros stop                # SIGTERM the loop and its children, then the tmux session
+ouroboros stop                # SIGTERM the loop and its children, then the tmux window or session it took
 ouroboros report              # REPORT.md: bets, plan, verdicts, cost
 ```
 
@@ -668,9 +668,14 @@ The delta is measured against the charter at the merge base.
 `plan`, `backoff` (with `why` and `seconds`), `idle`, `stopped`, `killed`.
 `limited` lists blocked harnesses with the minutes left.
 
-tmux layout when you attach: pane 1 is the loop log, pane 2 shows
-`ouroboros status --watch`. With `backend: tmux`, each harness call also opens
-its own window while it runs.
+Where the loop lives in tmux: started from inside a session -- the operator's,
+where an agent and a human are already talking about the run -- it takes a new
+window of that session, `ouroboros-<run>`, and they open another for `ouroboros
+top`. From a bare terminal, or with `--own-session`, it gets a detached session
+of its own: pane 1 the loop log, pane 2 `ouroboros status --watch`. `run` notes
+which in `runs/<run>/tmux`, so `stop` kills the window and never the operator's
+session. With `backend: tmux`, each harness call also opens its own window in
+that session while it runs.
 
 **The status TUI** (`ouroboros status --watch` on a terminal, or `ouroboros top`)
 is a btop-style curses monitor in `tui/`, ported from the author's vllmtop. It

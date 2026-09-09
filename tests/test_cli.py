@@ -1,4 +1,5 @@
 import pytest
+import sys
 
 from ouroboros import cli
 from ouroboros.cli import main
@@ -163,3 +164,48 @@ def test_preflight_reports_logins(tmp_path, monkeypatch, capsys):
     assert "codex: Logged in" in capsys.readouterr().err
     monkeypatch.setattr(cli.login, "check_roles", lambda chains: ([], ["claude: logged in as t"]))
     assert cli.preflight(cfg, tmp_path) is None
+
+
+# -- where the loop lives in tmux -------------------------------------------
+
+def test_run_takes_a_window_of_the_session_it_is_started_from(tmp_path, monkeypatch, capsys):
+    from ouroboros import cli, tmux
+    from ouroboros.config import Config
+    calls = []
+    monkeypatch.setattr(tmux, "current_session", lambda: "cadxot5")
+    monkeypatch.setattr(tmux, "launch_window", lambda s, w, argv, cwd: (calls.append(("window", s, w)), "cadxot5:@7")[1])
+    monkeypatch.setattr(tmux, "launch", lambda n, argv, cwd: calls.append(("session", n)))
+    monkeypatch.setattr(sys, "argv", ["ouroboros", "run", "--for", "24h"])
+    cfg = Config(run="ot5")
+    assert cli._launch_in_tmux(cfg, tmp_path, own_session=False) == 0
+    assert calls == [("window", "cadxot5", "ouroboros-ot5")]
+    assert cli._tmux_target(tmp_path / ".ouroboros" / "runs" / "ot5") == ("window", "cadxot5:@7")
+    assert "window ouroboros-ot5 of this tmux session (cadxot5)" in capsys.readouterr().out
+
+
+def test_run_gets_its_own_session_outside_tmux_or_on_request(tmp_path, monkeypatch, capsys):
+    from ouroboros import cli, tmux
+    from ouroboros.config import Config
+    calls = []
+    monkeypatch.setattr(tmux, "current_session", lambda: "cadxot5")
+    monkeypatch.setattr(tmux, "session_exists", lambda n: False)
+    monkeypatch.setattr(tmux, "launch", lambda n, argv, cwd: calls.append(n))
+    monkeypatch.setattr(sys, "argv", ["ouroboros", "run"])
+    assert cli._launch_in_tmux(Config(run="ot5"), tmp_path, own_session=True) == 0
+    monkeypatch.setattr(tmux, "current_session", lambda: None)
+    assert cli._launch_in_tmux(Config(run="ot6"), tmp_path, own_session=False) == 0
+    assert calls == ["ouroboros-ot5", "ouroboros-ot6"]
+    assert cli._tmux_target(tmp_path / ".ouroboros" / "runs" / "ot6") == ("session", "ouroboros-ot6")
+
+
+def test_stop_kills_the_window_it_took_and_never_the_operators_session(tmp_path, monkeypatch):
+    from ouroboros import cli, tmux
+    from ouroboros.config import Config
+    killed = []
+    monkeypatch.setattr(tmux, "kill_window", lambda t: killed.append(("window", t)))
+    monkeypatch.setattr(tmux, "kill", lambda n: killed.append(("session", n)))
+    rd = tmp_path / "r"
+    cli._tmux_note(rd, "window", "cadxot5:@7")
+    cli._tmux_kill(Config(run="ot5"), rd)
+    cli._tmux_kill(Config(run="old"), tmp_path / "nothing-here")   # a run from before the note existed
+    assert killed == [("window", "cadxot5:@7"), ("session", "ouroboros-old")]
