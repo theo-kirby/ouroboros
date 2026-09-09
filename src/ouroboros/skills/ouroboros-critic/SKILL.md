@@ -41,6 +41,11 @@ Return exactly one JSON object and nothing else:
   wrong accept is caught by the next gate. Be strict about *progress* instead.
 - **Read what the diff touches** if the actor's message and the diff disagree.
   You have read-only tools for that. Do not read the whole repository.
+- **A TODO, a stub, or a partial unit is a defect.** The actor's constraints forbid
+  them. A unit that says "later" did not land; reject it and name the line.
+- **A deviation with a written reason is not a defect.** The actor may do something
+  other than what your last reply asked, if the record says what and why. Judge the
+  reason. Reject only when the reason is missing or the deviation broke a constraint.
 
 ## Steering the loop
 

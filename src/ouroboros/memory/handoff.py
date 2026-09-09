@@ -135,7 +135,9 @@ class HandoffMemory(BaseMemory):
         return (
             f"When the unit is finished, and before you stop, you MUST:\n"
             f"1. Write `{path}` with these headings: `## Did`, `## Learned`, `## Assumed`, `## Next`.\n"
-            f"   Keep it under 40 lines. `## Next` names one concrete unit for the next iteration.\n"
+            f"   Keep it under 40 lines. `## Did` says what landed and, if you did not do what the critic's "
+            f"message asked, what you did instead and why. `## Assumed` carries every assumption, concern, and "
+            f"new dependency with its reason. `## Next` names one concrete unit for the next iteration.\n"
             f"2. Append one block to `{self._rel(self.journal)}`: a line `## Iteration -> {path}` "
             f"followed by a 1-3 line summary.\n"
             f"3. Update `{self._rel(self.plan)}` if the plan changed.\n"
