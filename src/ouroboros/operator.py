@@ -81,8 +81,10 @@ both stay where you are. Tell the human to open another window for
 `ouroboros top`. From a bare terminal, or with `--own-session`, it gets a
 detached session of its own instead.
 
-**4. While it runs**, do not touch the files the loop is working in. A charter
-edit applies at the *next* run start, not this one. To watch:
+**4. While it runs**, do not touch the files the loop is working in. An operator charter
+edit applies at the next iteration boundary; the current actor and critic finish
+under their original charter. Save edits atomically and check loop.log for
+"charter reloaded". Config changes still require a restart. To watch:
 
     ouroboros status          # one shot
     ouroboros top             # the live view, in a window of its own

@@ -899,12 +899,39 @@ The goal splits into two layers with different owners.
 
 | Layer | Owner | Changes | Lives in |
 |---|---|---|---|
-| **Charter** | the human | only between runs, by editing `goal.md` | `.ouroboros/goal.md`: mission, constraints, question policy, quality bar, exhaustion policy, done criteria, first horizon ladder |
+| **Charter** | the human | at iteration boundaries, by editing `goal.md` | `.ouroboros/goal.md`: mission, constraints, question policy, quality bar, exhaustion policy, done criteria, first horizon ladder |
 | **Plan** | the agents | every few iterations | the hypergraph: open state nodes (gaps), `Bet:` decision records, and a `plan` view rendered to `PLAN.md` |
 
 No agent role may edit the charter. An agent that can edit the criteria can
 meet the criteria by editing. The human overrules the agents by writing a new
 charter version; Ouroboros mints a new directive record for it.
+
+### Live charter edits (2026-09-12)
+
+The operator requested steering an active Cadex run toward its new dashboard
+without stopping training or restarting the loop for every instruction. The CLI
+now passes the configured charter path to the engine. Before each iteration it
+reads that file and adopts changed, nonempty UTF-8 content. Save edits atomically
+(for example, write a temporary file then rename it) so an intermediate editor
+write cannot become a directive. Config, models, stop limits and the run timer
+are not reloaded.
+
+An actor and its critic share one charter version: edits during a call wait until
+the next iteration, rather than changing the standard halfway through review.
+Reload updates memory (including the existing versioned Hypergraph directive),
+the actor and critic, and the planner's memory context; it clears model-session
+continuation and tells the actor to reconsider the prior next-unit handoff while
+retaining applicable correctness fixes. A `goal_reload` iteration event records
+the old/new SHA-256 values and the log identifies the adoption boundary. Empty,
+missing or unreadable files keep the prior charter. Failed directive registration
+also keeps the prior version and retries at the next boundary. Existing gap
+versioning remains responsible for added/dropped criteria; reload does not write
+state nodes or reset iteration counts or budgets.
+
+This runs between complete iterations, not inside an active harness call or a
+limit wait. A process launched with older runner code needs one restart to acquire
+this capability. Agent roles still may not edit the target project's charter;
+the human/operator owns live edits as well as initial authoring.
 
 ### Four grains of goal
 

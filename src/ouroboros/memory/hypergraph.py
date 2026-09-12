@@ -218,7 +218,7 @@ class HypergraphMemory(BaseMemory):
             dropped = [(n, c) for n, c in known.items() if n not in {g for g, _ in gaps}]
             gap_lines = "\n".join(f"- [gap] {n}: {c}" for n, c in gaps) or "- (none declared)"
             supersedes = (
-                f"\n\nThis directive supersedes `{previous}`: the operator edited the charter and restarted the run."
+                f"\n\nThis directive supersedes `{previous}`: the operator edited the charter; this version applies at a run start or iteration boundary."
                 if previous else ""
             )
             dropped_text = (

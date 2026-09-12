@@ -313,7 +313,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     engine = Engine(
         config=cfg, repo=repo, harness=pools["actor"], memory=memory, critic=critic,
-        git=git, recorder=recorder, budget=BudgetClock(cfg.stop), goal_text=goal_text,
+        git=git, recorder=recorder, budget=BudgetClock(cfg.stop), goal_text=goal_text, goal_path=goal_path,
         maintainer=pools.get("maintainer"), planner=pools.get("planner"),
     )
     # a re-run of the same run name continues where the last one stopped

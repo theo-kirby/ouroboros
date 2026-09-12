@@ -314,3 +314,20 @@ def test_engine_runs_planner_after_reconcile(hg_repo):
     assert [p["iteration"] for p in plan_steps] == [1, 3] and plan_steps[0]["why"] == "after reconcile"
     assert "Bet: README" in plan_steps[0]["bet"]
     assert git(hg_repo, "status", "--porcelain") == ""
+
+
+def test_live_charter_revision_reuses_memory_and_records_once(hg_repo):
+    mem = HypergraphMemory(hg_repo)
+    kw = dict(run="live", run_dir=hg_repo / ".ouroboros/runs/live", branch="ouroboros/live")
+    mem.start(goal_text=GOAL_WITH_GAPS, **kw)
+    old = mem.directive_slug
+    revised = GOAL_WITH_GAPS + "\nUse the dashboard while experiments run.\n"
+    mem.start(goal_text=revised, **kw)
+    assert mem.goal_text == revised
+    assert mem.directive_slug != old
+    body = mem.read_record(mem.directive_slug)
+    assert f"supersedes `{old}`" in body
+    assert "NEW gap-" not in body
+    files = mem.record_files()
+    mem.start(goal_text=revised, **kw)
+    assert mem.record_files() == files

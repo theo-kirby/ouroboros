@@ -9,6 +9,7 @@ but are off unless the config turns them on.
 from __future__ import annotations
 
 import time
+import hashlib
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -81,6 +82,7 @@ class Engine:
     planner: Harness | None = None      # only called when config.planner is on
     sleeper: Sleeper = time.sleep
     goal_text: str = ""
+    goal_path: Path | None = None  # supplied by CLI; read only at iteration boundaries
     # loop state
     iteration: int = 0
     injected: str | None = None
@@ -138,6 +140,7 @@ class Engine:
 
     # ------------------------------------------------------------------
     def step(self) -> IterationOutcome:
+        self._reload_goal()
         self.iteration += 1
         n = self.iteration
         role = self.config.role("actor")
@@ -311,6 +314,51 @@ class Engine:
         return out
 
     # ------------------------------------------------------------------
+    def _reload_goal(self) -> None:
+        """Adopt operator edits for the next complete actor/critic pair.
+
+        Never interrupt a running harness. Failed reads or directive writes retain
+        the previous charter and retry on the next iteration boundary.
+        """
+        if self.goal_path is None:
+            return
+        try:
+            candidate = self.goal_path.read_text(encoding="utf-8")
+            if not candidate.strip():
+                self.recorder.log("charter reload deferred: goal is empty; keeping previous version")
+                return
+            if candidate == self.goal_text:
+                return
+        except (OSError, UnicodeError) as exc:
+            self.recorder.log(f"charter reload deferred: {exc!r}; keeping previous version")
+            return
+        old_directive = getattr(self.memory, "directive_slug", None)
+        try:
+            # Existing adapters version directives by content and avoid duplicate gaps.
+            self.memory.start(run=self.config.run, goal_text=candidate,
+                              run_dir=self.recorder.run_dir, branch=self.git.branch)
+        except Exception as exc:
+            if hasattr(self.memory, "goal_text"):
+                self.memory.goal_text = self.goal_text
+            if hasattr(self.memory, "directive_slug"):
+                self.memory.directive_slug = old_directive
+            self.recorder.log(f"charter reload deferred: {exc!r}; keeping previous version")
+            return
+        previous = hashlib.sha256(self.goal_text.encode()).hexdigest()
+        self.goal_text = candidate
+        if hasattr(self.critic, "goal_text"):
+            self.critic.goal_text = candidate
+        self.session_id, self.session_uses = None, 0
+        self.forced_plan = None
+        notice = ("The operator revised the charter. Follow the current charter above. "
+                  "Reconsider the previous next-unit recommendation against it; preserve "
+                  "unresolved correctness fixes that still apply. Previous handoff:\n")
+        self.injected = notice + (self.injected or "(none)")
+        digest = hashlib.sha256(candidate.encode()).hexdigest()
+        self.recorder.step(iteration=self.iteration + 1, step="goal_reload",
+                           previous_sha256=previous, sha256=digest)
+        self.recorder.log(f"charter reloaded before iteration {self.iteration + 1}: {digest[:12]}")
+
     def _escalate(self, n: int, loop, verdict: Verdict) -> None:
         """Name the loop, then force a re-plan, then change the model.
 
