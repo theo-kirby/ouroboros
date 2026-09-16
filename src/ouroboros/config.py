@@ -143,6 +143,39 @@ class PlanConfig(BaseModel):
     max_new_directions: int = 1   # per planner pass, not per run
 
 
+# What the reporter pushes without a model: each is a fact read straight off the
+# run directory, so it still fires when every model is out of usage.
+TRIGGERS = ("needs_human", "stopped", "limited", "stuck", "looping", "engine_error", "silent",
+            "done_accepted", "reject")
+DEFAULT_TRIGGERS = tuple(t for t in TRIGGERS if t != "reject")   # a reject is routine; the digest counts them
+
+
+class ReportConfig(BaseModel):
+    """The reporter: an observer outside the loop that pushes to a phone (DESIGN.md section 15).
+
+    `ouroboros watch` reads the run directory and never the loop, so the loop cannot
+    tell whether it exists. `roles.reporter` names the harness that writes the digests.
+    """
+    notify: str = "auto"              # auto | pushover | none; auto: pushover when its credentials are set
+    every: str | None = "4h"          # a model-written digest this often; null: only on triggers
+    on: list[str] = Field(default_factory=lambda: list(DEFAULT_TRIGGERS))
+    silent_after: str = "2h"          # status.json this stale while the run says it is working: the run is stuck or dead
+    poll: str = "30s"                 # how often the reporter reads the run directory
+    max_chars: int = 1000             # a push notification's size; Pushover takes 1024
+
+    @property
+    def every_seconds(self) -> float | None:
+        return parse_duration(self.every)
+
+    @property
+    def silent_after_seconds(self) -> float:
+        return parse_duration(self.silent_after) or 7200.0
+
+    @property
+    def poll_seconds(self) -> float:
+        return parse_duration(self.poll) or 30.0
+
+
 class Config(BaseModel):
     run: str = "run"
     goal: str = ".ouroboros/goal.md"
@@ -165,6 +198,7 @@ class Config(BaseModel):
             "critic": RoleConfig(timeout="10m"),
             "maintainer": RoleConfig(timeout="20m"),
             "planner": RoleConfig(timeout="20m"),
+            "reporter": RoleConfig(timeout="10m"),   # the digest writer; not in the pipeline
         }
     )
     git: GitConfig = Field(default_factory=GitConfig)
@@ -174,6 +208,7 @@ class Config(BaseModel):
     limits: LimitConfig = Field(default_factory=LimitConfig)
     plan: PlanConfig = Field(default_factory=PlanConfig)
     loop: LoopConfig = Field(default_factory=LoopConfig)
+    report: ReportConfig = Field(default_factory=ReportConfig)
 
     @property
     def branch(self) -> str:

@@ -28,6 +28,7 @@ ouroboros run --for 8h         # a tmux window beside you, or its own session (-
 ouroboros top                 # watch progress
 ouroboros stop                # stop early if needed
 ouroboros report              # write a run report
+ouroboros watch               # push alerts and a 4-hourly digest to your phone (run starts it for you)
 ```
 
 Start with a clean working tree and a completed goal. Run `ouroboros` with
@@ -66,6 +67,24 @@ for Claude Code and Codex, dollars for a harness on an API key. `max_usage` is a
 fraction of a subscription's **weekly** window, because a five-hour window refills
 on its own and the fallback covers the wait. `ouroboros status` and the report show
 where each window sits and how far the run moved it.
+
+## On your phone
+
+`ouroboros watch` is a reporter outside the loop: it reads the run directory,
+never the loop, and pushes to [Pushover](https://pushover.net). Put your user key
+and an application token in `.env`, `.ouroboros/.env`, or `~/.ouroboros/.env`:
+
+```
+PO_USER=...     # your user key
+PO_TOKEN=...    # an application token from pushover.net/apps/build
+```
+
+`ouroboros run` then starts the reporter beside the loop. It pushes fixed-text
+alerts the moment they show in the files -- the run stopped, a harness ran out of
+usage, `NEEDS_HUMAN.md` appeared, the critic called it stuck, the process died --
+and a model-written digest every four hours and when the run ends: what landed,
+what is next, what is broken, the numbers. Tune it under `report:` in the config.
+`ouroboros watch --test` checks the phone; `--once` sends a digest now.
 
 ## Memory and review
 

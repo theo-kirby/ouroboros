@@ -90,6 +90,11 @@ under their original charter. Save edits atomically and check loop.log for
     ouroboros top             # the live view, in a window of its own
     <prefix> n                # tmux: the loop's own log is the next window over
 
+If Pushover credentials are in a `.env` (repo, `.ouroboros/`, or `~/.ouroboros/`),
+`run` also starts `ouroboros watch` in a window of its own: a reporter outside
+the loop that pushes alerts and a four-hourly digest to the human's phone.
+`ouroboros watch --test` proves the phone is reachable.
+
 **5. Reading it.** Use the `ouroboros-checkup` skill. It works mid-run and after,
 and it leads with the question the numbers hide: is this moving, or going in
 circles?

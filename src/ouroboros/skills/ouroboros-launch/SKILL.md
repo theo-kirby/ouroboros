@@ -101,6 +101,11 @@ to look. The place to look is another window of this same session running
 `ouroboros-checkup` skill is for the morning. You stay here: they can ask you how
 it is going at any time, and you answer from the run directory, not from memory.
 
+`run` prints a `reporter:` line. If it says the reporter is on, the user gets
+alerts and a digest on their phone and needs no reminder to check in. If it says
+off for want of credentials, tell them once: `PO_USER` and `PO_TOKEN` in `.env`
+(this repo, `.ouroboros/`, or `~/.ouroboros/`), then `ouroboros watch --test`.
+
 ## While it runs
 
 Do not edit files the loop is working in. A charter edit applies at the next run

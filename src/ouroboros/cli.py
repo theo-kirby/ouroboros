@@ -1,4 +1,4 @@
-"""ouroboros: init | run | status | report | skills install."""
+"""ouroboros: init | run | status | watch | report | skills install."""
 
 from __future__ import annotations
 
@@ -29,8 +29,9 @@ from .harness.backend_headless import kill_active
 from .harness.pool import LimitBoard, PooledHarness
 from .memory import make_memory
 from .memory.handoff import HandoffMemory
-from . import operator
+from . import notify, operator
 from .recorder import Recorder
+from . import watch as watcher
 from .roles.critic import AgentCritic, RulesCritic
 
 GOAL_TEMPLATE = """# Goal: {name}
@@ -352,6 +353,7 @@ def _launch_in_tmux(cfg: Config, repo: Path, *, own_session: bool) -> int:
         print(f"started in window {tmux.window_name(cfg.run)} of this tmux session ({here})\n"
               f"  watch:   ouroboros top      (open another window for it)\n"
               f"  status:  ouroboros status\n  stop:    ouroboros stop")
+        _launch_reporter(cfg, repo, here, argv[0])
         return 0
     name = tmux.session_name(cfg.run)
     if tmux.session_exists(name):
@@ -360,7 +362,40 @@ def _launch_in_tmux(cfg: Config, repo: Path, *, own_session: bool) -> int:
     tmux.launch(name, argv, str(repo))
     _tmux_note(rd, "session", name)
     print(f"started in tmux session {name}\n  attach:  tmux attach -t {name}\n  status:  ouroboros status\n  stop:    ouroboros stop")
+    _launch_reporter(cfg, repo, name, argv[0])
     return 0
+
+
+def _launch_reporter(cfg: Config, repo: Path, session: str, binary: str) -> None:
+    """The reporter in a window of its own, beside the loop, when it has somewhere to push to.
+
+    It is a separate process on purpose: it reads the run directory and never the
+    loop, so nothing it does -- crash, hang, run out of usage -- reaches the run.
+    """
+    channel, why = reporter_channel(cfg, repo)
+    if channel is None:
+        print(f"  reporter: off ({why})")
+        return
+    rd = run_dir_for(repo, cfg.run)
+    pid = reporter_alive(rd)
+    if pid:
+        print(f"  reporter: already watching (pid {pid})")
+        return
+    argv = [binary, "watch", "--run-name", cfg.run]
+    try:
+        target = tmux.launch_window(session, tmux.window_name(cfg.run) + "-watch", argv, str(repo))
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"  reporter: could not start ({exc}); run `ouroboros watch` yourself", file=sys.stderr)
+        return
+    (rd / "tmux-watch").write_text(f"window {target}\n")
+    cadence = f"a digest every {cfg.report.every}" if cfg.report.every else "digests on milestones only"
+    print(f"  reporter: {channel.name}, {cadence}, alerts on {', '.join(cfg.report.on)}")
+
+
+def reporter_channel(cfg: Config, repo: Path):
+    """(notifier, why): where the reporter pushes, from config and the .env files."""
+    env = notify.load_env(notify.env_files(repo))
+    return notify.make_notifier(cfg.report.notify, env)
 
 
 def _tmux_note(run_dir: Path, kind: str, target: str) -> None:
@@ -379,11 +414,44 @@ def _tmux_target(run_dir: Path) -> tuple[str, str] | None:
 
 def _tmux_kill(cfg: Config, run_dir: Path) -> None:
     """Take down whatever `run` put in tmux. Never the operator's own session."""
+    _stop_reporter(run_dir)
     note = _tmux_target(run_dir)
     if note and note[0] == "window":
         tmux.kill_window(note[1])
     else:
         tmux.kill(tmux.session_name(cfg.run))
+
+
+def reporter_alive(run_dir: Path) -> int | None:
+    """The pid of a reporter already watching this run, or None. Two would push everything twice."""
+    try:
+        pid = int((run_dir / "watch.pid").read_text().strip())
+        os.kill(pid, 0)
+        return pid
+    except (OSError, ValueError):
+        return None
+
+
+def _stop_reporter(run_dir: Path) -> None:
+    """SIGTERM the reporter and give it a moment: its last push says the run stopped."""
+    pf = run_dir / "watch.pid"
+    try:
+        pid = int(pf.read_text().strip())
+        os.kill(pid, signal.SIGTERM)
+    except (OSError, ValueError):
+        pid = None
+    if pid is not None:
+        for _ in range(120):   # a final digest is one model call; wait up to 30s, then move on
+            time.sleep(0.25)
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                break
+    note = run_dir / "tmux-watch"
+    if note.exists():
+        kind, _, target = note.read_text().strip().partition(" ")
+        if kind == "window" and target:
+            tmux.kill_window(target)
 
 
 def _archive(repo: Path, cfg: Config, run_dir: Path) -> None:
@@ -624,6 +692,78 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_watch(args: argparse.Namespace) -> int:
+    """The reporter: observe the run directory, push to the phone. Not part of the loop."""
+    repo = repo_root()
+    cfg = load_config(args, repo)
+    rd = run_dir_for(repo, cfg.run)
+    pid = reporter_alive(rd)
+    if pid and not (args.once or args.test):
+        print(f"a reporter is already watching run {cfg.run!r} (pid {pid}). "
+              f"stop it with `kill {pid}`, or use --once for a report now", file=sys.stderr)
+        return 1
+    channel, why = reporter_channel(cfg, repo)
+    if channel is None and not getattr(args, "console", False):
+        print(f"ouroboros watch: {why}", file=sys.stderr)
+        print("  put PO_USER and PO_TOKEN in .env (this repo), .ouroboros/.env, or ~/.ouroboros/.env,"
+              " or pass --console to print instead", file=sys.stderr)
+        return 2
+    if getattr(args, "console", False):
+        channel = notify.Console()
+    if args.test:
+        ok = channel.send(f"{cfg.run}: test", "Ouroboros can reach this phone.", priority=0)
+        print(f"{channel.name}: {'sent' if ok else 'FAILED'}")
+        return 0 if ok else 1
+    if not args.foreground and not args.once and tmux.available() and not tmux.inside_ouroboros_tmux():
+        here = tmux.current_session()
+        if here:
+            argv = [sys.argv[0], "watch", "--run-name", cfg.run, *(["--console"] if getattr(args, "console", False) else [])]
+            target = tmux.launch_window(here, tmux.window_name(cfg.run) + "-watch", argv, str(repo))
+            rd.mkdir(parents=True, exist_ok=True)
+            (rd / "tmux-watch").write_text(f"window {target}\n")
+            print(f"reporter started in window {tmux.window_name(cfg.run)}-watch of this tmux session ({here})")
+            return 0
+    role = cfg.role("reporter")
+
+    def say(line: str) -> None:   # flushed: the window it runs in is the only log it keeps
+        try:
+            print(f"{datetime.now().isoformat(timespec='seconds')} {line}", flush=True)
+        except (OSError, ValueError):
+            pass
+
+    reporter = watcher.AgentReporter(role.chain, cwd=repo, timeout=role.timeout_seconds,
+                                     transcript_dir=rd / "reports", log=say)
+    w = watcher.Watcher(rd, config=cfg, notifier=channel, repo=repo, reporter=reporter, log=say)
+    if args.once:
+        text = w.once()
+        if text is None:
+            print(f"no status for run {cfg.run!r}; nothing to report on", file=sys.stderr)
+            return 2
+        print(text)
+        return 0
+    rd.mkdir(parents=True, exist_ok=True)
+    (rd / "watch.pid").write_text(str(os.getpid()))
+
+    def _term(signum, frame):
+        w.stop_requested = True
+
+    signal.signal(signal.SIGTERM, _term)
+    signal.signal(signal.SIGHUP, lambda *_: None)   # the pane went away; keep reporting
+    cadence = f"every {cfg.report.every}" if cfg.report.every else "on milestones only"
+    print(f"reporter for run {cfg.run!r}: channel {channel.name}, digests {cadence} via "
+          f"{'/'.join(h for h, _ in role.chain)}, alerts on {', '.join(cfg.report.on)}")
+    try:
+        w.run()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        try:
+            (rd / "watch.pid").unlink()
+        except OSError:
+            pass
+    return 0
+
+
 # Where each harness discovers skills. All three read the same `SKILL.md` folder
 # format: Claude Code as /name, Codex as $name, Pi by `--skill <dir>` or discovery.
 USER_SKILL_DIRS = {
@@ -709,6 +849,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     rep = sub.add_parser("report", parents=[common], help="write REPORT.md for the morning")
     rep.set_defaults(fn=cmd_report)
+
+    w = sub.add_parser("watch", parents=[common],
+                       help="the reporter: watch the run directory and push alerts and digests to your phone")
+    w.add_argument("--once", action="store_true", help="write one digest now, push it, and exit")
+    w.add_argument("--test", action="store_true", help="send a test notification and exit")
+    w.add_argument("--console", action="store_true", help="print instead of pushing (no credentials needed)")
+    w.add_argument("--foreground", action="store_true", help="do not move into a tmux window")
+    w.set_defaults(fn=cmd_watch)
 
     pf = sub.add_parser("preflight", parents=[common], help="check everything `run` checks, without starting")
     pf.set_defaults(fn=cmd_preflight)

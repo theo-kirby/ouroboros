@@ -648,6 +648,8 @@ without touching code and so a harness can load them natively.
   reverted/NNNN.patch        # what a revert threw away
   NEEDS_HUMAN.md             # only exists while something needs you (auth failure)
   REPORT.md                  # written by `ouroboros report`
+  reporter.json              # where the reporter (`ouroboros watch`) is up to; reports/ holds its digests
+  watch.pid  tmux-watch      # the reporter's pid and window, so `stop` can take it down after the loop
 ```
 
 None of that leaves the machine: `.ouroboros/runs/` is gitignored, and it is
@@ -746,6 +748,41 @@ file line by line, and Claude runs with `stream-json` in every backend.
 `ouroboros report` renders the run into `REPORT.md`: bets changed, the plan as
 it stands, verdict counts, the decisions the critic made for you, cost.
 
+**The reporter** (`ouroboros watch`, `watch.py`, `notify.py`) is the run's voice on
+a phone. It is a separate process that reads the run directory and never the
+loop, so the loop cannot tell whether one exists, and a reporter that crashes,
+hangs, or runs out of usage costs the run nothing. `run` starts it in a window
+beside the loop when it has somewhere to push to; `stop` kills the loop first,
+then SIGTERMs the reporter and gives it a moment to say the run stopped.
+
+It has two tiers, because the urgent messages must not depend on a model: when
+usage runs out, the reporter's model is usually out too.
+
+- **Triggers** are facts read straight off the files and go out as fixed text the
+  moment they are seen: `needs_human` (the file appeared), `stopped` (state
+  `stopped` or `killed`, with the reason), `limited` (a harness blocked in
+  `loop.log`; urgent when every harness is), `stuck` and `looping` (three of the
+  critic's verdicts in a row, then at ten and twenty; a `loop` step that acted at
+  escalation 2 or 3), `engine_error` (once an hour), `silent` (the pid is gone
+  while the run says it is working, urgent; or `status.json` older than
+  `report.silent_after`), `done_accepted`, and `reject` (off by default -- a
+  revert is routine and the digest counts them). `report.on` picks the set.
+- **Digests** are one read-only model call (`roles.reporter`, the
+  `ouroboros-reporter` skill) on a timer (`report.every`) and on the milestones
+  `stopped` and `done_accepted`: what landed, what is next, what is broken, the
+  numbers, in `report.max_chars` of plain text. The prompt carries the measured
+  numbers, the verdicts, the commits and the log since the previous digest, so
+  each one is a delta and not a re-telling. When no harness answers, the numbers
+  go out alone. The full text is kept in `runs/<run>/reports/`.
+
+The reporter keeps its place in `reporter.json` -- how many lines of each file it
+has read, when the last digest went out, which limits it has already mentioned --
+so a restart does not replay the run's history, and a reporter started on a run
+already under way reports from there. Pushover is the one channel (`PO_USER` and
+`PO_TOKEN`, from the environment or a `.env` in the target repo, its `.ouroboros/`,
+or `~/.ouroboros/`); `report.notify: auto` uses it when the credentials are there
+and stays quiet otherwise. `ouroboros watch --test` proves the phone is reachable,
+`--once` writes one digest now, `--console` prints instead of pushing.
 ## 16. Config
 
 `.ouroboros/config.yml`, written by `ouroboros init` and the `ouroboros-design`
@@ -763,6 +800,7 @@ idle_interval: 30m          # sleep after done_accepted under report_done
 roles:                      # each role: harness, model, timeout, resume_for, fallback
   actor:      { harness: claude, model: null, timeout: 45m, resume_for: 1, fallback: [] }
   critic:     { harness: claude, timeout: 10m }
+  reporter:   { harness: claude, timeout: 10m }   # writes the digests; not in the pipeline
   maintainer: { harness: claude, timeout: 20m }   # only called with maintainer: true
   planner:    { harness: claude, timeout: 20m }   # only called with planner: true
 git:
@@ -802,6 +840,13 @@ loop:                       # motion-without-progress detection (section 6b)
   bet_window: 6             # how many recent bets a new one is compared against
   escalate_every: 5         # iterations past the threshold per rung of the ladder
   rotate: true              # rung 3 may switch the actor to its fallback
+report:                     # the reporter, `ouroboros watch` (section 15)
+  notify: auto              # auto | pushover | none; auto pushes when PO_USER and PO_TOKEN are set
+  every: 4h                 # a model-written digest this often; null: only on stopped and done_accepted
+  on: [needs_human, stopped, limited, stuck, looping, engine_error, silent, done_accepted]   # add reject for every revert
+  silent_after: 2h          # status.json this stale while the run says it is working
+  poll: 30s
+  max_chars: 1000           # one push notification; Pushover takes 1024
 ```
 
 A fallback is `{ harness: codex, model: null }`; the chain is the role's own
@@ -816,7 +861,7 @@ CLI flags override config: `--run-name --for --max-iterations --max-cost
 ouroboros/
   pyproject.toml            # [project.scripts] ouroboros = "ouroboros.cli:main"; pydantic, pyyaml; pytest
   src/ouroboros/
-    cli.py                  # init | design | preflight | run | stop | status | report | archive | skills install; menu; signals
+    cli.py                  # init | design | preflight | run | stop | status | watch | report | archive | skills install; menu; signals
     engine.py               # the state machine (section 6): step(), retry policy, reconcile, plan, critique
     config.py               # pydantic models for config.yml (section 16)
     goal.py                 # the charter parser: sections, done criteria → gap names, ladder, policies, template check
@@ -834,18 +879,21 @@ ouroboros/
     gitguard.py             # branch, commit, tag, diff, revert_to
     budget.py               # BudgetClock, backoff table
     recorder.py             # jsonl, status.json, loop.log, NEEDS_HUMAN.md
+    watch.py                # the reporter: triggers off the run directory, digests since the last one
+    notify.py               # Pushover; credentials from the environment or .env files
     history.py              # the durable record: .ouroboros/history/<run>.md digests + RUNS.md index
     operator.py             # .ouroboros/AGENTS.md, the guide for the agent that drives runs in the target repo
     tmux.py                 # the run session: launch, kill
     tui/                    # the status TUI: theme, widgets, layout (from vllmtop), state (run-dir reader), panels, app
     skills/                 # packaged with the wheel; `ouroboros skills install` copies them out
       ouroboros-actor/  ouroboros-critic/  ouroboros-maintainer/
-      ouroboros-planner/  ouroboros-design/  ouroboros-launch/  ouroboros-checkup/   (each SKILL.md)
+      ouroboros-planner/  ouroboros-reporter/  ouroboros-design/  ouroboros-launch/  ouroboros-checkup/   (each SKILL.md)
   tests/                    # 290 tests; fake_harness.py scripts actors and critics
     test_engine.py test_pool.py test_critic.py test_goal.py
     test_memory_handoff.py test_memory_hypergraph.py (needs the hypergraph CLI)
     test_claude_parse.py test_drivers_parse.py test_headless.py test_backend_tmux.py (needs tmux)
     test_gitguard.py test_recorder.py test_config.py test_history.py test_operator.py
+    test_watch.py test_notify.py (the reporter and its channel)
   DESIGN.md                 # this file
   README.md  AGENTS.md
 ```
