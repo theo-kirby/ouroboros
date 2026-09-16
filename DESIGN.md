@@ -778,9 +778,12 @@ usage runs out, the reporter's model is usually out too.
 The reporter keeps its place in `reporter.json` -- how many lines of each file it
 has read, when the last digest went out, which limits it has already mentioned --
 so a restart does not replay the run's history, and a reporter started on a run
-already under way reports from there. It primes its alerts from the moment it
-starts; only `--once` takes the whole run as its first window, because someone
-asking by hand wants the run and not the nothing since they typed it.
+already under way reports from there. Alerts are about things happening, so a
+reporter never replays the ones it was not there for; a digest is an orientation,
+so the **first** one covers the whole run and every one after it is a delta. Until
+a digest has really gone out there is no "since the last report" to speak of,
+which is what `ouroboros watch --once` asks for while a reporter is watching but
+has not yet had anything to say.
 
 One ordering matters enough to name. `run` starts the reporter and the loop in
 the same breath, and the loop takes a second or two to overwrite `status.json`,

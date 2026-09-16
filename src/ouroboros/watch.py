@@ -322,19 +322,19 @@ class Watcher:
         except OSError as exc:
             self.log(f"reporter: could not save its place: {exc}")
 
-    def _prime(self, snap: Snapshot, *, digest_from_start: bool = False) -> None:
-        """A reporter that starts on a run already under way alerts from now, not from the beginning.
+    def _prime(self, snap: Snapshot) -> None:
+        """Where a reporter starts: alerts from here, but the first digest covers the run.
 
-        Its first *digest* is the exception under `--once`: someone asking for a
-        report by hand wants the run, not the nothing that has happened since they
-        typed it. The watching loop primes the other way -- its first scheduled
-        digest covers its own first interval, not history it never saw.
+        Alerts are about things happening, so a reporter that attaches to a run
+        already under way must not replay the alerts it was not there for. A digest
+        is an orientation, and until one has actually gone out there is no "since
+        the last report" to speak of -- so the first one covers the whole run and
+        every one after it is a delta. For the usual case, a reporter started with
+        the loop, the two are the same thing.
         """
         self.cursor.update(
             steps=len(snap.steps), decisions=len(snap.decisions), log=len(snap.log_lines),
-            digest_steps=0 if digest_from_start else len(snap.steps),
-            digest_decisions=0 if digest_from_start else len(snap.decisions),
-            digest_epoch=self.now(), digest_sha="" if digest_from_start else self._head(snap), primed=True,
+            digest_steps=0, digest_decisions=0, digest_sha="", digest_epoch=self.now(), primed=True,
             streak={"verdict": "", "n": 0}, limited={}, escalation={},
         )
 
@@ -546,7 +546,7 @@ class Watcher:
         if snap.status is None:
             return None
         if not self.cursor.get("primed"):
-            self._prime(snap, digest_from_start=True)
+            self._prime(snap)
             self.cursor["terminal_sent"] = snap.terminal   # a run already over is not news to announce later
         text = self.digest(snap, trigger=trigger)
         self._send(f"{self.config.run} #{snap.iteration}: report", text, 0)

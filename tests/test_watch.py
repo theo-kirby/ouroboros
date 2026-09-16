@@ -426,6 +426,7 @@ def test_commits_since_the_last_digest_come_from_git(fake, clock, repo):
 # ----------------------------------------------------------------------------- once, run, robustness
 def test_once_on_a_fresh_reporter_covers_the_whole_run(fake, clock):
     """Someone asking by hand wants the run, not the nothing since they typed it."""
+    # (see also test_once_covers_the_run_until_a_digest_has_really_gone_out)
     rep = ScriptedReporter(["the read", "the second read"])
     w, out = make_watcher(fake, clock, reporter=rep)
     fake.iterate(did="the first unit")
@@ -440,16 +441,38 @@ def test_once_on_a_fresh_reporter_covers_the_whole_run(fake, clock):
     assert "the third unit" in rep.contexts[1].verdicts and "the first unit" not in rep.contexts[1].verdicts
 
 
-def test_watching_primes_from_now_not_from_history(fake, clock):
-    rep = ScriptedReporter(["the read"])
+def test_the_first_digest_orients_and_the_rest_are_deltas(fake, clock):
+    """Alerts start where the reporter does; the first digest still covers the run."""
+    rep = ScriptedReporter(["the orientation", "the delta"])
     fake.iterate(did="before the reporter existed")
     w, out = make_watcher(fake, clock, every="1h", reporter=rep)
     w.check()
     fake.iterate(did="after it started")
     clock.tick(3600); fake.status()
     w.check()
+    assert "before the reporter existed" in rep.contexts[0].verdicts     # the orientation
     assert "after it started" in rep.contexts[0].verdicts
-    assert "before the reporter existed" not in rep.contexts[0].verdicts
+    fake.iterate(did="later still")
+    clock.tick(3600); fake.status()
+    w.check()
+    assert "later still" in rep.contexts[1].verdicts                     # the delta
+    assert "before the reporter existed" not in rep.contexts[1].verdicts
+
+
+def test_once_covers_the_run_until_a_digest_has_really_gone_out(fake, clock):
+    """A reporter is watching but has never reported; `--once` must not say "nothing new"."""
+    rep = ScriptedReporter(["the orientation", "the delta"])
+    fake.iterate(did="the first unit")
+    daemon, _ = make_watcher(fake, clock, every="4h", reporter=rep)
+    daemon.check()                                    # primes, alerts from here, digests nothing
+    fake.iterate(did="the second unit")
+    asked, out = make_watcher(fake, clock, reporter=rep)
+    assert asked.once() == "the orientation"
+    assert "the first unit" in rep.contexts[0].verdicts and "the second unit" in rep.contexts[0].verdicts
+    fake.iterate(did="the third unit")
+    later, _ = make_watcher(fake, clock, reporter=rep)
+    assert later.once() == "the delta"
+    assert "the third unit" in rep.contexts[1].verdicts and "the first unit" not in rep.contexts[1].verdicts
 
 
 def test_once_on_a_run_that_never_started(repo, clock):

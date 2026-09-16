@@ -21,8 +21,9 @@ Measured from `{run_dir}` just now. Trust these numbers over anything you infer.
 {stats}
 ```
 
-Critic verdicts since the last report (iteration, verdict, reason; `did` is the
-critic's one-line summary of the unit that finished):
+Critic verdicts since the last report -- or, when no report has gone out yet,
+since the run began (iteration, verdict, reason; `did` is the critic's one-line
+summary of the unit that finished):
 
 {verdicts}
 
