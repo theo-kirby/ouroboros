@@ -8,6 +8,7 @@ account, not to a role. A PooledHarness is one role's ordered list of
 from __future__ import annotations
 
 import time
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,6 +38,8 @@ class LimitBoard:
     strikes: dict[str, int] = field(default_factory=dict)     # harness -> transient errors in a row
     why: dict[str, str] = field(default_factory=dict)
 
+    recheck: set[str] = field(default_factory=set)
+
     def check_reserve(self, name: str) -> Window | None:
         """Block a harness that has spent its reserve. Returns the window that did it."""
         ceiling = self.reserve.get(name)
@@ -46,7 +49,7 @@ class LimitBoard:
         if w is None:
             return None
         until = datetime.fromtimestamp(w.resets_at, tz=timezone.utc) if w.resets_at else None
-        self.block(name, until=until, why=f"reserve {ceiling:.0%} reached ({w.name} at {w.percent:.0f}%)")
+        self.block(name, until=until, why=f"reserve {ceiling:.0%} reached ({w.name} at {w.percent:.0f}%)", recheck=True)
         return w
 
     def is_blocked(self, name: str) -> bool:
@@ -58,7 +61,7 @@ class LimitBoard:
             return False
         return True
 
-    def block(self, name: str, *, until: datetime | None = None, why: str = "") -> float:
+    def block(self, name: str, *, until: datetime | None = None, why: str = "", recheck: bool = False) -> float:
         """Block a harness until `until`, or for a growing cooldown when nobody knows. Returns the epoch."""
         now = self.clock()
         if until is not None:
@@ -68,6 +71,10 @@ class LimitBoard:
             n = self.repeats.get(name, 0)
             at = now + min(self.cooldown * (2 ** n), self.max_cooldown)
             self.repeats[name] = n + 1
+        if recheck:
+            self.recheck.add(name)
+        else:
+            self.recheck.discard(name)
         self.blocked[name] = at
         self.why[name] = why[:120]
         self.strikes[name] = 0
@@ -77,15 +84,54 @@ class LimitBoard:
         """Count a transient error. Returns True when the strikes turned into a block."""
         self.strikes[name] = self.strikes.get(name, 0) + 1
         if self.strikes[name] >= self.transient_strikes:
-            self.block(name, why=f"{self.strikes[name]} transient errors in a row: {why}")
+            self.block(name, why=f"{self.strikes[name]} transient errors in a row: {why}", recheck=True)
             return True
         return False
 
     def clear(self, name: str) -> None:
+        self.recheck.discard(name)
         self.blocked.pop(name, None)
         self.repeats.pop(name, None)
         self.strikes.pop(name, None)
         self.why.pop(name, None)
+
+    def refresh(self, entries: list[tuple[Harness, str | None]], *, force: bool = False) -> list[Result]:
+        """Probe each limited provider once without extending failed cooldowns."""
+        results = []
+        seen = set()
+        for harness, model in entries:
+            name = harness.name
+            if name in seen or (not force and (name not in self.recheck or not self.is_blocked(name))):
+                continue
+            seen.add(name)
+            try:
+                with tempfile.TemporaryDirectory(prefix="ouroboros-availability-") as scratch:
+                    result = harness.run(
+                        "Reply only OK. This is an availability check. Do not use tools.",
+                        cwd=Path(scratch), timeout=20, resume=None, model=model,
+                        tools="none", max_turns=1,
+                    )
+            except Exception:
+                continue
+            result.extra["harness"] = name
+            results.append(result)
+            if force and result.kind == "ok":
+                self.usage.latest.pop(name, None)
+            self.usage.record(result.usage)
+            if result.kind != "ok":
+                continue
+            ceiling = self.reserve.get(name)
+            if ceiling is not None:
+                if not result.usage or not any(w.governs_stop for w in result.usage.windows.values()):
+                    continue
+                if self.usage.reserve_hit(name, ceiling) is not None:
+                    continue
+            # A fresh successful invocation proves availability, even without a
+            # meter. Do not re-block it using the previous account's reading.
+            if not result.usage:
+                self.usage.latest.pop(name, None)
+            self.clear(name)
+        return results
 
     def earliest(self) -> float | None:
         """Epoch when the first blocked harness frees up, or None when nothing is blocked."""
@@ -168,12 +214,12 @@ class PooledHarness:
                              f"({spent.name} at {spent.percent:.0f}%); blocked until it resets")
                 return result
             if kind == "limit":
-                at = self.board.block(harness.name, until=result.reset_at(), why=(result.error or result.text)[-120:])
+                at = self.board.block(harness.name, until=result.reset_at(), why=(result.error or result.text)[-120:], recheck=True)
                 self.log(f"harness {harness.name} is out of usage until {_fmt(at)}: {(result.error or result.text)[-100:]!r}")
                 last = result
                 continue
             if kind == "auth":
-                self.board.block(harness.name, why=f"auth failure: {(result.error or '')[:80]}")
+                self.board.block(harness.name, why=f"auth failure: {(result.error or '')[:80]}", recheck=True)
                 self.log(f"harness {harness.name} auth failure; blocked for a while: {(result.error or '')[:100]!r}")
                 last = result
                 continue

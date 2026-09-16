@@ -98,6 +98,7 @@ class Engine:
     loops: LoopDetector = None   # type: ignore[assignment]  # built in __post_init__
     forced_plan: str | None = None   # a loop escalation demanding the next planner pass
     last_housekeeping: int = -1      # the iteration the actor last ran the maintainer's pass
+    last_primary_role: str | None = None
     outcomes: list[IterationOutcome] = field(default_factory=list)
 
     def __post_init__(self) -> None:
@@ -140,6 +141,7 @@ class Engine:
 
     # ------------------------------------------------------------------
     def step(self) -> IterationOutcome:
+        self._consume_refresh()
         self._reload_goal()
         self.iteration += 1
         n = self.iteration
@@ -155,6 +157,7 @@ class Engine:
         head_before = self.git.head()
         self._status("work", iteration=n, housekeeping=bool(housekeeping))
 
+        self._refresh_limits("actor")
         result = self._call_actor(prompt, role.timeout_seconds, role.model, housekeeping=bool(housekeeping))
 
         recorded = self.memory.verify_recorded(before)
@@ -218,6 +221,7 @@ class Engine:
             loop_fired=loop.describe() if loop else "",
             housekeeping=bool(housekeeping),
         )
+        self._refresh_limits("critic")
         try:
             verdict = self.critic.judge(signals)
         except Exception as exc:  # a critic bug must not stop the loop
@@ -358,6 +362,55 @@ class Engine:
         self.recorder.step(iteration=self.iteration + 1, step="goal_reload",
                            previous_sha256=previous, sha256=digest)
         self.recorder.log(f"charter reloaded before iteration {self.iteration + 1}: {digest[:12]}")
+
+    def _consume_refresh(self) -> bool:
+        request = self.recorder.run_dir / "refresh.request"
+        try:
+            if not request.exists():
+                return False
+            request.unlink()
+            self.recorder.log("manual refresh: checking current harness accounts")
+            pools = [self.harness, getattr(self.critic, "harness", None),
+                     self.maintainer, self.planner]
+            boards = {}
+            for pool in pools:
+                board = getattr(pool, "board", None)
+                if board is not None:
+                    boards.setdefault(id(board), (board, []))[1].extend(pool.entries)
+            for board, entries in boards.values():
+                for result in board.refresh(entries, force=True):
+                    self.budget.add(cost=result.cost_usd, usage=result.usage,
+                                    harness=result.extra.get("harness"))
+                    self.recorder.log(f"manual refresh: {result.extra.get('harness')} {result.kind}")
+            self._status("refreshed")
+            return True
+        except Exception as exc:
+            self.recorder.log(f"manual refresh failed ({type(exc).__name__}); keeping cooldowns")
+            return False
+
+    def _refresh_limits(self, role: str) -> None:
+        """Refresh once per actor/agent-critic handoff, never per retry."""
+        if getattr(self.critic, "harness", None) is None:
+            return
+        previous, self.last_primary_role = self.last_primary_role, role
+        if previous is None or previous == role:
+            return
+        try:
+            pools = [self.harness, self.critic.harness, self.maintainer, self.planner]
+            boards = {}
+            for pool in pools:
+                board = getattr(pool, "board", None)
+                if board is not None:
+                    boards.setdefault(id(board), (board, []))[1].extend(pool.entries)
+            for board, entries in boards.values():
+                before = set(board.blocked)
+                for result in board.refresh(entries):
+                    self.budget.add(cost=result.cost_usd, usage=result.usage,
+                                    harness=result.extra.get("harness"))
+                for name in sorted(before - set(board.blocked)):
+                    self.recorder.log(f"harness {name} available again at {previous} -> {role}; cooldown cleared")
+        except Exception as exc:
+            self.recorder.log(f"limit refresh failed ({type(exc).__name__}); continuing with cooldowns")
 
     def _escalate(self, n: int, loop, verdict: Verdict) -> None:
         """Name the loop, then force a re-plan, then change the model.
@@ -602,11 +655,21 @@ class Engine:
     def _sleep(self, seconds: float, why: str) -> None:
         self.recorder.log(f"backoff {seconds:.0f}s ({why})")
         self._status("backoff", seconds=seconds, why=why)
-        self.sleeper(seconds)
+        if self._consume_refresh():
+            return
+        if self.sleeper is not time.sleep:
+            self.sleeper(seconds)
+            return
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            self.sleeper(min(1.0, max(0.0, deadline - time.monotonic())))
+            if self._consume_refresh():
+                return
 
     def _status(self, state: str, **extra) -> None:
         fields = dict(
             run=self.config.run, state=state, iteration=self.iteration, branch=self.git.branch,
+            refresh_supported=True,
             harness=self.harness.name, memory=self.memory.name, cost_usd=round(self.budget.cost_usd, 4),
             elapsed_s=int(self.budget.elapsed), last_ok_tag=self.last_ok_tag,
         )

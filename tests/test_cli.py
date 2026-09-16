@@ -209,3 +209,26 @@ def test_stop_kills_the_window_it_took_and_never_the_operators_session(tmp_path,
     cli._tmux_kill(Config(run="ot5"), rd)
     cli._tmux_kill(Config(run="old"), tmp_path / "nothing-here")   # a run from before the note existed
     assert killed == [("window", "cadxot5:@7"), ("session", "ouroboros-old")]
+
+
+@pytest.mark.parametrize("command", ["refresh", "--refresh"])
+def test_refresh_queues_for_live_supported_runner(repo, monkeypatch, command):
+    from ouroboros.config import Config
+    from ouroboros.recorder import Recorder
+    cfg = Config(run="test")
+    monkeypatch.setattr(cli, "repo_root", lambda: repo)
+    monkeypatch.setattr(cli, "load_config", lambda args, root: cfg)
+    monkeypatch.setattr(cli, "_pid_alive", lambda rd: (123, True))
+    rd = cli.run_dir_for(repo, cfg.run)
+    Recorder(rd).status(refresh_supported=True)
+    assert main([command]) == 0
+    assert (rd / "refresh.request").exists()
+
+
+def test_refresh_refuses_old_runner(repo, monkeypatch):
+    from ouroboros.config import Config
+    cfg = Config(run="test")
+    monkeypatch.setattr(cli, "repo_root", lambda: repo)
+    monkeypatch.setattr(cli, "load_config", lambda args, root: cfg)
+    monkeypatch.setattr(cli, "_pid_alive", lambda rd: (123, True))
+    assert main(["refresh"]) == 2

@@ -413,6 +413,24 @@ def _pid_alive(run_dir: Path) -> tuple[int | None, bool]:
         return None, False
 
 
+def cmd_refresh(args: argparse.Namespace) -> int:
+    repo = repo_root()
+    cfg = load_config(args, repo)
+    rd = run_dir_for(repo, cfg.run)
+    _, alive = _pid_alive(rd)
+    if not alive:
+        print("No live run to refresh. Start it with ouroboros run.")
+        return 2
+    status = Recorder(rd).read_status() or {}
+    if not status.get("refresh_supported"):
+        print("This runner predates refresh support; restart it once to load the update.")
+        return 2
+    (rd / "refresh.request").touch()
+    print("Refresh queued: sleeping runs wake within a second; active calls finish first.")
+    print("Each configured provider gets a small availability probe using its current login.")
+    return 0
+
+
 def cmd_stop(args: argparse.Namespace) -> int:
     repo = repo_root()
     cfg = load_config(args, repo)
@@ -683,6 +701,9 @@ def build_parser() -> argparse.ArgumentParser:
     top = sub.add_parser("top", parents=[common], help="the live TUI (same as status --watch)")
     top.set_defaults(fn=cmd_status, watch=True, plain=False)
 
+    refresh = sub.add_parser("refresh", parents=[common], help="recheck current accounts and wake a waiting run (alias: --refresh)")
+    refresh.set_defaults(fn=cmd_refresh)
+
     stp = sub.add_parser("stop", parents=[common], help="stop the running loop (SIGTERM, then the tmux session)")
     stp.set_defaults(fn=cmd_stop)
 
@@ -778,6 +799,8 @@ def interactive_menu(parser: argparse.ArgumentParser) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] == "--refresh":
+        argv = ["refresh", *argv[1:]]
     parser = build_parser()
     if not argv:
         render_banner()

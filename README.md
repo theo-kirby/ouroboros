@@ -89,3 +89,9 @@ uv run pytest -q
 
 Role prompts live in `src/ouroboros/skills/`. See [DESIGN.md](DESIGN.md) for
 the design, decisions, and lessons from real runs.
+
+After switching a Claude/Codex login or restoring usage credits, run
+`ouroboros refresh` (also `ouroboros --refresh`) in the project.
+It rechecks the configured providers with small no-tool probes and wakes a
+waiting run. Active calls finish first. Configuration changes still require
+a restart.

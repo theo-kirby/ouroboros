@@ -442,6 +442,15 @@ Rules:
   into a block.
 - The block ends one minute after the parsed reset time. When no reset time is
   known, the cooldown doubles on every repeat up to `max_cooldown`.
+- At each actor/agent-critic transition (both directions), probe each blocked
+  provider once with a fresh CLI process, a 20-second timeout, an empty working
+  directory, no tools, and a minimal availability prompt. This picks up a new
+  login without restarting the run. Checks consume a small amount of usage and
+  their reported cost/usage is included in the run ledger. Success clears the
+  cooldown; configured reserves additionally require a fresh long-window reading
+  below the reserve. Failures and missing reserve readings retain the original
+  deadline. Deliberate loop-rotation blocks are not probed. Actor retries and
+  rules-only critics do not trigger checks.
 - When every entry is blocked, the engine sleeps until the earliest block ends
   (capped at 6 h), then tries again.
 - Session ids are remembered per harness; a resume only happens on the harness
@@ -1026,3 +1035,20 @@ Facts from the run, and what changed because of each.
 | The actor reconciled itself once in a work iteration. | An explicit forbidden-verbs list in the orient prompt; the maintainer skill forbids the plan view in turn. |
 | Edited goal on restart was not recorded. | One directive per charter hash, parented on the previous one, declaring only the criteria it adds and naming the ones it drops. |
 | Outcome: 22 productive iterations, 14 record nodes, ADR-186..198, ~$81 API-equivalent, merged with a merge commit (173 commits, 132 of them empty). | The empty commits are why "no change, no commit" is a rule now. |
+
+### Operator account refresh (2026-09-16)
+
+After changing a harness login or restoring credits, run `ouroboros refresh`
+(or `ouroboros --refresh`) from the target repository. It queues a refresh
+for the live run. Backoff polls the request once a second; an active harness
+call finishes before the request is handled. No signal interrupts a design
+turn. Old runners without this capability refuse the command and need one
+restart after upgrade.
+
+The refresh probes every configured provider once, using the current login,
+a fresh temporary directory, no tools, no resumed session, and a 20-second
+timeout. These are small real harness calls and their usage is accounted for.
+Fresh successful readings replace stale account meters; cooldowns clear only
+when the probe succeeds and configured reserves permit it. Failed probes keep
+existing cooldowns. Refresh does not edit credentials, change the charter,
+reload configuration or restart the run. A stopped run must be started normally.

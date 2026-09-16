@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import pytest
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -243,4 +244,133 @@ def test_a_short_window_does_not_trip_a_reserve(tmp_path: Path):
     a.name = "a"
     board = LimitBoard(reserve={"a": 0.85})
     PooledHarness([(a, None)], board).run("go", cwd=tmp_path, timeout=1)
+    assert not board.is_blocked("a")
+
+
+def test_refresh_recovers_before_reset_and_preserves_rotation(tmp_path):
+    board = LimitBoard()
+    a = named('a', [lambda cwd, p: Result(text='OK')])
+    b = named('b', [])
+    board.block('a', why='usage limit', recheck=True)
+    board.block('b', why='loop escalation')
+    results = board.refresh([(a, None), (a, None), (b, None)])
+    assert len(results) == 1
+    assert not board.is_blocked('a')
+    assert board.is_blocked('b')
+    assert len(a.calls) == 1 and not b.calls
+    assert a.calls[0]['resume'] is None
+    assert a.calls[0]['timeout'] == 20
+
+
+def test_refresh_failure_keeps_original_deadline():
+    from fake_harness import raises, times_out
+    for behavior in [limited_epoch(time.time() + 500), raises(), times_out(), crashes('not logged in')]:
+        board = LimitBoard()
+        a = named('a', [behavior])
+        deadline = board.block('a', recheck=True)
+        board.refresh([(a, None)])
+        assert board.blocked['a'] == deadline
+
+
+def test_refresh_requires_fresh_usage_to_clear_reserve():
+    board = LimitBoard(reserve={'a': .85})
+    board.usage.record(_usage(.9))
+    board.check_reserve('a')
+    a = named('a', [lambda cwd, p: Result(text='OK'), spends(.9), spends(.2)])
+    board.refresh([(a, None)])
+    assert board.is_blocked('a')
+    board.refresh([(a, None)])
+    assert board.is_blocked('a')
+    board.refresh([(a, None)])
+    assert not board.is_blocked('a')
+    assert board.usage.latest['a'].windows['seven_day'].utilization == .2
+
+
+def test_engine_refreshes_once_per_actor_critic_transition(repo):
+    from ouroboros.roles.critic import RulesCritic
+    board = LimitBoard()
+    a = named('a', [works('one'), works('two')])
+    pool = PooledHarness([(a, None)], board)
+    critic = RulesCritic()
+    critic.harness = pool
+    eng = make_engine(repo, pool, critic=critic, max_iterations=2)
+    calls = []
+    board.refresh = lambda entries: calls.append(list(entries)) or []
+    eng.run()
+    assert len(calls) == 3  # actor -> critic -> actor -> critic
+
+
+def test_engine_refresh_failure_does_not_stop_work(repo):
+    from ouroboros.roles.critic import RulesCritic
+    board = LimitBoard()
+    a = named('a', [works('one'), works('two')])
+    pool = PooledHarness([(a, None)], board)
+    critic = RulesCritic()
+    critic.harness = pool
+    eng = make_engine(repo, pool, critic=critic, max_iterations=2)
+    def broken(entries):
+        raise RuntimeError('check failed')
+    board.refresh = broken
+    eng.run()
+    assert eng.iteration == 2 and eng.outcomes[-1].result.ok
+
+
+def test_recovered_provider_handles_next_critic_and_actor(repo):
+    from fake_harness import verdict
+    from ouroboros.roles.critic import AgentCritic
+    board = LimitBoard()
+    a = named('a', [limited_epoch(time.time() + 18000),
+                    lambda cwd, p: Result(text='OK', cost_usd=.01),
+                    verdict('continue'), works('recovered'), verdict('continue')])
+    b = named('b', [works('fallback')])
+    actor = PooledHarness([(a, None), (b, None)], board)
+    critic_pool = PooledHarness([(a, None), (b, None)], board)
+    critic = AgentCritic(critic_pool, goal_text='continue', cwd=repo)
+    eng = make_engine(repo, actor, critic=critic, max_iterations=2)
+    eng.run()
+    assert (repo / 'work.txt').read_text().splitlines() == ['fallback', 'recovered']
+    assert actor.name == critic_pool.name == 'a'
+    assert len(a.calls) == 5 and len(b.calls) == 1
+    assert a.calls[1]['tools'] == 'none' and a.calls[1]['max_turns'] == 1
+    assert not board.is_blocked('a')
+    assert abs(eng.budget.cost_usd - 1.03) < 1e-6
+
+
+def test_manual_refresh_probes_unblocked_and_deduplicates():
+    board = LimitBoard()
+    a = named("a", [spends(.2)])
+    board.usage.record(_usage(.95))
+    results = board.refresh([(a, None), (a, None)], force=True)
+    assert len(results) == 1
+    assert board.usage.latest["a"].windows["seven_day"].utilization == .2
+
+
+def test_manual_refresh_request_wakes_backoff(repo):
+    board = LimitBoard()
+    a = named("a", [lambda cwd, p: Result(text="OK")])
+    board.block("a", recheck=True)
+    eng = make_engine(repo, PooledHarness([(a, None)], board))
+    eng.recorder.run_dir.joinpath("refresh.request").touch()
+    eng.sleeper = lambda seconds: pytest.fail("refresh must wake without sleeping")
+    eng._sleep(1800, "limited")
+    assert not board.is_blocked("a")
+    assert not eng.recorder.run_dir.joinpath("refresh.request").exists()
+    assert eng.recorder.read_status()["state"] == "refreshed"
+
+
+def test_refresh_arriving_during_sleep_wakes_runner(repo):
+    import threading
+    board = LimitBoard()
+    a = named("a", [lambda cwd, p: Result(text="OK")])
+    board.block("a", recheck=True)
+    eng = make_engine(repo, PooledHarness([(a, None)], board))
+    eng.sleeper = time.sleep
+    timer = threading.Timer(.05, lambda: (eng.recorder.run_dir / "refresh.request").touch())
+    timer.start()
+    started = time.monotonic()
+    try:
+        eng._sleep(30, "limited")
+    finally:
+        timer.join()
+    assert time.monotonic() - started < 5
     assert not board.is_blocked("a")
