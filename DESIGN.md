@@ -778,7 +778,18 @@ usage runs out, the reporter's model is usually out too.
 The reporter keeps its place in `reporter.json` -- how many lines of each file it
 has read, when the last digest went out, which limits it has already mentioned --
 so a restart does not replay the run's history, and a reporter started on a run
-already under way reports from there. Pushover is the one channel (`PO_USER` and
+already under way reports from there. It primes its alerts from the moment it
+starts; only `--once` takes the whole run as its first window, because someone
+asking by hand wants the run and not the nothing since they typed it.
+
+One ordering matters enough to name. `run` starts the reporter and the loop in
+the same breath, and the loop takes a second or two to overwrite `status.json`,
+so for that moment the directory still holds the *previous* run's `killed`. A
+reporter that finds a finished run on its **first** pass therefore waits three
+minutes for one to come alive before believing it, and then gives up in the log
+rather than on the phone. Without that, every launch pushed the last run's
+ending and exited before the loop it was watching had drawn breath (ot7,
+2026-09-16). Pushover is the one channel (`PO_USER` and
 `PO_TOKEN`, from the environment or a `.env` in the target repo, its `.ouroboros/`,
 or `~/.ouroboros/`); `report.notify: auto` uses it when the credentials are there
 and stays quiet otherwise. `ouroboros watch --test` proves the phone is reachable,
