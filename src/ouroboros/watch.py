@@ -313,11 +313,37 @@ class Watcher:
         except (OSError, ValueError):
             return {}
 
+    # `reporter.json` has two writers whenever someone runs `watch --once` beside a
+    # watching reporter, and they keep different halves of it. The watcher owns how
+    # far the alerts have read; whoever last produced a digest owns the digest
+    # window. A plain overwrite loses one of the two -- live on ot7 it lost the
+    # digest window, and the manual report it was asked for said "nothing new".
+    DIGEST_KEYS = ("digest_steps", "digest_decisions", "digest_epoch", "digest_sha", "digest_iteration")
+
+    def _on_disk(self) -> dict:
+        try:
+            data = json.loads(self.state_path.read_text())
+            return data if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def _adopt_newer_digest(self) -> None:
+        """Take the digest window from disk when another process reported more recently."""
+        disk = self._on_disk()
+        if float(disk.get("digest_epoch") or 0) > float(self.cursor.get("digest_epoch") or 0):
+            self.cursor.update({k: disk[k] for k in self.DIGEST_KEYS if k in disk})
+
     def _save(self) -> None:
+        merged = self._on_disk()
+        mine_is_older = float(merged.get("digest_epoch") or 0) > float(self.cursor.get("digest_epoch") or 0)
+        keep = {k: merged[k] for k in self.DIGEST_KEYS if mine_is_older and k in merged}
+        merged.update(self.cursor)
+        merged.update(keep)
+        self.cursor.update(keep)
         try:
             self.run_dir.mkdir(parents=True, exist_ok=True)
             tmp = self.state_path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(self.cursor, indent=2, default=str))
+            tmp.write_text(json.dumps(merged, indent=2, default=str))
             os.replace(tmp, self.state_path)
         except OSError as exc:
             self.log(f"reporter: could not save its place: {exc}")
@@ -555,6 +581,7 @@ class Watcher:
 
     def digest(self, snap: Snapshot, *, trigger: str, model: bool = True) -> str:
         """The model's read since the last digest, or the measured numbers when no model answers."""
+        self._adopt_newer_digest()   # another process may have reported since this one last did
         since_steps = int(self.cursor.get("digest_steps") or 0)
         since_dec = int(self.cursor.get("digest_decisions") or 0)
         stats = stats_text(snap, since_steps=since_steps, since_decisions=since_dec, run=self.config.run)

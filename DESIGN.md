@@ -783,7 +783,11 @@ reporter never replays the ones it was not there for; a digest is an orientation
 so the **first** one covers the whole run and every one after it is a delta. Until
 a digest has really gone out there is no "since the last report" to speak of,
 which is what `ouroboros watch --once` asks for while a reporter is watching but
-has not yet had anything to say.
+has not yet had anything to say. `reporter.json` then has two writers, and they
+keep different halves of it: the watching reporter owns how far the alerts have
+read, and whoever produced a digest most recently owns the digest window. Each
+save keeps the other's half, or a manual report and the watcher next to it erase
+each other (ot7, 2026-09-16).
 
 One ordering matters enough to name. `run` starts the reporter and the loop in
 the same breath, and the loop takes a second or two to overwrite `status.json`,

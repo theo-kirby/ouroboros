@@ -459,6 +459,35 @@ def test_the_first_digest_orients_and_the_rest_are_deltas(fake, clock):
     assert "before the reporter existed" not in rep.contexts[1].verdicts
 
 
+def test_a_manual_report_and_a_watching_one_share_their_place(fake, clock):
+    """Live on ot7: the watcher's next save wiped the manual report's window.
+
+    The watcher owns how far the alerts have read; whoever reported last owns the
+    digest window. Neither may throw the other's half away.
+    """
+    rep = ScriptedReporter(["orientation", "the delta"])
+    daemon, _ = make_watcher(fake, clock, every="4h", reporter=rep)
+    fake.iterate(did="the first unit")
+    daemon.check()                                     # primes; alerts read to here
+
+    clock.tick(60)
+    asked, _ = make_watcher(fake, clock, reporter=rep)
+    assert asked.once() == "orientation"               # covers the run; advances the digest window
+    assert "the first unit" in rep.contexts[0].verdicts
+
+    fake.iterate(did="the second unit")                # the watcher saves again, after the manual report
+    clock.tick(60); fake.status()
+    daemon.check()
+    on_disk = json.loads((fake.dir / "reporter.json").read_text())
+    assert on_disk["digest_decisions"] == 1            # the manual report's place survived
+    assert on_disk["decisions"] == 2                   # and so did the watcher's
+
+    clock.tick(4 * 3600); fake.status()                # the scheduled digest is a delta from the manual one
+    daemon.check()
+    assert "the second unit" in rep.contexts[1].verdicts
+    assert "the first unit" not in rep.contexts[1].verdicts
+
+
 def test_once_covers_the_run_until_a_digest_has_really_gone_out(fake, clock):
     """A reporter is watching but has never reported; `--once` must not say "nothing new"."""
     rep = ScriptedReporter(["the orientation", "the delta"])
