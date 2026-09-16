@@ -241,6 +241,49 @@ def test_stopped_sends_the_last_word_with_a_digest_and_finishes(fake, clock):
     assert w.check() == [] and w.done
 
 
+def test_a_stale_killed_status_is_not_announced_as_news(fake, clock):
+    """`run` starts the reporter and the loop together; the loop has not written yet.
+
+    The directory still holds the last run's ending. Announcing it and exiting is
+    the one failure that makes the reporter useless exactly when it is started.
+    """
+    fake.status(state="killed", signal=15)
+    fake.dead()
+    w, out = make_watcher(fake, clock)
+    assert w.check() == [] and out.sent == [] and not w.done
+    clock.tick(60)
+    assert w.check() == [] and not w.done
+    fake.status(state="work", iteration=1)        # the loop is up
+    (fake.dir / "pid").write_text(str(os.getpid()))
+    events = w.check()
+    assert kinds(events) == ["started"] and not w.done
+    fake.status(state="stopped", stop_reason="wall clock")
+    assert kinds(w.check()) == ["stopped"] and w.done
+
+
+def test_a_run_that_really_is_over_is_given_up_on_quietly(fake, clock):
+    fake.status(state="killed", signal=15)
+    fake.dead()
+    logged = []
+    w, out = make_watcher(fake, clock)
+    w.log = logged.append
+    assert w.check() == []
+    clock.tick(181)
+    assert w.check() == [] and w.done and out.sent == []
+    assert "already over" in logged[-1] and "--once" in logged[-1]
+
+
+def test_once_reports_on_a_finished_run(fake, clock):
+    rep = ScriptedReporter(["the post-mortem"])
+    fake.iterate()
+    fake.status(state="stopped", stop_reason="max_iterations 1 reached")
+    fake.dead()
+    w, out = make_watcher(fake, clock, reporter=rep)
+    assert w.once() == "the post-mortem"
+    assert "stop reason: max_iterations 1 reached" in rep.contexts[0].stats
+    assert json.loads((fake.dir / "reporter.json").read_text())["terminal_sent"] is True
+
+
 def test_killed_reads_the_signal(fake, clock):
     w, out = make_watcher(fake, clock)
     w.check()

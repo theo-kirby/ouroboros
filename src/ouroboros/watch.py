@@ -45,6 +45,11 @@ ENGINE_ERROR_COOLDOWN = 3600.0
 LIMIT_COOLDOWN = 2 * 3600.0                    # the pool re-logs a block on every recheck
 LOG_TAIL = 40
 VERDICT_LINES = 40
+# `run` starts the reporter and the loop at the same moment, and the loop takes a
+# second or two to overwrite the last run's status.json. Until it does, the
+# directory still says `killed`. So a reporter that finds a finished run on its
+# very first pass waits this long for one to come alive before believing it.
+STARTUP_GRACE = 180.0
 
 _LIMIT_LINE = re.compile(
     r"harness (?P<h>\S+?):? (?P<why>is out of usage until .*|auth failure.*|hit its reserve.*|"
@@ -299,6 +304,7 @@ class Watcher:
         self.cursor: dict = self._load()
         self.stop_requested = False
         self.done = False
+        self.waiting_since: float | None = None   # a finished run seen before this reporter ever primed
 
     # --- the place it keeps -------------------------------------------------
     def _load(self) -> dict:
@@ -346,6 +352,8 @@ class Watcher:
             return []
         if snap.status is None:
             return []
+        if not self.cursor.get("primed") and snap.terminal and not snap.pid_alive and self._starting_up(snap):
+            return []
         events: list[Event] = []
         try:
             fresh = not self.cursor.get("primed")
@@ -360,6 +368,22 @@ class Watcher:
         if snap.terminal and self.cursor.get("terminal_sent"):
             self.done = True
         return events
+
+    def _starting_up(self, snap: Snapshot) -> bool:
+        """True while a `killed` directory might still be a run that is only just booting.
+
+        The alternative is announcing the *previous* run's ending as though it were
+        news and exiting before the loop it was started to watch has drawn breath,
+        which is what a reporter launched beside a run does every single time.
+        """
+        self.waiting_since = self.waiting_since if self.waiting_since is not None else snap.now
+        if snap.now - self.waiting_since < STARTUP_GRACE:
+            return True
+        self.log(f"reporter: run {self.config.run} is already over "
+                 f"({(snap.status or {}).get('stop_reason') or snap.state}); nothing to watch. "
+                 f"`ouroboros watch --once` reports on it.")
+        self.done = True
+        return True
 
     def _advance(self, snap: Snapshot) -> None:
         self.cursor.update(steps=len(snap.steps), decisions=len(snap.decisions), log=len(snap.log_lines))
@@ -523,6 +547,7 @@ class Watcher:
             return None
         if not self.cursor.get("primed"):
             self._prime(snap, digest_from_start=True)
+            self.cursor["terminal_sent"] = snap.terminal   # a run already over is not news to announce later
         text = self.digest(snap, trigger=trigger)
         self._send(f"{self.config.run} #{snap.iteration}: report", text, 0)
         self._save()

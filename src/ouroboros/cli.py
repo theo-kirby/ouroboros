@@ -715,7 +715,10 @@ def cmd_watch(args: argparse.Namespace) -> int:
         print(f"{channel.name}: {'sent' if ok else 'FAILED'}")
         return 0 if ok else 1
     if not args.foreground and not args.once and tmux.available() and not tmux.inside_ouroboros_tmux():
-        here = tmux.current_session()
+        # Beside the loop when the loop has a session of its own, so the two live
+        # together; otherwise in the session the operator is sitting in.
+        note = _tmux_target(rd)
+        here = note[1] if note and note[0] == "session" and tmux.session_exists(note[1]) else tmux.current_session()
         if here:
             argv = [sys.argv[0], "watch", "--run-name", cfg.run, *(["--console"] if getattr(args, "console", False) else [])]
             target = tmux.launch_window(here, tmux.window_name(cfg.run) + "-watch", argv, str(repo))

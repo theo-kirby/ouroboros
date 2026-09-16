@@ -178,7 +178,13 @@ def test_run_takes_a_window_of_the_session_it_is_started_from(tmp_path, monkeypa
     monkeypatch.setattr(sys, "argv", ["ouroboros", "run", "--for", "24h"])
     cfg = Config(run="ot5")
     assert cli._launch_in_tmux(cfg, tmp_path, own_session=False) == 0
-    assert calls == [("window", "cadxot5", "ouroboros-ot5")]
+    assert calls == [("window", "cadxot5", "ouroboros-ot5")]   # no credentials: no reporter beside it
+    assert "reporter: off" in capsys.readouterr().out
+
+    monkeypatch.setattr(cli.notify, "load_env", lambda *a, **k: {"PO_USER": "u", "PO_TOKEN": "t"})
+    calls.clear()
+    assert cli._launch_in_tmux(cfg, tmp_path, own_session=False) == 0
+    assert calls == [("window", "cadxot5", "ouroboros-ot5"), ("window", "cadxot5", "ouroboros-ot5-watch")]
     assert cli._tmux_target(tmp_path / ".ouroboros" / "runs" / "ot5") == ("window", "cadxot5:@7")
     assert "window ouroboros-ot5 of this tmux session (cadxot5)" in capsys.readouterr().out
 

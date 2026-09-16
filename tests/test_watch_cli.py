@@ -72,6 +72,26 @@ def test_watch_refuses_a_second_reporter(run_dir, monkeypatch, capsys):
     assert main(["watch", "--once", "--console"]) == 0      # a one-shot report is always allowed
 
 
+def test_watch_goes_to_the_loops_own_session_when_it_has_one(run_dir, monkeypatch, capsys):
+    """The reporter belongs beside the loop, not in whatever session the operator is in."""
+    (run_dir / "tmux").write_text("session ouroboros-r\n")
+    monkeypatch.setattr(cli.notify, "load_env", lambda *a, **k: {"PO_USER": "u", "PO_TOKEN": "t"})
+    monkeypatch.setattr(cli.tmux, "available", lambda: True)
+    monkeypatch.setattr(cli.tmux, "inside_ouroboros_tmux", lambda: False)
+    monkeypatch.setattr(cli.tmux, "session_exists", lambda name: name == "ouroboros-r")
+    monkeypatch.setattr(cli.tmux, "current_session", lambda: "the-operators-session")
+    launched = []
+    monkeypatch.setattr(cli.tmux, "launch_window",
+                        lambda s, w, argv, cwd: launched.append((s, w)) or "ouroboros-r:@3")
+    assert main(["watch"]) == 0
+    assert launched == [("ouroboros-r", "ouroboros-r-watch")]
+
+    launched.clear()
+    (run_dir / "tmux").write_text("session gone-away\n")     # the loop's session is not there
+    assert main(["watch"]) == 0
+    assert launched == [("the-operators-session", "ouroboros-r-watch")]
+
+
 def test_a_stale_pid_is_not_a_live_reporter(run_dir):
     (run_dir / "watch.pid").write_text("999999")
     assert cli.reporter_alive(run_dir) is None
