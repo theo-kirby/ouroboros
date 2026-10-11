@@ -186,7 +186,8 @@ class Engine:
         if check_problem:
             self.recorder.step(iteration=n, step="check", problem=check_problem[:300])
 
-        self.no_change_streak = 0 if changed else self.no_change_streak + 1
+        # `recorded` counts as a change: under a store-backed graph a record lands outside git
+        self.no_change_streak = 0 if (changed or recorded) else self.no_change_streak + 1
         if result.error and result.error == self.last_error:
             self.error_streak += 1
         elif result.error:

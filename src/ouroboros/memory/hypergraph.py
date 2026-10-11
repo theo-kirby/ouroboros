@@ -31,6 +31,17 @@ def frontier_of(state_md: str) -> str:
     return m.group(1).strip() if m else ""
 
 
+def _main_checkout(repo: Path) -> Path:
+    """The main working tree for `repo` (itself unless `repo` is a git worktree)."""
+    try:
+        out = subprocess.run(["git", "-C", str(repo), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                             capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return repo
+    common = Path(out.stdout.strip()) if out.returncode == 0 and out.stdout.strip() else None
+    return common.parent if common is not None and common.name == ".git" else repo
+
+
 def _strip_front_matter(text: str) -> str:
     if text.startswith("---"):
         _, _, rest = text.partition("\n---\n")
@@ -64,7 +75,12 @@ class HypergraphMemory(BaseMemory):
         self.config_path = repo / ".hypergraph" / "config.yml"
         cfg = yaml.safe_load(self.config_path.read_text()) if self.config_path.exists() else {}
         cfg = cfg or {}
-        self.graph_dir = repo / cfg.get("graph_dir", ".hypergraph/graph")
+        # A `store:` block (hypergraph's Flywheel repository store) makes the node files a
+        # gitignored working copy at the *main* checkout, shared by every worktree, and
+        # every `hypergraph new/update` commits to the store itself: nothing to `git add`.
+        self.store_backed = bool(cfg.get("store"))
+        graph_home = _main_checkout(repo) if self.store_backed else repo
+        self.graph_dir = graph_home / cfg.get("graph_dir", ".hypergraph/graph")
         self.cache_dir = repo / cfg.get("cache_dir", ".hypergraph/cache")
         self.state_md = repo / cfg.get("state_md", "STATE.md")
         self.record_root_slug = (cfg.get("record_root") or {}).get("slug")
@@ -345,7 +361,9 @@ class HypergraphMemory(BaseMemory):
             f"--view {self.plan_view} --tips` prints `high_water_mark: <slugs>`. Rewrite the view root `{self.plan_root_slug}` body "
             f"(keep its prose, set `## Reconciliation` to that mark and `reconciled_at` now) through `hypergraph update --expect --reconcile`.\n"
             f"4. `hypergraph sync --config .hypergraph/config.yml` renders `{self.plan_md.name}` and runs check. Fix any violation and sync again.\n"
-            f"5. `git add .hypergraph {self.plan_md.name}` and commit with a message starting `plan:`. Delete your scratch files."
+            + (f"5. `git add {self.plan_md.name}` (the plan nodes are already in the Flywheel store; the node files are gitignored) "
+               if self.store_backed else f"5. `git add .hypergraph {self.plan_md.name}` ")
+            + "and commit with a message starting `plan:`. Delete your scratch files."
         )
         return (
             tpl.replace("{max_new}", str(self.max_new_directions))
@@ -442,8 +460,11 @@ class HypergraphMemory(BaseMemory):
             "   Use `--impact \"NEW <kebab-name> — <delta>\"` for a new state node, or `--none \"<reason>\"` when "
             "state truly does not change. Look up real state slugs in STATE.md; a wrong slug fails the checker "
             "(exit 2 = nothing written; fix and retry).\n"
-            "3. `hypergraph export --config .hypergraph/config.yml` then `git add .hypergraph/graph`.\n"
-            "4. Delete the body file, or keep it out of the repo.\n"
+            + ("3. `hypergraph export --config .hypergraph/config.yml`. The `new` already committed the node to the "
+               "Flywheel store (it prints `store … committed`); the node files are gitignored, so there is nothing to `git add`.\n"
+               if self.store_backed else
+               "3. `hypergraph export --config .hypergraph/config.yml` then `git add .hypergraph/graph`.\n")
+            + "4. Delete the body file, or keep it out of the repo.\n"
             "Never hand-edit STATE.md. Never run `hypergraph update` or `new state`. An iteration with no new "
             "record node is counted as lost work."
         )

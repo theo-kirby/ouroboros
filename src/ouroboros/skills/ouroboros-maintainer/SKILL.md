@@ -25,7 +25,8 @@ Follow the `hypergraph-reconcile` skill. If it is installed in this repo, read i
    through `hypergraph update --expect --reconcile`.
 5. `hypergraph sync --config .hypergraph/config.yml` (export, render STATE.md, check, push).
    If `check` reports violations, fix them and run sync again.
-6. `git add .hypergraph/graph STATE.md` and commit with a message starting `reconcile:`.
+6. `git add .hypergraph/graph STATE.md` and commit with a message starting `reconcile:`. If the config has a
+   `store:` block the node files are gitignored and already committed to the Flywheel store: `git add STATE.md` only.
 
 Rules:
 

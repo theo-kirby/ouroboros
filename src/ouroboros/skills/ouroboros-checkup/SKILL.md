@@ -60,7 +60,9 @@ amount of loop detection fixes it.
 4. The plan: `PLAN.md` and the `plan` view nodes under `.hypergraph/graph/plan/`
    (hypergraph repos) or `.ouroboros/plan.md` and `.ouroboros/bets.md`.
 5. Git: `git log --oneline main..<run branch>` and `git diff --stat main...<run branch>`.
-   Record nodes added: `git diff --stat main...<branch> -- .hypergraph/graph/record`.
+   Record nodes added: `git diff --stat main...<branch> -- .hypergraph/graph/record`. With a `store:` block in
+   `.hypergraph/config.yml` the node files are not in git: use `flywheel repo:log --format=json` (commit messages
+   name each `hypergraph new record`) or the record files' `created_at` since the run started.
 6. The frontier before and after (`git show main:STATE.md` vs the branch), compared
    **by node status**, not by prose.
 

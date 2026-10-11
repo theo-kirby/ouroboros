@@ -331,3 +331,30 @@ def test_live_charter_revision_reuses_memory_and_records_once(hg_repo):
     files = mem.record_files()
     mem.start(goal_text=revised, **kw)
     assert mem.record_files() == files
+
+
+def test_a_store_backed_graph_is_read_from_the_main_checkout_and_never_git_added(tmp_path: Path) -> None:
+    """hypergraph's Flywheel store: node files are a gitignored working copy at the main checkout."""
+    main = tmp_path / "main"
+    (main / ".hypergraph" / "graph" / "record").mkdir(parents=True)
+    git(main, "init", "-q", "-b", "main")
+    git(main, "config", "user.email", "t@example.com")
+    git(main, "config", "user.name", "t")
+    (main / ".hypergraph" / "config.yml").write_text(
+        "project: t\ngraph_dir: .hypergraph/graph\nstore:\n  kind: flywheel-repo\n  flywheel_cli: 0.2.78\n")
+    (main / ".gitignore").write_text(".hypergraph/graph/\n")
+    git(main, "add", "-A")
+    git(main, "commit", "-qm", "init")
+    wt = tmp_path / "wt"
+    git(main, "worktree", "add", "-q", "-b", "side", str(wt))
+    mem = HypergraphMemory(wt)
+    assert mem.store_backed
+    assert mem.record_dir() == main / ".hypergraph" / "graph" / "record"
+    prompt = mem.record_prompt()
+    assert "git add .hypergraph/graph" not in prompt and "nothing to `git add`" in prompt
+
+
+def test_a_plain_graph_still_tells_the_actor_to_git_add_its_node_files(hg_repo: Path) -> None:
+    mem = HypergraphMemory(hg_repo)
+    assert not mem.store_backed
+    assert "git add .hypergraph/graph" in mem.record_prompt()
