@@ -613,7 +613,7 @@ def frontier_counts(repo: Path) -> dict[str, int]:
     m = re.search(r"^## Frontier\s*$([\s\S]*?)(?=^## |\Z)", text, re.M)
     body = m.group(1) if m else ""
     for line in body.splitlines():
-        mm = re.match(r"^\s*-\s*\[(\w+)\]", line)
+        mm = re.match(r"^\s*-\s*(?:\*\*)?\[(\w+)\]", line)   # governor renders `- **[open]** …`
         if mm:
             out[mm.group(1)] = out.get(mm.group(1), 0) + 1
             if "charter criterion" in line.lower() or "charter gap" in line.lower():

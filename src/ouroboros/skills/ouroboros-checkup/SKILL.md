@@ -58,11 +58,14 @@ amount of loop detection fixes it.
    reason, reply, and `fix_first`. `loop.log` for backoffs, limit waits, and
    harness switches.
 4. The plan: `PLAN.md` and the `plan` view nodes under `.hypergraph/graph/plan/`
-   (hypergraph repos) or `.ouroboros/plan.md` and `.ouroboros/bets.md`.
+   (hypergraph repos), the `plan`-kind claims in `governor snapshot` (governor repos),
+   or `.ouroboros/plan.md` and `.ouroboros/bets.md`.
 5. Git: `git log --oneline main..<run branch>` and `git diff --stat main...<run branch>`.
    Record nodes added: `git diff --stat main...<branch> -- .hypergraph/graph/record`. With a `store:` block in
    `.hypergraph/config.yml` the node files are not in git: use `flywheel repo:log --format=json` (commit messages
-   name each `hypergraph new record`) or the record files' `created_at` since the run started.
+   name each `hypergraph new record`) or the record files' `created_at` since the run started. In a governor
+   repo records are never in git: `governor snapshot` lists them (`kind: record`, with `at` and `## Recorded`
+   naming the branch), `governor fold` shows what is still unfolded, and `governor check` must exit 0.
 6. The frontier before and after (`git show main:STATE.md` vs the branch), compared
    **by node status**, not by prose.
 
@@ -106,7 +109,7 @@ other metric.
    generated files committed by accident, anything touching the constraints' zones.
 9. **The recommendation.**
    - Run finished → merge with a merge commit (record nodes cite commit SHAs;
-     **never squash a hypergraph run**), merge after fixing X, or do not merge.
+     **never squash a hypergraph or governor run**), merge after fixing X, or do not merge.
    - Run live → the one correction worth making now, or "leave it alone".
 10. **Charter changes to consider.** What this run showed the charter got wrong:
     a rung that was empty, a constraint that was missing, a criterion that was

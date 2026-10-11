@@ -31,6 +31,80 @@ def frontier_of(state_md: str) -> str:
     return m.group(1).strip() if m else ""
 
 
+HYPERGRAPH_PROCEDURE = """Follow the `hypergraph-reconcile` skill. If it is installed in this repo, read it
+(`.claude/skills/hypergraph-reconcile/SKILL.md`). The short form:
+
+1. `hypergraph export --config .hypergraph/config.yml`
+2. `hypergraph hwm --record .hypergraph/cache/record.json --state .hypergraph/cache/state.json --config .hypergraph/config.yml`
+   lists the unreconciled record nodes. Read each one's `## State Impact`.
+3. Fold impacts per state node. Batch all deltas for one target into one write:
+   `hypergraph update <slug> --body new.md --expect <sha> --reconcile`.
+   `NEW` targets: `hypergraph new state --parent <state-root> --status <s> --prov "<record-slug> — why" --reconcile --title ... --body ...`
+   Cite record slugs inline as `[rec: <slug>]`. Compact while you are there.
+4. Advance the mark: `hypergraph hwm ... --tips` prints the frontier. Rewrite the state
+   root's `## Reconciliation` with that `high_water_mark:` and `reconciled_at:` now,
+   through `hypergraph update --expect --reconcile`.
+5. `hypergraph sync --config .hypergraph/config.yml` (export, render STATE.md, check, push).
+   If `check` reports violations, fix them and run sync again.
+6. `git add .hypergraph/graph STATE.md` and commit with a message starting `reconcile:`. If the config has a
+   `store:` block the node files are gitignored and already committed to the Flywheel store: `git add STATE.md` only."""
+
+HYPERGRAPH_PLAN_RULE = """- **Never touch the `plan` view** (`.hypergraph/graph/plan/`, `PLAN.md`, impacts that start
+  with `plan/`). When a planner is on, that pass is the view's single writer and folds
+  them itself. Leave `plan/...` impacts pending; they are not yours."""
+
+
+def maintainer_prompt(*, branch: str, tail: str, goal_text: str, procedure: str, plan_rule: str) -> str:
+    """The ouroboros-maintainer skill with this memory's own procedure filled in."""
+    tpl = _strip_front_matter(resources.files("ouroboros.skills").joinpath("ouroboros-maintainer/SKILL.md").read_text())
+    return (
+        tpl.replace("{procedure}", procedure)
+        .replace("{plan_rule}", plan_rule)
+        .replace("{branch}", branch or "(run branch)")
+        .replace("{tail}", f"```\n{tail.strip()[-4000:]}\n```")
+        .replace("{goal}", (goal_text or "").strip()[:4000] or "(none)")
+    )
+
+
+def charter_gaps(goal_text: str) -> list[tuple[str, str]]:
+    """(gap-name, criterion) for every done criterion, names made unique."""
+    seen: dict[str, int] = {}
+    out: list[tuple[str, str]] = []
+    for crit in charter.done_criteria(goal_text):
+        name = charter.gap_name(crit)
+        seen[name] = seen.get(name, 0) + 1
+        if seen[name] > 1:
+            name = f"{name}-{seen[name]}"
+        out.append((name, crit))
+    return out
+
+
+def directive_body(*, goal_text: str, branch: str, previous: str | None, gaps: list[tuple[str, str]],
+                   dropped: list[tuple[str, str]], fence_charter: bool = False) -> str:
+    """The run directive's body: the charter verbatim and its done criteria as gaps."""
+    gap_lines = "\n".join(f"- [gap] {n}: {c}" for n, c in gaps) or "- (none declared)"
+    supersedes = (
+        f"\n\nThis directive supersedes `{previous}`: the operator edited the charter; this version applies at a run start or iteration boundary."
+        if previous else ""
+    )
+    dropped_text = (
+        "\n\nCriteria this version drops (the maintainer marks their gaps superseded):\n"
+        + "\n".join(f"- {n}: {c}" for n, c in dropped)
+    ) if dropped else ""
+    text = goal_text.strip()
+    if fence_charter:   # keep the charter's own headings from reading as the record's sections
+        text = f"~~~~markdown\n{text}\n~~~~"
+    return (
+        "## What\n\nOperator directive: an Ouroboros loop starts on this repo. Every work node of the run "
+        f"descends from this node.{supersedes}\n\n## Why\n\nThe charter (the operator's goal document), verbatim:\n\n"
+        f"{text}\n\n**Done criteria as gaps** (one open state node each; work closes them through "
+        f"declared impacts):\n\n{gap_lines}{dropped_text}\n\n"
+        f"## Method\n\nOuroboros iterations on branch `{branch}`: orient, one dispatched unit, record, commit; "
+        "a reconcile pass folds the tail on pressure; with the planner on, a bet follows each reconcile.\n\n"
+        "## Result\n\nDirective recorded. Work follows as child nodes.\n"
+    )
+
+
 def _main_checkout(repo: Path) -> Path:
     """The main working tree for `repo` (itself unless `repo` is a git worktree)."""
     try:
@@ -209,16 +283,7 @@ class HypergraphMemory(BaseMemory):
         return _strip_front_matter(f.read_text()) if f.exists() else ""
 
     def charter_gaps(self, goal_text: str) -> list[tuple[str, str]]:
-        """(gap-name, criterion) for every done criterion, names made unique."""
-        seen: dict[str, int] = {}
-        out: list[tuple[str, str]] = []
-        for crit in charter.done_criteria(goal_text):
-            name = charter.gap_name(crit)
-            seen[name] = seen.get(name, 0) + 1
-            if seen[name] > 1:
-                name = f"{name}-{seen[name]}"
-            out.append((name, crit))
-        return out
+        return charter_gaps(goal_text)
 
     def start(self, *, run: str, goal_text: str, run_dir: Path, branch: str) -> None:
         self.branch, self.goal_text, self.run_dir = branch, goal_text, run_dir
@@ -232,24 +297,7 @@ class HypergraphMemory(BaseMemory):
             gaps = self.charter_gaps(goal_text)
             added = [(n, c) for n, c in gaps if n not in known]
             dropped = [(n, c) for n, c in known.items() if n not in {g for g, _ in gaps}]
-            gap_lines = "\n".join(f"- [gap] {n}: {c}" for n, c in gaps) or "- (none declared)"
-            supersedes = (
-                f"\n\nThis directive supersedes `{previous}`: the operator edited the charter; this version applies at a run start or iteration boundary."
-                if previous else ""
-            )
-            dropped_text = (
-                "\n\nCriteria this version drops (the maintainer marks their gaps superseded):\n"
-                + "\n".join(f"- {n}: {c}" for n, c in dropped)
-            ) if dropped else ""
-            body = (
-                "## What\n\nOperator directive: an Ouroboros loop starts on this repo. Every work node of the run "
-                f"descends from this node.{supersedes}\n\n## Why\n\nThe charter (the operator's goal document), verbatim:\n\n"
-                f"{goal_text.strip()}\n\n**Done criteria as gaps** (one open state node each; work closes them through "
-                f"declared impacts):\n\n{gap_lines}{dropped_text}\n\n"
-                f"## Method\n\nOuroboros iterations on branch `{branch}`: orient, one dispatched unit, record, commit; "
-                "a reconcile pass folds the tail on pressure; with the planner on, a bet follows each reconcile.\n\n"
-                "## Result\n\nDirective recorded. Work follows as child nodes.\n"
-            )
+            body = directive_body(goal_text=goal_text, branch=branch, previous=previous, gaps=gaps, dropped=dropped)
             impacts = [
                 f"NEW {n} — Charter gap, status open: {c[:300]}. Flip to working only when the criterion is verifiably met."
                 for n, c in added
@@ -488,14 +536,10 @@ class HypergraphMemory(BaseMemory):
         return count >= self.pressure
 
     def reconcile_prompt(self) -> str | None:
-        tpl = _strip_front_matter(
-            resources.files("ouroboros.skills").joinpath("ouroboros-maintainer/SKILL.md").read_text()
-        )
         _, tail = self.unreconciled()
-        return (
-            tpl.replace("{branch}", self.branch or "(run branch)")
-            .replace("{tail}", f"```\n{tail.strip()[-4000:]}\n```")
-            .replace("{goal}", (self.goal_text or "").strip()[:4000] or "(none)")
+        return maintainer_prompt(
+            branch=self.branch, tail=tail, goal_text=self.goal_text,
+            procedure=HYPERGRAPH_PROCEDURE, plan_rule=HYPERGRAPH_PLAN_RULE,
         )
 
     def plan_md_text(self) -> str:

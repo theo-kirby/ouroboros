@@ -84,7 +84,7 @@ ten minutes.
 | Question | Decision |
 |---|---|
 | How to drive a harness | Headless subprocess by default. A tmux TUI driver is a second backend. |
-| Memory between iterations | `hypergraph-protocol` when `.hypergraph/config.yml` exists. Handoff documents when it does not. |
+| Memory between iterations | A governor graph when `.flywheel/db.sqlite` exists (and no `.hypergraph/config.yml`); `hypergraph-protocol` when `.hypergraph/config.yml` exists; handoff documents otherwise. |
 | Who judges the change, answers questions, and writes the next prompt | One critic agent, read-only, every iteration. Rules as fallback. |
 | Git | Auto-commit every iteration on `ouroboros/<run-name>`. |
 
@@ -96,7 +96,7 @@ ouroboros run
       ├── Harness pool       .................. one chain per role, one limit board per run (section 9)
       │    ├── Driver        .................. claude | codex | pi
       │    └── Backend       .................. headless | tmux
-      ├── Memory adapter     .................. hypergraph | handoff  (section 7)
+      ├── Memory adapter     .................. governor | hypergraph | handoff  (section 7)
       │    └── Charter parser ................. goal.md → gaps, ladder, policies (section 20)
       ├── Critic             .................. grades the diff, answers, judges done, writes the next prompt (section 8)
       ├── Planner            .................. optional: bets into the plan view after each reconcile (section 20)
@@ -251,6 +251,32 @@ Rules Ouroboros enforces for hypergraph mode:
 
 A repo without `.hypergraph/config.yml` gets handoff memory. Ouroboros does
 not run `hypergraph-init` for you.
+
+### 7a′. Governor (replaces hypergraph)
+
+Detection: `.flywheel/db.sqlite` at the checkout or its main checkout, `governor`
+on `PATH`, and no `.hypergraph/config.yml`. `memory/governor.py` keeps the 7a
+semantics through the `governor` CLI, reading only `governor snapshot` JSON:
+
+| Ouroboros step | Governor |
+|---|---|
+| ORIENT | `governor orient` (frontier, the unfolded tail with its impacts, architecture, recent records) plus the plan claims |
+| RECORD | `governor record --parent <slug> (--impact "slug: Δ" \| --new "name: Δ" \| --none "why")`; committed to the Flywheel repository, nothing to `git add` |
+| RECONCILE | a fold: `governor fold --apply fold.json` tags the tail `folded`, then `governor render -o STATE.md` |
+| PLAN | one `Bet:` record, then a plan fold (`"view": "plan"`, `"folded": []`) of `plan`-kind claims `short` / `medium` / `long` under a plan component |
+
+- The tail is the unfolded records; pressure and cadence work as in 7a.
+- The directive is a record with one `--new gap-*` per open criterion and
+  `--new plan-short|medium|long` seeds; a re-versioned charter's directive takes
+  the previous one as parent.
+- The plan component is a `plan`-kind claim titled `plan`, created by Ouroboros
+  at run start through a plan fold that folds no record. A plan impact is
+  pending until a plan claim cites its record; the state fold folds `Bet:`
+  records like any other and leaves plan claims alone.
+- `governor check` runs after every commit; a violation goes into the next prompt.
+- The frontier fingerprint is every state claim's status tag, from the snapshot.
+- After a planner pass Ouroboros renders `PLAN.md` from the plan claims, so the
+  plan commit carries something readable (governor renders state only).
 
 ### 7b. Handoff documents (fallback)
 
@@ -809,7 +835,7 @@ skill, editable by hand. Every key with its default:
 ```yaml
 run: run                    # branch ouroboros/<run>, run dir .ouroboros/runs/<run>
 goal: .ouroboros/goal.md    # the charter
-memory: auto                # auto | hypergraph | handoff
+memory: auto                # auto | governor | hypergraph | handoff
 backend: headless           # headless | tmux (one window per harness call)
 critic: agent               # agent | rules (rules: the deterministic fallback only, no model call)
 maintainer: false           # true: the reconcile pass is a separate call, not an actor iteration
@@ -836,7 +862,7 @@ stop:                       # all optional; none set = run until killed
   max_stuck: 25             # this many `stuck` verdicts in a row; null to never stop
 handoff:
   recent: 3                 # handoff files shown to the actor
-hypergraph:
+hypergraph:                 # governor repos read these too
   reconcile_every: 5        # housekeeping is due after this many worked iterations
   pressure: 3               # ...or at this many unreconciled record nodes
   budget_units: 1           # dispatch budget per iteration

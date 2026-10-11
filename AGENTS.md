@@ -38,13 +38,15 @@ either without recording why there.
 
 See `DESIGN.md` section 17. Short form: `cli.py` (commands, signals),
 `engine.py` (the state machine), `config.py`, `goal.py` (charter parser),
-`harness/` (drivers, pool, backends), `memory/` (hypergraph, handoff),
+`harness/` (drivers, pool, backends), `memory/` (governor, hypergraph, handoff),
 `roles/` (prompt assembly and JSON parsing), `gitguard.py`, `budget.py`,
 `recorder.py`, `tmux.py`, `skills/`.
 
 ## Smoke tests that cost real usage
 
-`tests/test_memory_hypergraph.py` needs the `hypergraph` CLI and runs offline.
+`tests/test_memory_hypergraph.py` needs the `hypergraph` CLI and runs offline;
+`tests/test_memory_governor.py` needs `governor` and `flywheel` (it skips without
+them) and takes a few minutes, because every governor write is a Flywheel commit.
 Anything that calls a real harness (`claude`, `codex`, `pi`) is a manual smoke
 test, not a pytest; do it on a scratch repo under the scratchpad directory and
 say so in the commit message.

@@ -88,12 +88,19 @@ what is next, what is broken, the numbers. Tune it under `report:` in the config
 
 ## Memory and review
 
-By default, agents leave handoff files. Repos with `.hypergraph/config.yml`
-use [hypergraph-protocol](https://github.com/theo-kirby/hypergraph-protocol)
-for shared state and planning. Install it with `uv tool install hypergraph-protocol`.
+By default, agents leave handoff files. A repo whose memory is a
+[governor](https://github.com/theo-kirby/governor) graph (`.flywheel/db.sqlite`
+at the checkout, `governor` on `PATH`, no `.hypergraph/config.yml`) uses it for
+shared state and planning: records with declared impacts, a fold as the single
+writer of state, and the plan as `plan`-kind claims. Repos with
+`.hypergraph/config.yml` use
+[hypergraph-protocol](https://github.com/theo-kirby/hypergraph-protocol) the same
+way (`uv tool install hypergraph-protocol`). `memory: auto` picks in that order;
+`--memory governor|hypergraph|handoff` forces one. Keep `.flywheel/` and
+`.governor/` gitignored (a governor run adds them to `.gitignore` if they are not).
 
 Review the report and run branch before merging. Use a merge commit for
-hypergraph runs: their records reference commit IDs, which squash and rebase change.
+graph-memory runs: their records reference commit IDs, which squash and rebase change.
 
 A run reports what it spent as the windows it burned, never as dollars: a
 subscription's `total_cost_usd` is priced from token counts at API list rates

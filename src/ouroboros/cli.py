@@ -830,7 +830,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--critic", choices=["agent", "rules"], help="rules: the deterministic critic, no model call")
     r.add_argument("--maintainer", action="store_true", default=None, help="a separate maintainer role (default: the actor does housekeeping)")
     r.add_argument("--planner", action="store_true", default=None, help="a separate planner role (default: the critic's reply names the next unit)")
-    r.add_argument("--memory", choices=["auto", "hypergraph", "handoff"])
+    r.add_argument("--memory", choices=["auto", "governor", "hypergraph", "handoff"])
     r.add_argument("--foreground", action="store_true", help="do not wrap in tmux")
     r.add_argument("--own-session", action="store_true",
                    help="a detached tmux session of its own, even when started from inside a tmux session")

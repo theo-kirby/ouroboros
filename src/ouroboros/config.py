@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, Field
@@ -111,6 +112,7 @@ class HandoffConfig(BaseModel):
 
 
 class HypergraphConfig(BaseModel):
+    """When housekeeping is due. Applies to both graph memories, hypergraph and governor."""
     reconcile_every: int = 5   # maintainer pass after this many work iterations
     pressure: int = 3          # ...or as soon as this many record nodes are unreconciled
     budget_units: int = 1      # dispatch budget per iteration
@@ -179,7 +181,7 @@ class ReportConfig(BaseModel):
 class Config(BaseModel):
     run: str = "run"
     goal: str = ".ouroboros/goal.md"
-    memory: str = "auto"  # auto | hypergraph | handoff
+    memory: Literal["auto", "governor", "hypergraph", "handoff"] = "auto"
     backend: str = "headless"
     # Two roles run every iteration: the actor, and the critic that judges it and
     # writes the next prompt. `rules` is the critic with no model behind it -- the

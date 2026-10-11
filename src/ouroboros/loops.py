@@ -36,7 +36,7 @@ from typing import Iterable
 # bookkeeping: real, often necessary, and not the work. Everything else --
 # source, tests, docs, data, build files -- counts as product, because a
 # narrower rule would call a docs fix "not work", and it is.
-BOOKKEEPING = (".hypergraph/", ".ouroboros/")
+BOOKKEEPING = (".hypergraph/", ".ouroboros/", ".governor/", ".flywheel/")
 GENERATED = ("STATE.md", "PLAN.md", "ROADMAP.md")
 
 # Number words collapse to one token before bets are compared. This is not
