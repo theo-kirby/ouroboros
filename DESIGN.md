@@ -269,14 +269,18 @@ semantics through the `governor` CLI, reading only `governor snapshot` JSON:
 - The directive is a record with one `--new gap-*` per open criterion and
   `--new plan-short|medium|long` seeds; a re-versioned charter's directive takes
   the previous one as parent.
-- The plan component is a `plan`-kind claim titled `plan`, created by Ouroboros
-  at run start through a plan fold that folds no record. A plan impact is
+- The plan component is a status-less `plan`-kind component titled `plan`,
+  created by Ouroboros at run start through a plan fold (`"component": true`)
+  that folds no record; an older `open` plan component is still accepted. A plan impact is
   pending until a plan claim cites its record; the state fold folds `Bet:`
   records like any other and leaves plan claims alone.
 - `governor check` runs after every commit; a violation goes into the next prompt.
 - The frontier fingerprint is every state claim's status tag, from the snapshot.
-- After a planner pass Ouroboros renders `PLAN.md` from the plan claims, so the
-  plan commit carries something readable (governor renders state only).
+- After a planner pass Ouroboros runs `governor render --view plan -o PLAN.md`,
+  so the plan commit carries something readable. Plan folds commit as
+  `governor fold (plan): …`.
+- Reads use `--json` (`record`, `fold --apply`, `check`); the snapshot is cached
+  by `governor head`, with the database's stat as a free pre-check.
 
 ### 7b. Handoff documents (fallback)
 

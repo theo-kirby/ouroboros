@@ -588,6 +588,10 @@ def _plan_short(repo: Path, plan_md: str) -> list[str]:
     for cand in (repo / plan_md, repo / ".ouroboros" / "plan.md"):
         if cand.exists():
             text = cand.read_text()
+            # `governor render --view plan`: one line per horizon, `- [open] **short** (`slug`) — first item`
+            g = re.search(r"^\s*-\s*\[\w+\]\s+\*\*short\*\*\s+\(`[^`]+`\)\s+—\s+(.+)$", text, re.M)
+            if g:
+                return [re.sub(r"\s*\[\d+ record\(s\)\]$|\s*\[rec: [^\]]+\]", "", g.group(1)).strip()]
             m = re.search(r"^#{2,3}\s+short\b.*?$([\s\S]*?)(?=^#{2,3}\s|\Z)", text, re.M | re.I)
             body = m.group(1) if m else text
             bullets = [l.strip() for l in body.splitlines() if l.strip().startswith(("-", "*", "1", "2", "3"))]
@@ -613,7 +617,7 @@ def frontier_counts(repo: Path) -> dict[str, int]:
     m = re.search(r"^## Frontier\s*$([\s\S]*?)(?=^## |\Z)", text, re.M)
     body = m.group(1) if m else ""
     for line in body.splitlines():
-        mm = re.match(r"^\s*-\s*(?:\*\*)?\[(\w+)\]", line)   # governor renders `- **[open]** …`
+        mm = re.match(r"^\s*-\s*(?:\*\*)?\[(\w+)\]", line)   # `- [open] **T**`; governor before 53b0067: `- **[open]** T`
         if mm:
             out[mm.group(1)] = out.get(mm.group(1), 0) + 1
             if "charter criterion" in line.lower() or "charter gap" in line.lower():

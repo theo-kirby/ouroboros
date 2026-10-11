@@ -272,6 +272,19 @@ def test_charter_gaps_are_counted_only_off_the_charter(tmp_path):
     assert f["gaps_total"] - f["gaps_unchecked"] == 2
 
 
+def test_frontier_counts_and_plan_short_read_governor_renders(tmp_path):
+    from ouroboros.tui.state import _plan_short, frontier_counts
+    (tmp_path / "STATE.md").write_text(
+        "## Frontier\n\n- [open] **Gap A** (`a-b-0001`) — todo\n- **[broken]** Gap B (`a-b-0002`) — old form\n\n"
+        "## Architecture\n\n- [open] **Gap A** (`a-b-0001`) — todo\n")
+    f = frontier_counts(tmp_path)
+    assert f["open"] == 1 and f["broken"] == 1 and f["nodes"] == 1
+    (tmp_path / "PLAN.md").write_text(
+        "# t — plan\n\n## Frontier\n\n- [open] **short** (`a-b-0003`) — 1. fix the build [rec: c-d-0004]\n\n"
+        "## Plan\n\n- [open] **long** (`a-b-0005`) — later\n- [open] **short** (`a-b-0003`) — 1. fix the build [1 record(s)]\n")
+    assert _plan_short(tmp_path, "PLAN.md") == ["1. fix the build"]
+
+
 def _snap(**kw):
     """A Snapshot with every required field filled, so a test names only what it tests."""
     from ouroboros.tui.state import STAGES, Snapshot, StageStat

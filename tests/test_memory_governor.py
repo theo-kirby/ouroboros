@@ -273,9 +273,15 @@ def test_check_report_names_a_violation(gov_repo, monkeypatch):
     mem = GovernorMemory(gov_repo)
     start(mem, gov_repo)
     assert mem.check_report() is None
-    monkeypatch.setattr(mem, "check", lambda: (1, "VIOLATION G3 x: declares no state impact\nwarning   tail\n\ncheck: 1 violation(s)"))
+    findings = [{"level": "violation", "rule": "G3", "node": "x", "message": "declares no state impact"},
+                {"level": "warning", "rule": "tail", "message": "3 unfolded"}]
+    out = json.dumps({"ok": False, "violations": 1, "warnings": 1, "findings": findings, "head": "h"})
+    monkeypatch.setattr(mem, "check", lambda: (1, out))
     report = mem.check_report()
-    assert report.startswith("`governor check` exit 1") and "G3" in report and "warning" not in report
+    assert report.startswith("`governor check` exit 1") and "VIOLATION G3 x: declares no state impact" in report
+    assert "unfolded" not in report
+    monkeypatch.setattr(mem, "check", lambda: (2, "error: no Flywheel repository here"))
+    assert "no Flywheel repository" in mem.check_report()
 
 
 def test_critic_context_and_fingerprint_follow_claim_statuses(gov_repo):
@@ -304,7 +310,7 @@ def test_plan_component_is_created_and_horizons_seeded(gov_repo):
     mem = GovernorMemory(gov_repo)
     start(mem, gov_repo, GOAL_WITH_LADDER)
     root = node(gov_repo, mem.plan_root_slug)
-    assert root["kind"] == "plan" and root["title"] == "plan" and root["status"] == "open"
+    assert root["kind"] == "plan" and root["title"] == "plan" and root["status"] is None   # a component
     body = mem.read_record(mem.directive_slug)
     assert "NEW plan-short —" in body and "fix the build. write the README." in body
     assert "NEW plan-medium —" in body and "NEW plan-long —" in body and "keep it green" in body
@@ -313,6 +319,19 @@ def test_plan_component_is_created_and_horizons_seeded(gov_repo):
     assert mem2.plan_root_slug == mem.plan_root_slug and mem2.directive_slug == mem.directive_slug
     assert sum(1 for n in snap(gov_repo)["nodes"].values() if n["kind"] == "plan") == 1
     assert mem.check_report() is None
+
+
+def test_an_older_open_plan_component_is_still_accepted(gov_repo):
+    rec = mint(gov_repo, "seed", "root")
+    fold_all(gov_repo, [{"new": "plan", "parent": "root", "title": "plan", "status": "open",
+                         "current": "- bets", "cites": []}], view="plan", folded=[])
+    slug = next(n["slug"] for n in snap(gov_repo)["nodes"].values() if n["kind"] == "plan")
+    mem = GovernorMemory(gov_repo)
+    assert mem.plan_root_slug == slug
+    start(mem, gov_repo, GOAL_WITH_LADDER)
+    assert sum(1 for n in snap(gov_repo)["nodes"].values() if n["kind"] == "plan") == 1
+    assert mem.plan_nodes() == [] and "NEW plan-short" in mem.read_record(mem.directive_slug)
+    assert rec
 
 
 def test_plan_disabled_declares_nothing(gov_repo):
@@ -345,7 +364,8 @@ def test_planner_prompt_bet_and_plan_fold(gov_repo):
     assert mem.plan_pending() == "(none)"
     assert [n["title"] for n in mem.plan_nodes()] == ["short", "medium", "long"]
     assert "### short" in mem.plan_text() and "short work" in mem.plan_text()
-    assert "## short" in (gov_repo / "PLAN.md").read_text()          # rendered for the commit and the TUI
+    plan_md = (gov_repo / "PLAN.md").read_text()                     # `governor render --view plan`, for the commit and the TUI
+    assert "## Plan" in plan_md and "**short**" in plan_md and f"`{mem.plan_root_slug}`" not in plan_md
     assert "Plan (agent-owned" in mem.critic_context() and "short work" in mem.orient_prompt()
     assert node(gov_repo, bet)["folded"] is False                    # the plan fold never tags records folded
     assert mem.unreconciled()[0] == 1
@@ -453,5 +473,7 @@ def test_engine_runs_planner_after_reconcile(gov_repo):
     plan_steps = [s for s in steps if s.get("step") == "plan"]
     assert [p["iteration"] for p in plan_steps] == [1, 3] and "Bet: README" in plan_steps[0]["bet"]
     assert "ouroboros #1: plan — " in git(gov_repo, "log", "--oneline")   # the rendered PLAN.md
+    commits = [c["message"] for c in snap(gov_repo)["commits"]]
+    assert any(m.startswith("governor fold (plan):") for m in commits)
     assert "README" in (gov_repo / "PLAN.md").read_text()
     assert git(gov_repo, "status", "--porcelain") == ""

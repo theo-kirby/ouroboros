@@ -44,6 +44,18 @@ def governor_repo(repo: Path) -> Path | None:
     return None
 
 
+def _json_line(out: str) -> dict | None:
+    """The one JSON object a `--json` governor command prints (stderr may trail it)."""
+    for line in (out or "").splitlines():
+        line = line.strip()
+        if line.startswith("{"):
+            try:
+                return json.loads(line)
+            except json.JSONDecodeError:
+                continue
+    return None
+
+
 def _section(content: str, heading: str) -> str:
     """The text under `## heading`, up to the next `## `."""
     for part in re.split(r"^## ", content or "", flags=re.MULTILINE):
@@ -194,14 +206,28 @@ class GovernorMemory(BaseMemory):
                 stamp.append(None)
         return tuple(stamp)
 
+    def head(self) -> str | None:
+        code, out = self.gov("head")
+        return out.strip() or None if code == 0 else None
+
     def graph(self) -> Graph:
-        """The current snapshot; re-read only when the database changed since the last read."""
+        """The current snapshot, keyed by the repository head.
+
+        The database's stat is a free pre-check (reads leave it alone, every commit
+        moves it); only when it moved does `governor head` decide whether to re-read.
+        """
         stamp = self._db_stamp()
-        if stamp is not None and self._cache is not None and self._cache[0] == stamp:
-            return self._cache[1]
+        if self._cache is not None:
+            cached_stamp, cached_head, cached = self._cache
+            if stamp is not None and stamp == cached_stamp:
+                return cached
+            head = self.head()
+            if head is not None and head == cached_head:
+                self._cache = (stamp, head, cached)
+                return cached
         g = self._read_graph()
-        if g.ok and stamp is not None:
-            self._cache = (stamp, g)
+        if g.ok and g.head:
+            self._cache = (stamp, g.head, g)
         return g
 
     def _read_graph(self) -> Graph:
@@ -224,7 +250,7 @@ class GovernorMemory(BaseMemory):
             json.dump(plan, fh)
             path = fh.name
         try:
-            return self.gov("fold", "--apply", path)
+            return self.gov("fold", "--apply", path, "--json")
         finally:
             Path(path).unlink(missing_ok=True)
 
@@ -235,7 +261,7 @@ class GovernorMemory(BaseMemory):
         return code == 0
 
     def check(self) -> tuple[int, str]:
-        return self.gov("check")
+        return self.gov("check", "--json")
 
     # -- records ---------------------------------------------------------
     def record_ids(self, g: Graph | None = None) -> list[str]:
@@ -259,7 +285,7 @@ class GovernorMemory(BaseMemory):
         impacts: list[tuple[str, str]] | None = None, news: list[tuple[str, str]] | None = None,
     ) -> str | None:
         """Append one record. `impacts` are (claim-slug, delta), `news` are (kebab-name, delta)."""
-        args = ["record", "--title", title, "--body", "-", "--parent", parent or "root"]
+        args = ["record", "--json", "--title", title, "--body", "-", "--parent", parent or "root"]
         for slug, delta in impacts or []:
             args += ["--impact", f"{slug}: {delta}"]
         for name, delta in news or []:
@@ -267,11 +293,11 @@ class GovernorMemory(BaseMemory):
         if not impacts and not news:
             args += ["--none", none_reason or "no state change"]
         code, out = self.gov(*args, stdin=body)
-        if code != 0:
+        result = _json_line(out) if code == 0 else None
+        if not result or not result.get("slug"):
             self.last_error = out
             return None
-        first = out.split()
-        return first[0] if first else None
+        return result["slug"]
 
     def charter_gaps(self, goal_text: str) -> list[tuple[str, str]]:
         return charter_gaps(goal_text)
@@ -330,7 +356,9 @@ class GovernorMemory(BaseMemory):
 
     # -- the plan --------------------------------------------------------
     def _find_plan_root(self, g: Graph) -> str | None:
-        """The plan component: a plan-kind child of the root, preferring the one titled like the view."""
+        """The plan component: a plan-kind child of the root, preferring the one titled like the view.
+
+        New ones are status-less components; an older `open` one is still accepted."""
         tops = [n for n in g.nodes.values() if n.get("kind") == "plan" and g.root in (n.get("parents") or [])]
         tops.sort(key=lambda n: (n.get("title", "").lower() != self.plan_view.lower(), n.get("seq", 0)))
         return tops[0].get("slug") if tops else None
@@ -344,10 +372,9 @@ class GovernorMemory(BaseMemory):
         code, out = self.fold_apply({
             "view": "plan",
             "claims": [{
-                "new": self.plan_view, "parent": "root", "title": self.plan_view, "status": "open",
+                "new": self.plan_view, "parent": "root", "title": self.plan_view, "component": True,
                 "current": "- The planner's bets by horizon: `short`, `medium`, `long`. The planner is this "
                            "component's single writer; Ouroboros created it.",
-                "cites": [],
             }],
             "folded": [],
         })
@@ -378,14 +405,12 @@ class GovernorMemory(BaseMemory):
         return text[:limit]
 
     def render_plan_md(self, g: Graph | None = None) -> None:
-        """PLAN.md from the plan claims, so the commit after a planner pass carries a readable plan."""
-        nodes = self.plan_nodes(g)
-        if not nodes:
+        """`governor render --view plan -o PLAN.md`, so the commit after a planner pass carries the plan."""
+        if not self.plan_nodes(g):
             return
-        body = "\n\n".join(f"## {n['title']} (`{n['slug']}`, {n['status']})\n\n{n['current']}" for n in nodes)
-        self.plan_md.write_text(
-            "# Plan\n\nGenerated by Ouroboros from the governor graph's plan claims — do not edit by hand.\n\n" + body + "\n"
-        )
+        code, out = self.gov("render", "--view", "plan", "-o", str(self.plan_md))
+        if code != 0:
+            self.last_error = out
 
     def plan_seed_news(self, goal_text: str) -> list[tuple[str, str]]:
         """NEW impacts that seed the plan horizons from the charter's horizon ladder, once."""
@@ -452,11 +477,12 @@ class GovernorMemory(BaseMemory):
             f"\"current\": \"1. … [rec: <bet-slug>]\", \"cites\": [\"<bet-slug>\"]}}]}}\n"
             f"   ```\n"
             f"   `current` is the claim's WHOLE new text (ranked bullets, each ending `[rec: <slug>]`), `negative` what the "
-            f"plan tried and dropped. New horizons go under the plan component `{self.plan_root_slug}`, titled `short`, "
+            f"plan tried and dropped. A claim that keeps its status may leave out cites it already has. New horizons go under the plan component `{self.plan_root_slug}`, titled `short`, "
             f"`medium` or `long`. `cites` lists every record whose plan impact you applied (the bet, and the records "
             f"under \"Pending plan impacts\"): a citation is what marks a plan impact folded. Keep `\"folded\": []` and "
             f"`\"view\": \"plan\"`: tagging records folded is the state fold's job, not yours. Then "
-            f"`governor fold --apply plan.json` (it validates the whole plan first; exit 2 = nothing written, fix and retry).\n"
+            f"`governor fold --apply plan.json` (it validates the whole plan first; exit 2 = nothing written, fix and retry; "
+            f"it commits as `governor fold (plan): …`).\n"
             f"   Never put a state claim in the plan fold, never run a fold without `\"view\": \"plan\"`, and never edit STATE.md.\n"
             f"3. `governor check` must exit 0. Delete your scratch files. There is nothing to `git add`: the bet and the plan "
             f"are committed to the Flywheel repository, and Ouroboros renders `{self.plan_md.name}` and commits it after your pass."
@@ -553,7 +579,8 @@ class GovernorMemory(BaseMemory):
             "2. For each state claim the tail touches, write its new **whole** text once, with every record in mind: "
             "`current` (short bullets, each ending `[rec: <slug>]`; merge, drop what is superseded), `negative` "
             "(what was tried and does not work, and why), `status` (`working` true and evidenced, `open`, `broken`, "
-            "`blocked`, `superseded`), and `cites` (the records it now rests on; list the new ones at least). "
+            "`blocked`, `superseded`), and `cites` (the records it now rests on; list the new ones; a claim that keeps its status may leave out cites it "
+            "already has). "
             "A `NEW <name>` impact becomes a new claim: `new`, `title`, `parent` (its component's slug, or `root`). "
             "A criterion dropped by a newer directive: its gap claim becomes `superseded`.\n"
             "3. Write `fold.json` and apply it:\n"
@@ -569,7 +596,7 @@ class GovernorMemory(BaseMemory):
             "retry), then writes it in one commit. `folded` lists **every** tail record you applied, including "
             "the `none` ones and the `Bet:` records.\n"
             "4. `governor check` must exit 0. Fix a violation with another fold or a new record, never by hand.\n"
-            "5. `governor render -o STATE.md`, then `git add STATE.md` and commit with a message starting `reconcile:`. "
+            "5. `governor render -o STATE.md` (never `--view plan`: PLAN.md is the planner's), then `git add STATE.md` and commit with a message starting `reconcile:`. "
             "The graph is already committed to the Flywheel repository (`.flywheel/` is gitignored): nothing else to add."
         )
         plan_rule = (
@@ -676,10 +703,16 @@ class GovernorMemory(BaseMemory):
 
     def check_report(self) -> str | None:
         code, out = self.check()
-        if code == 0:
+        result = _json_line(out)
+        if code == 0 and (result is None or result.get("ok", True)):
             return None
-        tail = "\n".join(l for l in out.splitlines() if not l.startswith("warning")).strip()[-2000:]
-        return f"`governor check` exit {code}:\n{tail}"
+        if result and isinstance(result.get("findings"), list):
+            lines = [f"VIOLATION {f.get('rule', '?')} {(f.get('node') + ': ') if f.get('node') else ''}{f.get('message', '')}"
+                     for f in result["findings"] if f.get("level") == "violation"]
+            text = "\n".join(lines) or f"{result.get('violations', '?')} violation(s)"
+        else:
+            text = out   # not JSON: governor itself failed (exit 2/3), so its message is the report
+        return f"`governor check` exit {code}:\n{text.strip()[-2000:]}"
 
     def last_summary(self) -> str:
         records = self.graph().records()
