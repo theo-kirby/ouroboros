@@ -14,7 +14,7 @@ from datetime import datetime
 from importlib import resources
 from pathlib import Path
 
-from . import __version__, tmux
+from . import __version__, launch, tmux
 from .banner import render as render_banner
 from .budget import BudgetClock
 from .config import DEFAULT_CONFIG_PATH, Config
@@ -158,6 +158,10 @@ def load_config(args: argparse.Namespace, repo: Path) -> Config:
         cfg.planner = args.planner
     if getattr(args, "memory", None):
         cfg.memory = args.memory
+    if getattr(args, "launcher", None):
+        cfg.launcher = args.launcher
+    if getattr(args, "foreground", False):
+        cfg.launcher = "foreground"
     return cfg
 
 
@@ -241,11 +245,14 @@ def cmd_run(args: argparse.Namespace) -> int:
     for line in history.spent_window_lines(repo):
         print(f"ouroboros: warning: {line}", file=sys.stderr)
 
-    if not args.foreground and not tmux.inside_ouroboros_tmux():
-        if not tmux.available():
-            print("tmux not found; running in the foreground", file=sys.stderr)
-        else:
-            return _launch_in_tmux(cfg, repo, own_session=bool(getattr(args, "own_session", False)))
+    if not launch.launched():
+        kind = launch.resolve(cfg.launcher)
+        if kind != "foreground":
+            why = launch.problem(kind)
+            if why:
+                print(f"ouroboros: {why}", file=sys.stderr)
+                return 2
+            return _launch(cfg, repo, kind, own_session=bool(getattr(args, "own_session", False)))
 
     git = GitGuard(repo, cfg.branch)
     try:
@@ -332,6 +339,49 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _launch(cfg: Config, repo: Path, kind: str, *, own_session: bool = False) -> int:
+    """Put the loop where `kind` says (launch.py) and the reporter beside it."""
+    if kind == "tmux":
+        return _launch_in_tmux(cfg, repo, own_session=own_session)
+    rd = run_dir_for(repo, cfg.run)
+    pid, alive = _pid_alive(rd)
+    if alive:
+        print(f"run {cfg.run!r} is already running (pid {pid}). watch: ouroboros top   stop: ouroboros stop")
+        return 1
+    binary = launch.program(sys.argv[0])
+    argv = [binary, *sys.argv[1:]]
+    name = launch.name_for(cfg.run)
+    try:
+        if kind == "tern":
+            if name in launch.tern_sessions():
+                print(f"tern session {name} already exists; close it or pick another run name")
+                return 1
+            launch.tern_session(name, argv, str(repo))
+            launch.write_note(rd, "tern", name)
+            print(f"started in tern session {name}\n  watch:   ouroboros top   (or open the session)\n"
+                  f"  status:  ouroboros status\n  stop:    ouroboros stop")
+        elif kind == "systemd":
+            unit = name + ".service"
+            if launch.unit_active(unit):
+                print(f"unit {unit} is already active; `systemctl --user stop {unit}` or pick another run name")
+                return 1
+            launch.systemd_unit(unit, argv, str(repo), memory_max=cfg.memory_max)
+            launch.write_note(rd, "systemd", unit)
+            cap = f", MemoryMax={cfg.memory_max}" if cfg.memory_max else ""
+            print(f"started as systemd user unit {unit}{cap}\n  watch:   ouroboros top\n"
+                  f"  log:     journalctl --user -u {unit} -f\n  status:  ouroboros status\n"
+                  f"  stop:    ouroboros stop")
+        else:
+            print(f"ouroboros: unknown launcher {kind!r}", file=sys.stderr)
+            return 2
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        detail = getattr(exc, "stderr", "") or ""
+        print(f"ouroboros: could not launch with {kind}: {exc} {detail}".rstrip(), file=sys.stderr)
+        return 2
+    _launch_reporter(cfg, repo, name, binary, kind=kind)
+    return 0
+
+
 def _launch_in_tmux(cfg: Config, repo: Path, *, own_session: bool) -> int:
     """Put the loop in tmux: a window of the session we are in, or a session of its own.
 
@@ -366,8 +416,8 @@ def _launch_in_tmux(cfg: Config, repo: Path, *, own_session: bool) -> int:
     return 0
 
 
-def _launch_reporter(cfg: Config, repo: Path, session: str, binary: str) -> None:
-    """The reporter in a window of its own, beside the loop, when it has somewhere to push to.
+def _launch_reporter(cfg: Config, repo: Path, session: str, binary: str, *, kind: str = "tmux") -> None:
+    """The reporter in a window (tab, unit) of its own, beside the loop, when it has somewhere to push to.
 
     It is a separate process on purpose: it reads the run directory and never the
     loop, so nothing it does -- crash, hang, run out of usage -- reaches the run.
@@ -383,13 +433,29 @@ def _launch_reporter(cfg: Config, repo: Path, session: str, binary: str) -> None
         return
     argv = [binary, "watch", "--run-name", cfg.run]
     try:
-        target = tmux.launch_window(session, tmux.window_name(cfg.run) + "-watch", argv, str(repo))
-    except (OSError, subprocess.SubprocessError) as exc:
+        _start_reporter(kind, session, argv, cfg, repo, rd)
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError) as exc:
         print(f"  reporter: could not start ({exc}); run `ouroboros watch` yourself", file=sys.stderr)
         return
-    (rd / "tmux-watch").write_text(f"window {target}\n")
     cadence = f"a digest every {cfg.report.every}" if cfg.report.every else "digests on milestones only"
     print(f"  reporter: {channel.name}, {cadence}, alerts on {', '.join(cfg.report.on)}")
+
+
+def _start_reporter(kind: str, session: str | None, argv: list[str], cfg: Config, repo: Path, rd: Path) -> str:
+    """Start the reporter where `kind` puts things, note where, and say so. Returns a description."""
+    rd.mkdir(parents=True, exist_ok=True)
+    if kind == "tern":
+        block = launch.tern_tab(session or launch.name_for(cfg.run), argv, str(repo))
+        launch.write_note(rd, "tern-tab", block, watch=True)
+        return f"a tab of tern session {session}"
+    if kind == "systemd":
+        unit = launch.name_for(cfg.run) + "-watch.service"
+        launch.systemd_unit(unit, argv, str(repo))
+        launch.write_note(rd, "systemd", unit, watch=True)
+        return f"systemd user unit {unit}"
+    target = tmux.launch_window(session, tmux.window_name(cfg.run) + "-watch", argv, str(repo))
+    (rd / "tmux-watch").write_text(f"window {target}\n")
+    return f"window {tmux.window_name(cfg.run)}-watch of this tmux session ({session})"
 
 
 def reporter_channel(cfg: Config, repo: Path):
@@ -412,9 +478,15 @@ def _tmux_target(run_dir: Path) -> tuple[str, str] | None:
     return (kind, target) if kind in ("window", "session") and target else None
 
 
-def _tmux_kill(cfg: Config, run_dir: Path) -> None:
-    """Take down whatever `run` put in tmux. Never the operator's own session."""
+def _kill_launched(cfg: Config, run_dir: Path) -> None:
+    """Take down whatever `run` put in tmux, tern or systemd. Never the operator's own session."""
     _stop_reporter(run_dir)
+    other = launch.read_note(run_dir)
+    if other:
+        launch.kill_note(other)
+        return
+    if not tmux.available():
+        return
     note = _tmux_target(run_dir)
     if note and note[0] == "window":
         tmux.kill_window(note[1])
@@ -447,6 +519,7 @@ def _stop_reporter(run_dir: Path) -> None:
                 os.kill(pid, 0)
             except OSError:
                 break
+    launch.kill_note(launch.read_note(run_dir, watch=True))
     note = run_dir / "tmux-watch"
     if note.exists():
         kind, _, target = note.read_text().strip().partition(" ")
@@ -506,7 +579,7 @@ def cmd_stop(args: argparse.Namespace) -> int:
     pid, alive = _pid_alive(rd)
     if not alive:
         print(f"run {cfg.run!r} is not running")
-        _tmux_kill(cfg, rd)
+        _kill_launched(cfg, rd)
         _archive(repo, cfg, rd)
         return 0
     os.kill(pid, signal.SIGTERM)
@@ -516,7 +589,7 @@ def cmd_stop(args: argparse.Namespace) -> int:
             break
     else:
         os.kill(pid, signal.SIGKILL)
-    _tmux_kill(cfg, rd)
+    _kill_launched(cfg, rd)
     print(f"stopped run {cfg.run!r} (pid {pid})")
     _archive(repo, cfg, rd)
     return 0
@@ -714,7 +787,16 @@ def cmd_watch(args: argparse.Namespace) -> int:
         ok = channel.send(f"{cfg.run}: test", "Ouroboros can reach this phone.", priority=0)
         print(f"{channel.name}: {'sent' if ok else 'FAILED'}")
         return 0 if ok else 1
-    if not args.foreground and not args.once and tmux.available() and not tmux.inside_ouroboros_tmux():
+    other = launch.read_note(rd)
+    if not args.foreground and not args.once and not launch.launched() and other:
+        # Beside a loop that tern or systemd holds: a tab of its session, or a unit of its own.
+        argv = [launch.program(sys.argv[0]), "watch", "--run-name", cfg.run,
+                *(["--console"] if getattr(args, "console", False) else [])]
+        kind = "tern" if other[0] == "tern" else "systemd"
+        where = _start_reporter(kind, other[1] if kind == "tern" else None, argv, cfg, repo, rd)
+        print(f"reporter started in {where}")
+        return 0
+    if not args.foreground and not args.once and tmux.available() and not launch.launched():
         # Beside the loop when the loop has a session of its own, so the two live
         # together; otherwise in the session the operator is sitting in.
         note = _tmux_target(rd)
@@ -818,7 +900,7 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument("--config", help="path to config.yml")
     common.add_argument("--run-name", dest="run_name")
 
-    r = sub.add_parser("run", parents=[common], help="start the loop (inside tmux by default)")
+    r = sub.add_parser("run", parents=[common], help="start the loop where config `launcher:` says (tmux, tern, systemd, or here)")
     r.add_argument("--for", dest="for_", help="wall clock budget, e.g. 8h, 90m")
     r.add_argument("--max-iterations", type=int)
     r.add_argument("--max-cost", type=float, help="stop at this API-equivalent cost in USD (informational on subscriptions)")
@@ -831,7 +913,9 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--maintainer", action="store_true", default=None, help="a separate maintainer role (default: the actor does housekeeping)")
     r.add_argument("--planner", action="store_true", default=None, help="a separate planner role (default: the critic's reply names the next unit)")
     r.add_argument("--memory", choices=["auto", "governor", "hypergraph", "handoff"])
-    r.add_argument("--foreground", action="store_true", help="do not wrap in tmux")
+    r.add_argument("--foreground", action="store_true", help="run here: the same as --launcher foreground")
+    r.add_argument("--launcher", choices=launch.LAUNCHERS,
+                   help="where the loop lives (overrides config `launcher:`): tmux, tern, a systemd user unit, or here")
     r.add_argument("--own-session", action="store_true",
                    help="a detached tmux session of its own, even when started from inside a tmux session")
     r.set_defaults(fn=cmd_run)
@@ -847,7 +931,7 @@ def build_parser() -> argparse.ArgumentParser:
     refresh = sub.add_parser("refresh", parents=[common], help="recheck current accounts and wake a waiting run (alias: --refresh)")
     refresh.set_defaults(fn=cmd_refresh)
 
-    stp = sub.add_parser("stop", parents=[common], help="stop the running loop (SIGTERM, then the tmux session)")
+    stp = sub.add_parser("stop", parents=[common], help="stop the running loop (SIGTERM, then the tmux window, tern session or systemd unit it took)")
     stp.set_defaults(fn=cmd_stop)
 
     rep = sub.add_parser("report", parents=[common], help="write REPORT.md for the morning")

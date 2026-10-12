@@ -42,8 +42,9 @@ memory, accepts or rejects it, answers as the sleeping user would, and writes
 the message the next iteration starts from. When the memory says a reconcile
 is due, the actor's next iteration is housekeeping instead of a unit. A
 separate maintainer and planner exist but are off unless the config turns them
-on. It runs on a branch (`ouroboros/<run>`), inside tmux, for as long as the
-charter's stop rules allow.
+on. It runs on a branch (`ouroboros/<run>`), under the configured launcher
+(a systemd user unit, a tern session or tmux), for as long as the charter's stop
+rules allow.
 
 The human owns exactly one document: `.ouroboros/goal.md`, the charter. No agent
 role may write it. Everything else -- the plan, the bets, the record -- is the
@@ -75,11 +76,24 @@ from the logs.
 Check the harnesses are authenticated and their usage windows have room; a
 subscription window that is nearly full will stall the run rather than fail it.
 
-Started from inside a tmux session -- yours, where the human is talking to you --
-the loop takes a new window of that session, named `ouroboros-<run>`, and you
-both stay where you are. Tell the human to open another window for
-`ouroboros top`. From a bare terminal, or with `--own-session`, it gets a
-detached session of its own instead.
+Where the loop lives is `launcher:` in `.ouroboros/config.yml` (or
+`--launcher`):
+
+- `systemd`: a transient user service, `ouroboros-<run>.service`, tied to no
+  terminal, so restarting tmux or tern cannot kill it. `memory_max:` caps the
+  run and everything it starts. Watch with `ouroboros top` in any terminal; its
+  output is also in `journalctl --user -u ouroboros-<run>.service`. This is the
+  launcher for a long unattended run.
+- `tern`: a tern session of its own, `ouroboros-<run>`, beside yours.
+- `tmux`: started inside a tmux session (yours, where the human is talking to
+  you), the loop takes a new window of it, named `ouroboros-<run>`, and you both
+  stay where you are. From a bare terminal, or with `--own-session`, it gets a
+  detached session of its own instead.
+- `auto` (the default): tmux inside tmux, tern inside tern, else tmux if it is
+  installed, else the foreground.
+
+Wherever it goes, `ouroboros stop` takes down exactly what `run` started, and
+the reporter goes beside it: a tmux window, a tern tab, or a unit of its own.
 
 **4. While it runs**, do not touch the files the loop is working in. An operator charter
 edit applies at the next iteration boundary; the current actor and critic finish
@@ -89,6 +103,7 @@ under their original charter. Save edits atomically and check loop.log for
     ouroboros status          # one shot
     ouroboros top             # the live view, in a window of its own
     <prefix> n                # tmux: the loop's own log is the next window over
+    journalctl --user -u ouroboros-<run>.service -f   # systemd: the same log
 
 If Pushover credentials are in a `.env` (repo, `.ouroboros/`, or `~/.ouroboros/`),
 `run` also starts `ouroboros watch` in a window of its own: a reporter outside

@@ -84,10 +84,22 @@ Edit `.ouroboros/config.yml`:
 ouroboros run --for 24h
 ```
 
-If you are inside a tmux session (you usually are: the user opened one to talk
-to you in), the loop opens as a new window of that session, `ouroboros-<run>`,
-beside this one. Nothing changes in your window. `--own-session` puts it in a
-detached session of its own instead, and a bare terminal always does that.
+Where it goes is the config's `launcher:` (or `--launcher`); `run` prints it.
+
+- `systemd`: a user unit, `ouroboros-<run>.service`, belonging to no terminal.
+  It is the right choice for a long unattended run: restarting tmux or tern
+  cannot touch it, and `memory_max:` keeps a runaway child from taking anything
+  else down. Its output is in `journalctl --user -u ouroboros-<run>.service`.
+- `tern`: a tern session of its own, `ouroboros-<run>`, beside this one.
+- `tmux`: from inside a tmux session, a new window of it, `ouroboros-<run>`;
+  `--own-session`, or a bare terminal, gives it a detached session instead.
+- `auto`: tmux inside tmux, tern inside tern, else tmux, else the foreground.
+
+Nothing changes in your own window or pane either way.
+
+Do not wrap `ouroboros run` in `tmux`, `tern new` or `systemd-run` yourself:
+the launcher does it, and records what it started so `ouroboros stop` can take
+it down. If the repo's launcher is wrong for this run, pass `--launcher`.
 
 Confirm it is really alive before you tell the user it is:
 
@@ -96,8 +108,7 @@ ouroboros status
 ```
 
 Then tell them, in three lines: what it will work on, when it stops, and where
-to look. The place to look is another window of this same session running
-`ouroboros top`; `ouroboros status` is the one-shot version, and the
+to look. The place to look is `ouroboros top` in another window, tab or pane; `ouroboros status` is the one-shot version, and the
 `ouroboros-checkup` skill is for the morning. You stay here: they can ask you how
 it is going at any time, and you answer from the run directory, not from memory.
 

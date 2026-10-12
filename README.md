@@ -7,8 +7,9 @@ make changes, check the work, and update the plan. Ouroboros keeps a record.
 
 ## Install
 
-You need Python 3.12+, `uv`, `tmux`, and at least one agent CLI installed
-and logged in: `claude`, `codex`, or `pi`.
+You need Python 3.12+, `uv`, and at least one agent CLI installed and logged
+in: `claude`, `codex`, or `pi`. To outlive the terminal, a run needs one of
+tmux, tern, or a systemd user session (`launcher:` in the config).
 
 ```bash
 git clone https://github.com/theo-kirby/ouroboros.git
@@ -24,7 +25,7 @@ From the repo you want the agents to work on:
 ```bash
 ouroboros init                 # create the config and goal template
 ouroboros design               # work through your goal with an agent
-ouroboros run --for 8h         # a tmux window beside you, or its own session (--own-session)
+ouroboros run --for 8h         # under config `launcher:`: a systemd unit, a tern session, or tmux
 ouroboros top                 # watch progress
 ouroboros stop                # stop early if needed
 ouroboros report              # write a run report

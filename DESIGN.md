@@ -43,9 +43,9 @@ ouroboros skills install      # → ./.claude/skills, ./.agents/skills, ./.pi/sk
                               #   --user → ~/.claude, ~/.codex, ~/.pi/agent (those present) and ~/.agents
 ouroboros init                # → .ouroboros/config.yml + goal.md (the charter)
 ouroboros design              # the charter interview, in claude, codex, or pi (--harness)
-ouroboros run --for 10h       # preflight (git, charter filled in, logins), then a tmux window beside you (or a session: --own-session)
+ouroboros run --for 10h       # preflight (git, charter filled in, logins), then the configured launcher: a systemd unit, a tern session, or tmux
 ouroboros status --watch      # the live TUI (also `ouroboros top`); --plain for the text loop
-ouroboros stop                # SIGTERM the loop and its children, then the tmux window or session it took
+ouroboros stop                # SIGTERM the loop and its children, then the tmux window, tern session or unit it took
 ouroboros report              # REPORT.md: bets, plan, verdicts, cost
 ```
 
@@ -69,7 +69,7 @@ normal output without the banner.
 
 Python 3.12+, `uv`, no daemon, no database. All state is files in the repo.
 
-**Preflight** runs before `run` detaches into tmux, so its messages land in the
+**Preflight** runs before `run` hands the loop to its launcher, so its messages land in the
 human's terminal: a git repo with a commit and a clean tree; a charter that is
 not the `init` template any more (mission, at least one done criterion, a
 ladder rung: `goal.unfilled`); and a login check per harness in the config
@@ -680,6 +680,8 @@ without touching code and so a harness can load them natively.
   REPORT.md                  # written by `ouroboros report`
   reporter.json              # where the reporter (`ouroboros watch`) is up to; reports/ holds its digests
   watch.pid  tmux-watch      # the reporter's pid and window, so `stop` can take it down after the loop
+  tmux | launcher            # where `run` put the loop (tmux: window/session; else `tern <session>` or `systemd <unit>`)
+  launcher-watch             # the same for the reporter (`tern-tab <block>` or `systemd <unit>`)
 ```
 
 None of that leaves the machine: `.ouroboros/runs/` is gitignored, and it is
@@ -709,7 +711,27 @@ The delta is measured against the charter at the merge base.
 `plan`, `backoff` (with `why` and `seconds`), `idle`, `stopped`, `killed`.
 `limited` lists blocked harnesses with the minutes left.
 
-Where the loop lives in tmux: started from inside a session -- the operator's,
+**Where the loop lives** is `launcher:` (`launch.py`): `tmux`, `tern`, `systemd`
+or `foreground`, and `auto` (the default) picks tmux inside tmux, tern inside a
+tern pane, else tmux if installed, else the foreground. Every launcher marks the
+loop it starts with `OUROBOROS_LAUNCHED=1`, so that loop runs in place, and
+notes what it started in the run directory, so `stop` takes down exactly that.
+
+- **systemd** starts a transient user service, `ouroboros-<run>.service`
+  (`systemd-run --user --collect`), in the repo, with the operator's environment
+  minus its terminal, multiplexer and agent-session variables. It belongs to no
+  terminal, so a tmux or tern restart cannot reach it; with lingering it outlives
+  logout. `memory_max:` sets `MemoryMax` (and no swap) on the unit, which covers
+  every process the run starts. A runaway child is then killed alone instead of
+  the OOM killer taking the operator's session (it took a tmux scope once, when
+  a 60 GB FreeCADCmd ran away in cadex). The reporter gets a unit of its own,
+  `ouroboros-<run>-watch.service`. The journal keeps the console output.
+- **tern** starts a tern session of its own, `ouroboros-<run>`, with the loop's
+  block kept open after it exits so its last lines stay readable. The reporter
+  gets a tab in it. Tern's session daemon lives inside the `tern-remote` user
+  service, so restarting that service ends the run with it. That is the reason
+  `systemd` is the launcher for long unattended runs.
+- **tmux**: started from inside a session -- the operator's,
 where an agent and a human are already talking about the run -- it takes a new
 window of that session, `ouroboros-<run>`, and they open another for `ouroboros
 top`. From a bare terminal, or with `--own-session`, it gets a detached session
@@ -841,6 +863,8 @@ run: run                    # branch ouroboros/<run>, run dir .ouroboros/runs/<r
 goal: .ouroboros/goal.md    # the charter
 memory: auto                # auto | governor | hypergraph | handoff
 backend: headless           # headless | tmux (one window per harness call)
+launcher: auto              # auto | tmux | tern | systemd | foreground: where `run` puts the loop (section 15)
+memory_max: null            # systemd only: MemoryMax on the run's unit, e.g. 40G
 critic: agent               # agent | rules (rules: the deterministic fallback only, no model call)
 maintainer: false           # true: the reconcile pass is a separate call, not an actor iteration
 planner: false              # true: a planner writes bets after each reconcile; off, the critic's reply names the next unit
@@ -931,6 +955,7 @@ ouroboros/
     notify.py               # Pushover; credentials from the environment or .env files
     history.py              # the durable record: .ouroboros/history/<run>.md digests + RUNS.md index
     operator.py             # .ouroboros/AGENTS.md, the guide for the agent that drives runs in the target repo
+    launch.py               # where the loop lives: auto/tmux/tern/systemd/foreground, notes for `stop`
     tmux.py                 # the run session: launch, kill
     tui/                    # the status TUI: theme, widgets, layout (from vllmtop), state (run-dir reader), panels, app
     skills/                 # packaged with the wheel; `ouroboros skills install` copies them out

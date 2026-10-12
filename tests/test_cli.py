@@ -210,10 +210,11 @@ def test_stop_kills_the_window_it_took_and_never_the_operators_session(tmp_path,
     killed = []
     monkeypatch.setattr(tmux, "kill_window", lambda t: killed.append(("window", t)))
     monkeypatch.setattr(tmux, "kill", lambda n: killed.append(("session", n)))
+    monkeypatch.setattr(tmux, "available", lambda: True)
     rd = tmp_path / "r"
     cli._tmux_note(rd, "window", "cadxot5:@7")
-    cli._tmux_kill(Config(run="ot5"), rd)
-    cli._tmux_kill(Config(run="old"), tmp_path / "nothing-here")   # a run from before the note existed
+    cli._kill_launched(Config(run="ot5"), rd)
+    cli._kill_launched(Config(run="old"), tmp_path / "nothing-here")   # a run from before the note existed
     assert killed == [("window", "cadxot5:@7"), ("session", "ouroboros-old")]
 
 

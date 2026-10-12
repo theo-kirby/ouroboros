@@ -21,6 +21,9 @@ def isolated_home(tmp_path_factory, monkeypatch):
     monkeypatch.delenv("PO_APP_TOKEN", raising=False)
     monkeypatch.delenv("PUSHOVER_USER", raising=False)
     monkeypatch.delenv("PUSHOVER_TOKEN", raising=False)
+    # a suite run from inside a launched loop must not inherit "already launched"
+    monkeypatch.delenv("OUROBOROS_LAUNCHED", raising=False)
+    monkeypatch.delenv("OUROBOROS_IN_TMUX", raising=False)
     return home
 
 

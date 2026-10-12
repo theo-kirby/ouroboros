@@ -154,3 +154,19 @@ def test_stop_takes_the_reporter_down_after_the_loop(run_dir, monkeypatch):
 def test_stop_without_a_reporter_is_quiet(run_dir, monkeypatch):
     monkeypatch.setattr(cli.tmux, "kill_window", lambda target: pytest.fail("no window to kill"))
     cli._stop_reporter(run_dir)
+
+
+def test_watch_goes_beside_a_loop_that_systemd_or_tern_holds(run_dir, monkeypatch, capsys):
+    """A run under systemd gets its reporter as a unit; under tern, as a tab of its session."""
+    monkeypatch.delenv(cli.launch.LAUNCHED_ENV, raising=False)
+    monkeypatch.setattr(cli.notify, "load_env", lambda *a, **k: {"PO_USER": "u", "PO_TOKEN": "t"})
+    started = []
+    monkeypatch.setattr(cli.launch, "systemd_unit", lambda unit, argv, cwd, **k: started.append(("unit", unit)) or unit)
+    monkeypatch.setattr(cli.launch, "tern_tab", lambda session, argv, cwd: started.append(("tab", session)) or "9")
+    monkeypatch.setattr(cli.tmux, "launch_window", lambda *a, **k: pytest.fail("not tmux"))
+    cli.launch.write_note(run_dir, "systemd", "ouroboros-r.service")
+    assert main(["watch"]) == 0
+    cli.launch.write_note(run_dir, "tern", "ouroboros-r")
+    assert main(["watch"]) == 0
+    assert started == [("unit", "ouroboros-r-watch.service"), ("tab", "ouroboros-r")]
+    assert cli.launch.read_note(run_dir, watch=True) == ("tern-tab", "9")

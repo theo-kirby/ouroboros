@@ -183,6 +183,13 @@ class Config(BaseModel):
     goal: str = ".ouroboros/goal.md"
     memory: Literal["auto", "governor", "hypergraph", "handoff"] = "auto"
     backend: str = "headless"
+    # Where `run` puts the loop so it outlives the terminal (launch.py): tmux,
+    # tern, a systemd user service, or the foreground. auto: tmux inside tmux,
+    # tern inside tern, else tmux if installed, else the foreground.
+    launcher: Literal["auto", "tmux", "tern", "systemd", "foreground"] = "auto"
+    # systemd only: MemoryMax for the run's unit, which covers every process it
+    # starts (e.g. "40G"). Unset: no cap beyond the user slice's.
+    memory_max: str | None = None
     # Two roles run every iteration: the actor, and the critic that judges it and
     # writes the next prompt. `rules` is the critic with no model behind it -- the
     # same deterministic fallback that runs when the agent call fails.
