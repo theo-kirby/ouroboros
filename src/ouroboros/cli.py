@@ -454,6 +454,15 @@ def cmd_stop(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_web(args: argparse.Namespace) -> int:
+    from .web import serve
+
+    repo = repo_root()
+    cfg = load_config(args, repo)
+    serve(run_dir_for(repo, cfg.run), repo, port=args.port, demo=args.demo)
+    return 0
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     repo = repo_root()
     cfg = load_config(args, repo)
@@ -697,6 +706,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--watch", action="store_true", help="keep watching; on a terminal this is the btop-style TUI")
     s.add_argument("--plain", action="store_true", help="with --watch: the plain text loop instead of the TUI")
     s.set_defaults(fn=cmd_status)
+
+    web = sub.add_parser("web", parents=[common], help="serve the local web dashboard")
+    web.add_argument("--port", type=int, default=8765)
+    web.add_argument("--demo", action="store_true", help="show labeled sample data")
+    web.set_defaults(fn=cmd_web)
 
     top = sub.add_parser("top", parents=[common], help="the live TUI (same as status --watch)")
     top.set_defaults(fn=cmd_status, watch=True, plain=False)

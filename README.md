@@ -95,3 +95,10 @@ After switching a Claude/Codex login or restoring usage credits, run
 It rechecks the configured providers with small no-tool probes and wakes a
 waiting run. Active calls finish first. Configuration changes still require
 a restart.
+
+View a run in your browser with `ouroboros web`, then open
+http://127.0.0.1:8765. Use `--run-name NAME` to select a run and `--port PORT`
+to choose another port. The dashboard refreshes automatically; Ctrl-C stops
+the web server.
+
+Use `ouroboros web --demo` to preview the dashboard with labeled sample data.
