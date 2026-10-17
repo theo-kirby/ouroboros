@@ -148,6 +148,40 @@ def _float(value) -> float | None:
         return None
 
 
+_MD_CODE = re.compile(r"`([^`\n]+)`")
+_MD_STRONG = re.compile(r"\*\*(?=\S)(.+?)(?<=\S)\*\*")
+_MD_EM = re.compile(r"(?<![\w*])\*(?=[^\s*])(.+?)(?<=[^\s*])\*(?![\w*])|(?<![\w_])_(?=[^\s_])(.+?)(?<=[^\s_])_(?![\w_])")
+_MD_LINK = re.compile(r"\[([^\]\n]+)\]\((https?://[^\s)]+)\)")
+
+
+def _md(value) -> str:
+    """Escaped text with inline markdown made HTML: `code`, **bold**, *em* or _em_, [text](https://...).
+
+    Escaping comes first, so a model's text can format but never inject. Code spans and
+    link targets are set aside before the rest, so `snake_case`, `a*b` and URLs stay as
+    they are. Only `**` is bold: `__init__` is a name, not emphasis.
+    """
+    text = _e(value).replace("\x00", "")   # the placeholders below use NUL; text must not fake one
+    kept: list[str] = []
+
+    def keep(html_: str) -> str:
+        kept.append(html_)
+        return f"\x00{len(kept) - 1}\x00"
+    text = _MD_CODE.sub(lambda m: keep(f"<code>{m.group(1)}</code>"), text)
+    text = _MD_LINK.sub(lambda m: keep(f'<a href="{m.group(2)}" rel="noopener noreferrer">') + m.group(1) + keep("</a>"), text)
+    text = _MD_STRONG.sub(lambda m: f"<strong>{m.group(1)}</strong>", text)
+    text = _MD_EM.sub(lambda m: f"<em>{m.group(1) or m.group(2)}</em>", text)
+    return re.sub("\x00(\\d+)\x00", lambda m: kept[int(m.group(1))], text)
+
+
+def _plain(value) -> str:
+    """Text with the inline markdown markers taken out, for tooltips and attributes."""
+    text = _MD_LINK.sub(lambda m: m.group(1), str(value or ""))
+    text = _MD_CODE.sub(lambda m: m.group(1), text)
+    text = _MD_STRONG.sub(lambda m: m.group(1), text)
+    return _MD_EM.sub(lambda m: m.group(1) or m.group(2), text)
+
+
 def _clip(text: str, limit: int) -> str:
     text = one_line(text)
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
@@ -289,7 +323,7 @@ def _header(status: dict, run_name: str, goal_text: str) -> str:
         f"memory {_e(status.get('memory'))}" if status.get("memory") else "") if x)
     notes = []
     if status.get("stop_reason"):
-        notes.append(f'<p class="notice">Stopped: {_e(_clip(str(status["stop_reason"]), 300))}</p>')
+        notes.append(f'<p class="notice">Stopped: {_md(_clip(str(status["stop_reason"]), 300))}</p>')
     if state == "backoff" and status.get("why"):
         notes.append(f'<p class="notice warn">Waiting {_e(_duration(status.get("seconds")))}: '
                      f'{_e(_clip(str(status["why"]), 300))}</p>')
@@ -310,7 +344,7 @@ def _summary(run_dir: Path, goal_text: str) -> str:
     if not text:
         return ""
     paras = [one_line(p) for p in re.split(r"\n\s*\n", text) if p.strip()][:4]
-    return '<div class="lede">' + "".join(f"<p>{_e(_clip(p, 900))}</p>" for p in paras) + source + "</div>"
+    return '<div class="lede">' + "".join(f"<p>{_md(_clip(p, 900))}</p>" for p in paras) + source + "</div>"
 
 
 def _figures(status: dict, steps: list[dict], graph: Graph | None, goal_text: str) -> str:
@@ -459,6 +493,19 @@ def _criteria_count(graph: Graph | None, goal_text: str) -> tuple[int, int]:
     return sum(1 for c in every if c not in open_), len(every)
 
 
+ROWS_SHOWN = 3
+
+
+def _rows(rows: list[str], key: str) -> str:
+    """The first ROWS_SHOWN rows, and the rest behind a "show N more" toggle (kept open across swaps by its id)."""
+    head = f'<ul class="rows">{"".join(rows[:ROWS_SHOWN])}</ul>'
+    rest = rows[ROWS_SHOWN:]
+    if not rest:
+        return head
+    return (head + f'<details class="more-rows" id="{_id("more", key)}"><summary><span class="closed">Show {len(rest)} more</span>'
+            f'<span class="opened">Show less</span></summary><ul class="rows">{"".join(rest)}</ul></details>')
+
+
 def _criteria(graph: Graph | None, goal_text: str) -> str:
     gaps = []
     if graph is not None and graph.ok:
@@ -473,8 +520,8 @@ def _criteria(graph: Graph | None, goal_text: str) -> str:
             cites = len(graph.cites(n))
             rows.append(
                 f'<li class="row{" gone" if st == "superseded" else ""}">{_chip("met" if st == "working" else st, STATUS_CLASS.get(st, ""))}'
-                f'<div class="what"><strong>{_e(n.get("title") or graph.label(n["id"]))}</strong>'
-                f'{f"<span class=\"sub\">{_e(now)}</span>" if now else ""}</div>'
+                f'<div class="what"><strong>{_md(n.get("title") or graph.label(n["id"]))}</strong>'
+                f'{f"<span class=\"sub\">{_md(now)}</span>" if now else ""}</div>'
                 f'<span class="num count" title="records cited">{cites} rec</span></li>')
         total = len(live)
         met = sum(1 for n in live if n.get("status") == "working")
@@ -485,7 +532,7 @@ def _criteria(graph: Graph | None, goal_text: str) -> str:
         for c in every:
             done = c not in open_
             rows.append(f'<li class="row">{_chip("ticked" if done else "open", "ok" if done else "warn")}'
-                        f'<div class="what">{_e(c)}</div></li>')
+                        f'<div class="what">{_md(c)}</div></li>')
         total, met = len(every), sum(1 for c in every if c not in open_)
         source = "from the charter (no gap claims in memory yet)"
     if not rows:
@@ -493,7 +540,7 @@ def _criteria(graph: Graph | None, goal_text: str) -> str:
     pct = round(100 * met / total) if total else 0
     return (f'<p class="meter"><span class="num">{met} of {total}</span> met <span class="quiet">· {source}</span></p>'
             f'<div class="bar" role="img" aria-label="{met} of {total} criteria met"><span style="width:{pct}%"></span></div>'
-            f'<ul class="rows">{"".join(rows)}</ul>')
+            + _rows(rows, "criteria"))
 
 
 def _frontier(graph: Graph | None) -> str:
@@ -506,13 +553,13 @@ def _frontier(graph: Graph | None) -> str:
                 continue
             now = first_line(section(n.get("content", ""), "Current"), 240)
             rows.append(f'<li class="row">{_chip(status, STATUS_CLASS.get(status, ""))}'
-                        f'<div class="what"><strong>{_e(n.get("title") or "")}</strong> <code>{_e(graph.label(n["id"]))}</code>'
-                        f'{f"<span class=\"sub\">{_e(now)}</span>" if now else ""}</div></li>')
+                        f'<div class="what"><strong>{_md(n.get("title") or "")}</strong> <code>{_e(graph.label(n["id"]))}</code>'
+                        f'{f"<span class=\"sub\">{_md(now)}</span>" if now else ""}</div></li>')
     tail = len(graph.tail())
     note = f'<p class="quiet"><span class="num">{tail}</span> record(s) not folded into state yet.</p>' if tail else ""
     if not rows:
         return '<p class="quiet">Nothing open, broken or blocked.</p>' + note
-    return f'<ul class="rows">{"".join(rows)}</ul>{note}'
+    return _rows(rows, "frontier") + note
 
 
 def _decisions(decisions: list[dict]) -> str:
@@ -533,11 +580,11 @@ def _decisions(decisions: list[dict]) -> str:
                 body.append(f"<dt>{label}</dt><dd>{_e(text)}</dd>")
         if d.get("source"):
             body.append(f"<dt>Source</dt><dd>{_e(d['source'])}</dd>")
-        doing = f'<span class="sub">{_e(_clip(str(d["doing"]), 200))}</span>' if d.get("doing") else ""
+        doing = f'<span class="sub">{_md(_clip(str(d["doing"]), 200))}</span>' if d.get("doing") else ""
         items.append(
             f'<li><details id="{_id("d", d.get("iteration"))}"><summary>'
             f'<span class="num it">#{_e(d.get("iteration", "?"))}</span>{_chip(v, VERDICT_CLASS.get(v, ""))}'
-            f'<span class="what">{_e(_clip(str(d.get("reason") or ""), 260))}{doing}</span></summary>'
+            f'<span class="what">{_md(_clip(str(d.get("reason") or ""), 260))}{doing}</span></summary>'
             f'<dl class="more">{"".join(body)}</dl></details></li>')
     return f'<div class="strip" aria-label="Last verdicts, oldest first">{strip}</div><ul class="log">{"".join(items)}</ul>'
 
@@ -547,9 +594,9 @@ def _record_item(graph: Graph, r: dict) -> str:
     what = first_line(section(content, "What"), 400)
     result = first_line(section(content, "Result"), 400)
     folded = _chip("folded", "mute") if r.get("folded") else _chip("unfolded", "warn")
-    body = "".join(f"<dt>{k}</dt><dd>{_e(v)}</dd>" for k, v in (("What", what), ("Result", result)) if v)
+    body = "".join(f"<dt>{k}</dt><dd>{_md(v)}</dd>" for k, v in (("What", what), ("Result", result)) if v)
     return (f'<li><details id="{_id("r", r.get("id"))}"><summary>'
-            f'<code class="it">{_e(graph.label(r["id"]))}</code><span class="what">{_e(r.get("title") or "")}'
+            f'<code class="it">{_e(graph.label(r["id"]))}</code><span class="what">{_md(r.get("title") or "")}'
             f'<span class="sub">{_e(_when(r.get("at")))}</span></span>{folded}</summary>'
             f'<dl class="more">{body or "<dd>(no What or Result section)</dd>"}</dl></details></li>')
 
@@ -613,7 +660,7 @@ def _progress(its: list[dict], status: dict) -> str:
         d = it.get("decision") or {}
         if d.get("did") or d.get("reason"):
             tip += " — " + _clip(str(d.get("did") or d.get("reason")), 160)
-        g.append(f'<a href="#it-{it["n"]}"><g class="col"><title>{_e(tip)}</title>')
+        g.append(f'<a href="#it-{it["n"]}"><g class="col"><title>{_e(_plain(tip))}</title>')
         for key, cls in (("actor_s", "s-actor"), ("critic_s", "s-critic"), ("scribe_s", "s-scribe")):
             h = (it.get(key) or 0) * scale
             if h > 0:
@@ -656,9 +703,9 @@ def _progress(its: list[dict], status: dict) -> str:
         rows.append(
             f'<tr id="it-{it["n"]}"><td class="num">{it["n"]}</td>'
             f'<td>{_chip("running", "on") if running else _chip(VERDICT_WORD.get(v, v), VERDICT_CLASS.get(v, "")) if v else "–"}</td>'
-            f'<td class="what">{_e(_clip(str(did), 300)) or "–"} {flags}'
-            f'{f"<span class=\"sub\">Critic: {_e(_clip(str(why), 300))}</span>" if why else ""}</td>'
-            f'<td class="next">{_e(_clip(str(d.get("doing") or ""), 220)) or "–"}</td>'
+            f'<td class="what">{_md(_clip(str(did), 300)) or "–"} {flags}'
+            f'{f"<span class=\"sub\">Critic: {_md(_clip(str(why), 300))}</span>" if why else ""}</td>'
+            f'<td class="next">{_md(_clip(str(d.get("doing") or ""), 220)) or "–"}</td>'
             f'<td class="num">{_e(_span(took)) if took else "–"}</td><td class="rec">{rec or "–"}</td></tr>')
     head = ('<thead><tr><th class="num">#</th><th>Verdict</th><th>What happened</th><th class="next">Next</th>'
             '<th class="num">Took</th><th class="rec">Record</th></tr></thead>')
@@ -679,21 +726,26 @@ _GRAPH_KINDS = ("root", "state", "record", "plan")
 _GRAPH_STATUSES = ("open", "working", "broken", "blocked", "superseded")
 
 
-def report_graph(graph: Graph) -> dict | None:
+def report_graph(graph: Graph, keep: set[str] | None = None) -> dict | None:
     """The memory as Governor's ReportGraph (shared/report.ts): topology, titles, kinds and statuses.
 
     The same mapping as Governor's `toViewer`, done here so a files memory draws the
-    same way a governor one does. None when the graph is too big for the embed.
+    same way a governor one does. `keep` limits it to those node ids. None when the
+    result is too big for the embed (see `fit_report_graph`).
     """
-    ids = set(graph.nodes)
+    ids = set(graph.nodes) if keep is None else set(graph.nodes) & keep
     nodes, edges = [], []
     children: dict[str, int] = {}
     for nid, n in graph.nodes.items():
+        if nid not in ids:
+            continue
         for p in n.get("parents") or []:
             if p in ids:
                 children[p] = children.get(p, 0) + 1
     stamps = []
     for nid, n in graph.nodes.items():
+        if nid not in ids:
+            continue
         kind = n.get("kind") if n.get("kind") in _GRAPH_KINDS else "other"
         parents = [p for p in (n.get("parents") or []) if p in ids]
         tags = [{"id": f"graph:{kind}", "name": kind}]
@@ -721,11 +773,39 @@ def report_graph(graph: Graph) -> dict | None:
         node["edgeCount"] = out_degree.get(node["id"], 0)
     if len(nodes) > GRAPH_MAX_NODES or len(edges) > GRAPH_MAX_EDGES or any(len(x["id"]) > 256 for x in nodes):
         return None
+    if len(_graph_json({"nodes": nodes, "edges": edges}).encode()) > GRAPH_MAX_BYTES:
+        return None
     head = graph.head if isinstance(graph.head, str) and _HEAD.match(graph.head) else None
     # loadedAt is the newest record, not now: the page then changes only when the memory does
     return {"schemaVersion": 1, "repositoryId": str(graph.root or "ouroboros")[:256], "head": head,
             "loadedAt": max(stamps, key=lambda t: _epoch(t) or 0) if stamps else "1970-01-01T00:00:00Z",
             "nodes": nodes, "edges": edges}
+
+
+def _graph_json(data: dict) -> str:
+    return json.dumps(data, separators=(",", ":"), ensure_ascii=False).replace("<", "\\u003c")
+
+
+def fit_report_graph(graph: Graph) -> tuple[dict | None, int]:
+    """The whole graph when it fits; else the root, every live claim and the newest records that fit.
+
+    Returns the graph and how many records were left out. A long run's oldest records
+    are the first to go: their effect lives on in the claims they were folded into.
+    """
+    data = report_graph(graph)
+    if data is not None:
+        return data, 0
+    records = sorted(graph.records(), key=lambda n: -(n.get("seq") or 0))
+    base = {k for k, n in graph.nodes.items() if n.get("kind") != "record" and n.get("status") != "superseded"}
+    lo, hi, best = 0, len(records), None
+    while lo <= hi:   # the most records that still fit
+        mid = (lo + hi) // 2
+        got = report_graph(graph, base | {r["id"] for r in records[:mid]})
+        if got is not None:
+            best, lo = (got, len(records) - mid), mid + 1
+        else:
+            hi = mid - 1
+    return best if best is not None else (None, len(records))
 
 
 def _vendor(name: str) -> str:
@@ -735,16 +815,19 @@ def _vendor(name: str) -> str:
         return ""
 
 
-def _graph_page(vdir: Path, graph: Graph | None) -> str | None:
-    """Write view/graph.html (the embed, its CSS and the snapshot) when it changed. Its version, or None."""
+def _graph_page(vdir: Path, graph: Graph | None) -> tuple[str | None, int]:
+    """Write view/graph.html (the embed, its CSS and the snapshot) when it changed.
+
+    Its version (None when there is nothing to draw) and the records left out to fit.
+    """
     if graph is None or not graph.ok:
-        return None
-    data = report_graph(graph)
+        return None, 0
+    data, omitted = fit_report_graph(graph)
     script, css = _vendor("governor-report.js"), _vendor("governor-report.css")
     if data is None or not script:
-        return None
-    payload = json.dumps(data, separators=(",", ":"), ensure_ascii=False).replace("<", "\\u003c")
-    if len(payload.encode()) > GRAPH_MAX_BYTES or re.search(r"</script", script, re.I) or re.search(r"</style", css, re.I):
+        return None, omitted
+    payload = _graph_json(data)
+    if re.search(r"</script", script, re.I) or re.search(r"</style", css, re.I):
         return None
     page = ('<!doctype html><html lang="en" data-theme="light"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width,initial-scale=1"><title>Memory graph</title>'
@@ -755,14 +838,15 @@ def _graph_page(vdir: Path, graph: Graph | None) -> str | None:
     path = vdir / GRAPH_PAGE
     if _read_text(path) != page:
         _write(path, page)
-    return version
+    return version, omitted
 
 
-def _graph(graph: Graph | None, version: str | None) -> str:
+def _graph(graph: Graph | None, version: str | None, omitted: int = 0) -> str:
     if graph is None or not graph.ok:
         return '<p class="quiet">The memory could not be read.</p>'
     if not version:
-        return '<p class="quiet">The memory graph is too large to draw here.</p>'
+        return ('<p class="quiet">The memory graph could not be drawn here. '
+                '<code>ouroboros mem orient</code> prints what it holds.</p>')
     claims = [n for n in graph.claims("state") if n.get("status") != "superseded"]
     records = graph.records()
     folded = sum(1 for r in records if r.get("folded"))
@@ -774,7 +858,10 @@ def _graph(graph: Graph | None, version: str | None) -> str:
             f'<figcaption><b>Fig. 2. What the run knows.</b> The centre is the run. Around it are <b>claims</b>: what is true now'
             f' ({len(claims)}), coloured by status. On the rim are <b>records</b>: one per iteration, what happened'
             f' ({len(records)}, {folded} folded into the claims; older ones are paler). Click a dot to show its links;'
-            f' drag to move, scroll to zoom, F to fit.<span class="legend">{swatch}</span></figcaption></figure>')
+            f' drag to move, scroll to zoom, F to fit.'
+            + (f' <b>Only the newest {len(records) - omitted} of {len(records)} records are drawn</b>, so the graph fits;'
+               ' the older ones live on in the claims they were folded into.' if omitted else "")
+            + f'<span class="legend">{swatch}</span></figcaption></figure>')
 
 
 def _story(run_dir: Path) -> str:
@@ -850,9 +937,9 @@ def render(run_dir: Path, repo: Path, *, goal_text: str, graph=None, now: float 
         except Exception:   # the ring and the timeline then show no history; the rest stands
             its = []
         try:
-            graph_version = _graph_page(vdir, graph)
+            graph_version, graph_omitted = _graph_page(vdir, graph)
         except Exception:   # no graph section; the rest of the page stands
-            graph_version = None
+            graph_version, graph_omitted = None, 0
         parts = {
             "title": _e(f"{run_name} · {goal}" if goal else f"{run_name} · Ouroboros"),
             "run": _e(run_name),
@@ -868,7 +955,7 @@ def render(run_dir: Path, repo: Path, *, goal_text: str, graph=None, now: float 
             "loop": part(_loop, status, its),
             "usage": part(_usage, status),
             "progress": part(_progress, its, status),
-            "graph": part(_graph, graph, graph_version),
+            "graph": part(_graph, graph, graph_version, graph_omitted),
             "graph_version": _e(graph_version or ""),
             "facts": part(_facts, status, steps, run_name, goal_text or ""),
             "stages": part(_stages, status),

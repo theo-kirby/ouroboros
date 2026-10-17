@@ -249,3 +249,73 @@ def test_serve_refuses_anything_else(server, path):
 
 def test_serve_refuses_writes(server):
     assert get(server, "/", method="POST")[0] == 405
+
+
+def test_inline_markdown_formats_but_never_injects():
+    md = view._md
+    assert md("**bold**, *em*, _em_ and `x_y*z`") == "<strong>bold</strong>, <em>em</em>, <em>em</em> and <code>x_y*z</code>"
+    assert md("snake_case_name, __init__, 2*3*4 and a * b") == "snake_case_name, __init__, 2*3*4 and a * b"
+    assert md("[docs](https://x.org/_a_)") == '<a href="https://x.org/_a_" rel="noopener noreferrer">docs</a>'
+    assert md("[bad](javascript:alert(1)) <script>") == "[bad](javascript:alert(1)) &lt;script&gt;"
+    assert md("**<b>x</b>**") == "<strong>&lt;b&gt;x&lt;/b&gt;</strong>"
+    assert md("a\x000\x00b") == "a0b"
+    assert view._plain("**a** _b_ `c` [d](https://e)") == "a b c d"
+
+
+def test_markdown_shows_on_the_page(run_dir, repo):
+    (run_dir / "critic.jsonl").write_text(json.dumps({"iteration": 5, "verdict": "continue", "did": "Added **expectimax**",
+                                                      "reason": "the `bench` holds"}) + "\n")
+    view.summary_path(run_dir).parent.mkdir(parents=True, exist_ok=True)
+    view.summary_path(run_dir).write_text("The bot is *fast* now.")
+    view.render(run_dir, repo, goal_text=GOAL)
+    html = page(run_dir)
+    assert "Added <strong>expectimax</strong>" in html and "the <code>bench</code> holds" in html
+    assert "The bot is <em>fast</em> now." in html
+
+
+def _claims_graph(repo, n):
+    s = FilesStore(repo)
+    s.prepare()
+    s.record(title="Directive", body=body(), parent="root", impacts=[],
+             news=[(f"gap-criterion-{i}", "open") for i in range(n)], none=None)
+    ok, msg = s.fold({"claims": [{"new": f"gap-criterion-{i}", "parent": "root", "title": f"Criterion {i}", "status": "open",
+                                  "current": "- not yet [rec: r-0001]", "cites": ["r-0001"]} for i in range(n)],
+                      "folded": ["r-0001"]})
+    assert ok, msg
+    return s.snapshot()
+
+
+def test_long_lists_show_three_then_a_toggle(run_dir, repo):
+    view.render(run_dir, repo, goal_text=GOAL, graph=_claims_graph(repo, 5))
+    html = page(run_dir)
+    crit = html[html.index('id="h-criteria"'):html.index('id="h-frontier"')]
+    assert crit.count('<li class="row') == 5
+    assert crit.index('<details class="more-rows" id="more-criteria">') > crit.index('<ul class="rows">')
+    assert "Show 2 more" in crit and "Show less" in crit
+    head = crit[:crit.index("<details")]
+    assert head.count('<li class="row') == 3
+    assert 'id="more-frontier"' in html and "Show 2 more" in html[html.index('id="h-frontier"'):]
+
+
+def test_short_lists_have_no_toggle(run_dir, repo):
+    view.render(run_dir, repo, goal_text=GOAL, graph=_claims_graph(repo, 3))
+    assert "more-rows" not in page(run_dir).split("</style>", 1)[1]
+
+
+def test_a_graph_too_big_keeps_the_claims_and_the_newest_records(monkeypatch):
+    nodes = {"root": {"id": "root", "kind": "root", "title": "run", "parents": []},
+             "c1": {"id": "c1", "kind": "state", "title": "claim", "status": "open", "parents": ["root"]},
+             "old": {"id": "old", "kind": "state", "title": "gone", "status": "superseded", "parents": ["root"]}}
+    prev = "root"
+    for i in range(1, 41):
+        nodes[f"r{i}"] = {"id": f"r{i}", "kind": "record", "title": f"rec {i}", "seq": i, "parents": [prev],
+                          "at": f"2026-10-17T10:{i:02d}:00Z", "folded": i < 30}
+        prev = f"r{i}"
+    graph = view.Graph({"root": "root", "nodes": nodes, "edges": [{"source": "c1", "target": "r40", "content": "cites"}]})
+    assert view.fit_report_graph(graph)[1] == 0
+    monkeypatch.setattr(view, "GRAPH_MAX_NODES", 12)
+    data, omitted = view.fit_report_graph(graph)
+    ids = {n["id"] for n in data["nodes"]}
+    assert omitted == 30 and len(ids) == 12 and {"root", "c1", "r40", "r31"} <= ids and not {"old", "r30", "r1"} & ids
+    assert all(n["parentId"] is None or n["parentId"] in ids for n in data["nodes"])
+    assert "Only the newest 10 of 40 records are drawn" in view._graph(graph, "v1", omitted)

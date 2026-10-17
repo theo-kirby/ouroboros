@@ -732,13 +732,16 @@ The delta is measured against the charter at the merge base.
 - **The facts, which need no model.** The engine re-renders the page at every
   status change, and once a minute while a model call runs (the heartbeat, so a
   long turn does not read as a dead loop). It reads the run directory and the
-  memory snapshot, escapes everything, and shows: the run and the goal; the loop
+  memory snapshot, escapes everything (then turns inline markdown into HTML: `**bold**`, `*em*` or
+  `_em_`, `` `code` ``, `[text](https://...)`; only `**` is bold, so `__init__`
+  stays a name), and shows: the run and the goal; the loop
   as a ring (actor → critic → scribe, the running stage lit, how long it has run
   from `stage_since` in status.json, and each stage's median time); the key
   figures (iteration, elapsed, criteria met, commits kept and reverted, last
   verdict); usage, one row of 20 cells per rationing window that ramp from green
   to red, with the rise this run and the reset time; the criteria (the gap claims,
-  or the charter's boxes); the open problems (the frontier); and the timeline:
+  or the charter's boxes) and the open problems (the frontier), each the first
+  three rows with the rest behind a "show N more" toggle; and the timeline:
   one column per iteration (stacked by stage time, the verdict under it, a fold
   above it) and one table row per iteration, newest first (the critic's `did`,
   `reason` and `doing`, the time taken, the records the scribe wrote). A record
@@ -752,7 +755,10 @@ The delta is measured against the charter at the merge base.
   Governor checkout; `GOVERNOR_VERSION` names the commit), so a files run draws
   its graph with no Node and no Governor installed. The graph page is rewritten
   only when the memory changes, and a live swap keeps its frame, so pan and zoom
-  survive.
+  survive. When the whole memory is too big for the embed (5,000 nodes,
+  20,000 edges, 1 MB), the page draws the root, every live claim and the newest
+  records that fit, and its caption says how many records were left out: the old
+  ones live on in the claims they were folded into.
 - **The scribe's two files, which need judgment.** `view/summary.txt` is plain
   text: what the run is for and where it stands, in words for someone who does
   not know the code (before the scribe writes one, the charter's mission stands
