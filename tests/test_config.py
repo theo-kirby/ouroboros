@@ -22,14 +22,22 @@ def test_config_roundtrip(tmp_path):
     assert back.role("actor").timeout_seconds == 2700
     assert back.role("critic").timeout_seconds == 600 and back.critic == "agent"
     assert back.active_roles == ["actor", "critic"]
-    assert not back.maintainer and not back.planner
+    assert back.role("actor").chain == [("claude", None), ("codex", None)]   # codex carries the actor while claude is limited
 
 
 def test_old_config_keys_are_ignored_not_fatal(tmp_path):
     """A config from before the merge names roles that no longer exist; it still loads."""
     p = tmp_path / "c.yml"
-    p.write_text("run: x\nmode: actor-critic\noverseer: agent\ncouncil: []\nroles:\n  overseer: {model: haiku}\nplan:\n  enabled: true\n")
+    p.write_text("run: x\nmode: actor-critic\noverseer: agent\ncouncil: []\nroles:\n  overseer: {model: haiku}\n"
+                 "  maintainer: {timeout: 20m}\n  planner: {timeout: 20m}\nmaintainer: true\nplanner: true\n"
+                 "plan:\n  every: 5\nloop:\n  repeat_bet_after: 3\n")
     cfg = Config.load(p)
-    assert cfg.active_roles == ["actor", "critic"] and cfg.plan.every == 5
-    cfg.maintainer = cfg.planner = True
-    assert cfg.active_roles == ["actor", "critic", "maintainer", "planner"]
+    assert cfg.active_roles == ["actor", "critic"]
+    assert not hasattr(cfg, "planner") and not hasattr(cfg, "plan")
+
+
+def test_graph_cadence_is_read_from_the_hypergraph_key(tmp_path):
+    p = tmp_path / "c.yml"
+    p.write_text("run: x\nmemory: governor\nhypergraph:\n  reconcile_every: 7\n  pressure: 2\n")
+    cfg = Config.load(p)
+    assert cfg.hypergraph.reconcile_every == 7 and cfg.hypergraph.pressure == 2 and cfg.hypergraph.budget_units == 1

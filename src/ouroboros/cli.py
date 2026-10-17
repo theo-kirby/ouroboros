@@ -37,8 +37,8 @@ from .roles.critic import AgentCritic, RulesCritic
 GOAL_TEMPLATE = """# Goal: {name}
 
 <!-- This is the charter: the one document the human owns. No agent role edits it.
-     The agents write the plan (short / medium / long) and their bets; you overrule them
-     by editing this file and restarting. /ouroboros-design writes it by interview. -->
+     The critic names the next unit each iteration; you steer it
+     by editing this file (a running loop reloads it between iterations). /ouroboros-design writes it by interview. -->
 
 ## Mission
 
@@ -152,10 +152,6 @@ def load_config(args: argparse.Namespace, repo: Path) -> Config:
         cfg.git.allow_dirty = True
     if getattr(args, "critic", None):
         cfg.critic = args.critic
-    if getattr(args, "maintainer", None) is not None:
-        cfg.maintainer = args.maintainer
-    if getattr(args, "planner", None) is not None:
-        cfg.planner = args.planner
     if getattr(args, "memory", None):
         cfg.memory = args.memory
     if getattr(args, "launcher", None):
@@ -263,9 +259,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     try:
         memory = make_memory(
-            cfg.memory, repo, recent=cfg.handoff.recent, plan=cfg.planner,
-            plan_view=cfg.plan.view, plan_md=cfg.plan.md, max_new_directions=cfg.plan.max_new_directions,
-            **cfg.hypergraph.model_dump(),
+            cfg.memory, repo, recent=cfg.handoff.recent, **cfg.hypergraph.model_dump(),
         )
     except ValueError as exc:
         print(f"ouroboros: {exc}", file=sys.stderr)
@@ -322,7 +316,6 @@ def cmd_run(args: argparse.Namespace) -> int:
     engine = Engine(
         config=cfg, repo=repo, harness=pools["actor"], memory=memory, critic=critic,
         git=git, recorder=recorder, budget=BudgetClock(cfg.stop), goal_text=goal_text, goal_path=goal_path,
-        maintainer=pools.get("maintainer"), planner=pools.get("planner"),
     )
     # a re-run of the same run name continues where the last one stopped
     prior = recorder.read_jsonl(recorder.iterations)
@@ -602,7 +595,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     if args.watch and not getattr(args, "plain", False) and sys.stdout.isatty() and sys.stdin.isatty():
         from .tui import run_tui
         return run_tui(
-            rec.run_dir, repo=repo, plan_md=cfg.plan.md, stop_after_s=cfg.stop.after_seconds,
+            rec.run_dir, repo=repo, stop_after_s=cfg.stop.after_seconds,
             max_iterations=cfg.stop.max_iterations,
             chains={name: [h for h, _ in cfg.role(name).chain] for name in cfg.active_roles},
             roles={name: cfg.role(name).chain for name in cfg.active_roles},
@@ -637,8 +630,8 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 # The report is the only thing the user reads in the morning, so it must not
 # flatter the run: cost covers every role, and a revert counts only if git agrees.
-# `oversee` is the step older runs wrote for the overseer, before it and the critic
-# were one role; their decision lines carried that role's cost.
+# `oversee`, `reconcile` and `plan` are steps older runs wrote for the overseer,
+# maintainer and planner, roles the loop no longer has; their cost still counts.
 ROLE_OF_STEP = {"commit": "actor", "critique": "critic", "oversee": "overseer",
                 "reconcile": "maintainer", "plan": "planner"}
 
@@ -742,13 +735,9 @@ def cmd_report(args: argparse.Namespace) -> int:
         lines += [f"- #{r.get('iteration')}: `{r.get('sha')}` never reached `{r.get('to')}`"
                   + (f" — {r['error']}" if r.get("error") else "") for r in failed_reverts]
         lines += ["", "Undo each by hand before merging, or the critic's rejections ship with the run.", ""]
-    bets = [s for s in steps if s.get("step") == "plan"]
-    lines += ["## Bets the planner changed this run (overrule by editing the charter)", ""]
-    lines += [f"- #{b.get('iteration')} ({b.get('why')}): {b.get('bet') or 'no bet landed' + (' — ' + b['error'] if b.get('error') else '')}" for b in bets] or ["- (no planner pass ran)"]
-    plan_md = repo / cfg.plan.md
-    plan_file = plan_md if plan_md.exists() else repo / ".ouroboros" / "plan.md"
+    plan_file = repo / ".ouroboros" / "plan.md"   # handoff memory: the actor's own plan
     if plan_file.exists() and plan_file.read_text().strip():
-        lines += ["", f"## The plan now (`{plan_file.relative_to(repo)}`)", "", plan_file.read_text().strip()[:6000]]
+        lines += [f"## The plan now (`{plan_file.relative_to(repo)}`)", "", plan_file.read_text().strip()[:6000], ""]
     lines += ["", "## Critic verdicts", ""] + [f"- {k}: {v}" for k, v in sorted(counts.items())] + [""]
     answered = [d for d in decisions if d["verdict"] in ("answer", "done_rejected", "stuck", "looping", "reject", "revert")]
     if answered:
@@ -910,8 +899,6 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--model")
     r.add_argument("--allow-dirty", action="store_true")
     r.add_argument("--critic", choices=["agent", "rules"], help="rules: the deterministic critic, no model call")
-    r.add_argument("--maintainer", action="store_true", default=None, help="a separate maintainer role (default: the actor does housekeeping)")
-    r.add_argument("--planner", action="store_true", default=None, help="a separate planner role (default: the critic's reply names the next unit)")
     r.add_argument("--memory", choices=["auto", "governor", "hypergraph", "handoff"])
     r.add_argument("--foreground", action="store_true", help="run here: the same as --launcher foreground")
     r.add_argument("--launcher", choices=launch.LAUNCHERS,

@@ -22,9 +22,10 @@ either without recording why there.
 - **Role prompts are skills**, under `src/ouroboros/skills/*/SKILL.md`, inlined
   into every call by the roles and memory modules. Edit the skill, not a
   Python string. Placeholders are `{name}`.
-- **Single writer per graph.** The maintainer writes the state graph; the
-  planner writes the `plan` view; actors write neither. Keep the forbidden-verb
-  lists in the prompts in step with that.
+- **Two roles, one writer.** The loop has an actor and a critic, nothing else.
+  Only the reconcile pass (an actor housekeeping iteration) writes the state
+  graph; a work iteration records only; the critic writes nothing. Keep the
+  forbidden-verb lists in the prompts in step with that.
 - **The charter is read-only to agents.** Nothing in this repo may write
   `.ouroboros/goal.md` of a target repo.
 - **No empty commits, no history rewrites** in target repos. Reverts are
@@ -38,13 +39,12 @@ either without recording why there.
 
 See `DESIGN.md` section 17. Short form: `cli.py` (commands, signals),
 `engine.py` (the state machine), `config.py`, `goal.py` (charter parser),
-`harness/` (drivers, pool, backends), `memory/` (governor, hypergraph, handoff),
+`harness/` (drivers, pool, backends), `memory/` (governor, handoff),
 `roles/` (prompt assembly and JSON parsing), `gitguard.py`, `budget.py`,
 `recorder.py`, `tmux.py`, `skills/`.
 
 ## Smoke tests that cost real usage
 
-`tests/test_memory_hypergraph.py` needs the `hypergraph` CLI and runs offline;
 `tests/test_memory_governor.py` needs `governor` and `flywheel` (it skips without
 them) and takes a few minutes, because every governor write is a Flywheel commit.
 Anything that calls a real harness (`claude`, `codex`, `pi`) is a manual smoke

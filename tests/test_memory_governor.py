@@ -183,7 +183,7 @@ def test_second_charter_version_declares_only_new_gaps(gov_repo):
     body = mem2.read_record(mem2.directive_slug)
     assert "NEW gap-ci-runs-tests" in body
     assert "NEW gap-build-passes-clean-clone" not in body           # already declared by v1
-    assert "drops" in body and "gap-readme-says-how-run" in body   # named for the maintainer
+    assert "drops" in body and "gap-readme-says-how-run" in body   # named for the reconcile pass
 
 
 def test_directive_without_criteria_declares_none(gov_repo):
@@ -249,18 +249,18 @@ def test_needs_reconcile_pressure_and_cadence(gov_repo):
     cad.mark_reconciled()
     assert not cad.needs_reconcile()
     prompt = cad.reconcile_prompt()
-    assert "single writer" in prompt and "governor fold --apply" in prompt and "governor render -o STATE.md" in prompt
-    assert "two" in prompt and "hypergraph" not in prompt and "{procedure}" not in prompt
+    assert "one reconcile pass" in prompt and "governor fold --apply" in prompt and "governor render -o STATE.md" in prompt
+    assert "two" in prompt and "{procedure}" not in prompt
     fold_all(gov_repo)
     assert mem.unreconciled()[0] == 0 and not mem.needs_reconcile()
 
 
-def test_the_tail_lists_impacts_and_marks_the_planners(gov_repo):
+def test_the_tail_lists_impacts(gov_repo):
     mem = GovernorMemory(gov_repo)
     start(mem, gov_repo, GOAL_WITH_LADDER)
     _, listing = mem.unreconciled()
     assert "→ `NEW gap-build-passes-clean-clone`:" in listing
-    assert "→ `NEW plan-short` (plan: the planner's):" in listing
+    assert "plan-short" not in listing                    # no role seeds a plan now
     fold_all(gov_repo, [{"new": "gap-a", "parent": "root", "title": "Gap A", "status": "open",
                          "current": "- todo", "cites": [mem.directive_slug]}])
     claim = next(n for n in snap(gov_repo)["nodes"].values() if n["title"] == "Gap A")
@@ -304,74 +304,29 @@ def test_critic_context_and_fingerprint_follow_claim_statuses(gov_repo):
     assert "Gap A" not in mem.critic_context().split("Unfolded")[0]
 
 
-# -- the plan --------------------------------------------------------------
+# -- an old run's plan -----------------------------------------------------
 
-def test_plan_component_is_created_and_horizons_seeded(gov_repo):
+def test_start_creates_no_plan_component(gov_repo):
     mem = GovernorMemory(gov_repo)
     start(mem, gov_repo, GOAL_WITH_LADDER)
-    root = node(gov_repo, mem.plan_root_slug)
-    assert root["kind"] == "plan" and root["title"] == "plan" and root["status"] is None   # a component
-    body = mem.read_record(mem.directive_slug)
-    assert "NEW plan-short —" in body and "fix the build. write the README." in body
-    assert "NEW plan-medium —" in body and "NEW plan-long —" in body and "keep it green" in body
-    mem2 = GovernorMemory(gov_repo)
-    start(mem2, gov_repo, GOAL_WITH_LADDER)
-    assert mem2.plan_root_slug == mem.plan_root_slug and mem2.directive_slug == mem.directive_slug
-    assert sum(1 for n in snap(gov_repo)["nodes"].values() if n["kind"] == "plan") == 1
-    assert mem.check_report() is None
-
-
-def test_an_older_open_plan_component_is_still_accepted(gov_repo):
-    rec = mint(gov_repo, "seed", "root")
-    fold_all(gov_repo, [{"new": "plan", "parent": "root", "title": "plan", "status": "open",
-                         "current": "- bets", "cites": []}], view="plan", folded=[])
-    slug = next(n["slug"] for n in snap(gov_repo)["nodes"].values() if n["kind"] == "plan")
-    mem = GovernorMemory(gov_repo)
-    assert mem.plan_root_slug == slug
-    start(mem, gov_repo, GOAL_WITH_LADDER)
-    assert sum(1 for n in snap(gov_repo)["nodes"].values() if n["kind"] == "plan") == 1
-    assert mem.plan_nodes() == [] and "NEW plan-short" in mem.read_record(mem.directive_slug)
-    assert rec
-
-
-def test_plan_disabled_declares_nothing(gov_repo):
-    mem = GovernorMemory(gov_repo, plan=False)
-    start(mem, gov_repo, GOAL_WITH_LADDER)
-    assert mem.plan_root_slug is None and mem.planner_prompt("x") is None
+    assert not any(n["kind"] == "plan" for n in snap(gov_repo)["nodes"].values())
     assert "plan-short" not in mem.read_record(mem.directive_slug)
-
-
-def test_planner_prompt_bet_and_plan_fold(gov_repo):
-    mem = GovernorMemory(gov_repo)
-    start(mem, gov_repo, GOAL_WITH_LADDER)
-    prompt = mem.planner_prompt("- iterations so far: 3")
-    assert "You are the planner" in prompt and "NEW plan-short" in prompt   # pending impacts listed
-    assert f"--parent {mem.directive_slug}" in prompt and "governor record" in prompt
-    assert '"view": "plan"' in prompt and '"folded": []' in prompt and mem.plan_root_slug in prompt
-    assert "keep the graph honest" in prompt and "iterations so far: 3" in prompt and "{fold}" not in prompt
-    before = mem.snapshot()
-    assert mem.verify_bet(before) is None
-    # the state fold folds the directive (and leaves the plan seeds alone)
-    fold_all(gov_repo, [{"new": "gap-a", "parent": "root", "title": "Gap A", "status": "open", "current": "- t",
-                         "cites": [mem.directive_slug]}])
-    assert "NEW plan-short" in mem.plan_pending()                    # still pending: no plan claim cites it
-    bet = mint(gov_repo, "Bet: build first, README second", mem.directive_slug, "--new", "plan-short: build, then README")
-    fold_all(gov_repo, [{"new": h, "parent": mem.plan_root_slug, "title": h, "status": "open",
-                         "current": f"1. {h} work [rec: {bet}]", "cites": [bet, mem.directive_slug]}
-                        for h in ("short", "medium", "long")], view="plan", folded=[])
-    assert mem.verify_bet(before).startswith(f"{bet} — Bet: build first")
-    assert mem.last_record_slug == bet
-    assert mem.plan_pending() == "(none)"
-    assert [n["title"] for n in mem.plan_nodes()] == ["short", "medium", "long"]
-    assert "### short" in mem.plan_text() and "short work" in mem.plan_text()
-    plan_md = (gov_repo / "PLAN.md").read_text()                     # `governor render --view plan`, for the commit and the TUI
-    assert "## Plan" in plan_md and "**short**" in plan_md and f"`{mem.plan_root_slug}`" not in plan_md
-    assert "Plan (agent-owned" in mem.critic_context() and "short work" in mem.orient_prompt()
-    assert node(gov_repo, bet)["folded"] is False                    # the plan fold never tags records folded
-    assert mem.unreconciled()[0] == 1
     assert mem.check_report() is None
-    from ouroboros.tui.state import _plan_short
-    assert [i.split(". ", 1)[-1] for i in _plan_short(gov_repo, "PLAN.md")] == ["short work"]
+
+
+def test_an_old_plan_claim_is_marked_legacy_in_the_tail_and_left_out_of_the_prompts(gov_repo):
+    """A graph from a run with the planner on keeps its plan claims; the fold leaves them alone."""
+    mint(gov_repo, "seed", "root")
+    fold_all(gov_repo, [{"new": "plan", "parent": "root", "title": "plan", "component": True,
+                         "current": "- bets"}], view="plan", folded=[])
+    plan = next(n for n in snap(gov_repo)["nodes"].values() if n["kind"] == "plan")
+    mem = GovernorMemory(gov_repo)
+    start(mem, gov_repo, GOAL)
+    mint(gov_repo, "Bet: old", mem.directive_slug, "--impact", f"{plan['slug']}: a horizon moved")
+    _, listing = mem.unreconciled()
+    assert "(plan: legacy, leave it)" in listing
+    assert "leave them out of your fold's `claims`" in mem.reconcile_prompt()
+    assert "- bets" not in mem.orient_prompt() and "- bets" not in mem.critic_context()
 
 
 # -- the engine ------------------------------------------------------------
@@ -398,22 +353,24 @@ def folds(cwd: Path, prompt: str) -> Result:
     return Result(text="folded", cost_usd=0.2)
 
 
+def housekeeps(cwd: Path, prompt: str) -> Result:
+    """An actor that folds when the iteration is housekeeping and records otherwise."""
+    return folds(cwd, prompt) if "You run one reconcile pass" in prompt[:200] else records(cwd, prompt)
+
+
 def test_engine_counts_a_record_and_runs_the_fold_on_pressure(gov_repo):
     mem = GovernorMemory(gov_repo, reconcile_every=0, pressure=3)
-    actor = FakeHarness([], default=records)
-    maintainer = FakeHarness([], default=folds)
-    eng = make_engine(gov_repo, actor, critic=FakeCritic(), max_iterations=3)
-    eng.config.maintainer = True
+    actor = FakeHarness([], default=housekeeps)
+    eng = make_engine(gov_repo, actor, critic=FakeCritic(), max_iterations=4)
     eng.memory = mem
-    eng.maintainer = maintainer
     eng.goal_text = GOAL
     eng.run()
-    assert eng.iteration == 3
-    assert all(o.recorded for o in eng.outcomes)
-    # directive + #1 + #2 = 3 unfolded: pressure brings the fold after #2; #3 leaves one in the tail
-    assert len(maintainer.prompts) == 1 and "single writer" in maintainer.prompts[0]
-    assert "governor fold --apply" in maintainer.prompts[0]
-    assert [s["iteration"] for s in eng.recorder.read_jsonl(eng.recorder.iterations) if s.get("step") == "reconcile"] == [2]
+    assert eng.iteration == 4
+    # directive + #1 + #2 = 3 unfolded: pressure makes #3 housekeeping; #4 leaves one in the tail
+    assert [o.housekeeping for o in eng.outcomes] == [False, False, True, False]
+    assert "governor fold --apply" in actor.prompts[2]
+    assert eng.outcomes[0].recorded and eng.outcomes[1].recorded and eng.outcomes[3].recorded
+    assert not any(s.get("step") == "reconcile" for s in eng.recorder.read_jsonl(eng.recorder.iterations))
     assert mem.unreconciled()[0] == 1
     log = git(gov_repo, "log", "--oneline")
     assert "ouroboros #1: unit" in log
@@ -421,13 +378,13 @@ def test_engine_counts_a_record_and_runs_the_fold_on_pressure(gov_repo):
     assert mem.check_report() is None
 
 
-def test_the_actor_runs_the_fold_when_no_maintainer_is_on(gov_repo):
+def test_the_actor_runs_the_fold_as_housekeeping(gov_repo):
     mem = GovernorMemory(gov_repo, reconcile_every=99, pressure=99)
     prompts = []
 
     def actor(cwd: Path, prompt: str) -> Result:
         prompts.append(prompt)
-        if "You are the maintainer" in prompt[:200]:
+        if "You run one reconcile pass" in prompt[:200]:
             return folds(cwd, prompt)
         return records(cwd, prompt)
 
@@ -436,44 +393,9 @@ def test_the_actor_runs_the_fold_when_no_maintainer_is_on(gov_repo):
     eng.goal_text = GOAL_WITH_GAPS
     eng.run()
     # the directive's gap impacts make a fold due at once, so #1 is housekeeping; #2 and #3 work
-    assert ["You are the maintainer" in p[:200] for p in prompts] == [True, False, False]
+    assert ["You run one reconcile pass" in p[:200] for p in prompts] == [True, False, False]
     assert not mem.needs_reconcile() and mem.since_reconcile == 2
     assert eng.outcomes[1].recorded and eng.outcomes[2].recorded
     steps = eng.recorder.read_jsonl(eng.recorder.iterations)
     assert [s.get("housekeeping") for s in steps if s.get("step") == "commit"] == [True, None, None]
-    assert git(gov_repo, "status", "--porcelain") == ""
-
-
-def test_engine_runs_planner_after_reconcile(gov_repo):
-    mem = GovernorMemory(gov_repo, reconcile_every=2, pressure=99)
-
-    def bets(cwd: Path, prompt: str) -> Result:
-        parent = re.search(r"--parent (\S+)", prompt).group(1)
-        bet = mint(cwd, "Bet: README before CI", parent, "--new", "plan-short: README, then CI")
-        plan_root = re.search(r'"parent": "([a-z]+-[a-z]+-\d{4})", "title": "short"', prompt).group(1)
-        existing = {n["title"]: n["slug"] for n in snap(cwd)["nodes"].values() if n["kind"] == "plan"}
-        claim = ({"slug": existing["short"]} if "short" in existing
-                 else {"new": "short", "parent": plan_root, "title": "short"})
-        fold_all(cwd, [{**claim, "status": "open", "current": f"1. README [rec: {bet}]", "cites": [bet]}],
-                 view="plan", folded=[])
-        return Result(text="planned", cost_usd=0.05)
-
-    actor = FakeHarness([], default=records)
-    maintainer = FakeHarness([], default=folds)
-    planner = FakeHarness([], default=bets)
-    eng = make_engine(gov_repo, actor, critic=FakeCritic(), max_iterations=3, planner=planner)
-    eng.config.maintainer = eng.config.planner = True
-    eng.memory = mem
-    eng.maintainer = maintainer
-    eng.goal_text = GOAL_WITH_LADDER
-    eng.run()
-    assert len(maintainer.prompts) == 2 and len(planner.prompts) == 2
-    assert "You are the planner" in planner.prompts[0]
-    steps = eng.recorder.read_jsonl(eng.recorder.iterations)
-    plan_steps = [s for s in steps if s.get("step") == "plan"]
-    assert [p["iteration"] for p in plan_steps] == [1, 3] and "Bet: README" in plan_steps[0]["bet"]
-    assert "ouroboros #1: plan — " in git(gov_repo, "log", "--oneline")   # the rendered PLAN.md
-    commits = [c["message"] for c in snap(gov_repo)["commits"]]
-    assert any(m.startswith("governor fold (plan):") for m in commits)
-    assert "README" in (gov_repo / "PLAN.md").read_text()
     assert git(gov_repo, "status", "--porcelain") == ""

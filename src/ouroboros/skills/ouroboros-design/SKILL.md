@@ -6,7 +6,7 @@ description: Interview the user and write the charter for an Ouroboros run - .ou
 # Design an Ouroboros charter
 
 You are helping a human write the **charter** for an unattended agent loop. The
-charter is the one document the human owns. Everything else, the plan, the bets, the
+charter is the one document the human owns. Everything else, the records and the
 frontier, is written by agents while the human sleeps. So the charter must say what
 the human would say if they were there, and it must never run out.
 
@@ -14,14 +14,14 @@ Read `DESIGN.md` section 20 in the Ouroboros repo if you can; the short form is 
 
 ## Before you ask anything
 
-1. Read the repo: `AGENTS.md` / `CLAUDE.md`, `README.md`, `STATE.md` and `PLAN.md`
-   if present (a governor or hypergraph-protocol repo; for governor, `governor orient`
+1. Read the repo: `AGENTS.md` / `CLAUDE.md`, `README.md`, `STATE.md`
+   if present (a governor repo; `governor orient`
    is the cheapest read), `docs/ROADMAP.md` or similar, the test
    command, the last 30 commits. Form a view of what is broken, what is next, and
    what the repo's own rules are.
 2. Check for an existing charter: `.ouroboros/goal.md`. If it exists, this is a
-   **re-version**: read it, read `.ouroboros/runs/*/REPORT.md` and the bets in
-   `PLAN.md` or `.ouroboros/bets.md`, and start the interview from what changed.
+   **re-version**: read it, read `.ouroboros/runs/*/REPORT.md`, and start the
+   interview from what changed.
 3. Check which harnesses are installed and logged in: `claude`, `codex`, `pi`.
 
 ## The interview
@@ -47,8 +47,8 @@ the user to correct it. Never accept a vague answer; ask for the concrete versio
    **Refuse to finish until every rung has at least three concrete items.** The
    long-term rung always ends with maintenance: "keep every gate green, every doc
    true".
-   Tell the user: the agents will re-plan from this ladder every few iterations
-   and record their bets; the ladder is the first plan, not the last.
+   Tell the user: the critic picks each next unit from this ladder and the
+   frontier; the ladder is the only plan the loop has.
 4. **Constraints.** Never-do and always-keep. Which directories are off limits,
    which commands must never run (GUI launches, deploys, GPU boxes), what must
    never be committed (secrets, machine paths, build outputs), which repo rules
@@ -66,16 +66,15 @@ the user to correct it. Never accept a vague answer; ask for the concrete versio
 7. **Quality bar.** What the critic grades against: gates, commit shape, record
    node rules, doc-with-code rules.
 8. **Run shape.** Duration (`stop.after`), harness chain and fallbacks for the
-   actor and the critic, whether a separate maintainer or planner is on (both off
-   by default), memory (`auto` picks governor when the repo has a `.flywheel/` governor graph,
-   hypergraph when it has `.hypergraph/config.yml`, handoff otherwise).
+   actor and the critic (the only two roles), memory (`auto` picks governor when
+   the repo has a `.flywheel/` governor graph, handoff otherwise).
 
 ## Write the files
 
 - `.ouroboros/goal.md` with exactly these sections, in this order:
   `# Goal: <name>`, `## Mission`, `## Done criteria`, `## Horizon ladder`,
   `## Constraints`, `## Question policy`, `## Exhaustion policy`, `## Quality bar`,
-  and for governor or hypergraph repos `## Reconcile`. Done criteria are `- [ ]` checkboxes.
+  and for governor repos `## Reconcile`. Done criteria are `- [ ]` checkboxes.
   Ladder rungs are `- **short-term:** ...`, `- **medium-term:** ...`, `- **long-term:** ...` lines.
 - `.ouroboros/config.yml` (run `ouroboros init` first if missing). Example:
 
@@ -83,13 +82,11 @@ the user to correct it. Never accept a vague answer; ask for the concrete versio
 run: nt2
 memory: auto
 critic: agent            # rules: no model behind the critic
-maintainer: false        # true: a separate maintainer call instead of actor housekeeping
-planner: false           # true: a separate planner writes bets; off, the critic's reply names the next unit
 roles:
   actor:  { harness: claude, timeout: 90m, fallback: [{ harness: codex }] }
   critic: { harness: codex, timeout: 10m, fallback: [{ harness: claude }] }
 stop: { after: 10h, max_usage: 0.8 }   # 0.8 = stop at 80% of a subscription's weekly window
-hypergraph: { reconcile_every: 5, pressure: 3, budget_units: 1 }   # when housekeeping is due (governor repos too)
+graph: { reconcile_every: 5, pressure: 3, budget_units: 1 }   # when housekeeping is due (governor repos)
 ```
 
 - Read both files back to the user in full. Then say: `ouroboros run` starts it,
@@ -103,5 +100,5 @@ hypergraph: { reconcile_every: 5, pressure: 3, budget_units: 1 }   # when housek
   outcome into a done criterion.
 - A re-version replaces the file; Ouroboros mints a new directive record for it
   and declares only the criteria it adds. Say so.
-- Never write the plan, `PLAN.md`, or `.ouroboros/plan.md` yourself. The planner
-  seeds it from the ladder.
+- Never write `.ouroboros/plan.md` yourself. In a handoff repo it is the actor's
+  working plan.

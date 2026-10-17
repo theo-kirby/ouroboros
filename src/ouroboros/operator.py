@@ -40,15 +40,14 @@ A run is a loop of iterations against a charter. Each iteration an **actor**
 does one unit of work and commits it, and a **critic** reads the change and the
 memory, accepts or rejects it, answers as the sleeping user would, and writes
 the message the next iteration starts from. When the memory says a reconcile
-is due, the actor's next iteration is housekeeping instead of a unit. A
-separate maintainer and planner exist but are off unless the config turns them
-on. It runs on a branch (`ouroboros/<run>`), under the configured launcher
+is due, the actor's next iteration is housekeeping instead of a unit. Those
+two are the only roles. It runs on a branch (`ouroboros/<run>`), under the configured launcher
 (a systemd user unit, a tern session or tmux), for as long as the charter's stop
 rules allow.
 
 The human owns exactly one document: `.ouroboros/goal.md`, the charter. No agent
-role may write it. Everything else -- the plan, the bets, the record -- is the
-loop's.
+role may write it. Everything else -- the records, the state, the frontier -- is
+the loop's.
 
 ## What you do, in order
 

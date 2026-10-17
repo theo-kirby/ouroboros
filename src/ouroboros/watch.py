@@ -624,11 +624,8 @@ class Watcher:
             return ""
 
     def _plan(self) -> str:
-        for cand in (self.repo / self.config.plan.md, self.repo / ".ouroboros" / "plan.md"):
-            text = self._read(cand)
-            if text.strip():
-                return text
-        return ""
+        """The actor's own plan in a handoff repo; graph repos have none."""
+        return self._read(self.repo / ".ouroboros" / "plan.md")
 
     def _git(self, *args: str) -> str:
         try:

@@ -10,7 +10,7 @@ from typing import Optional, Set
 
 from .layout import MIN_COLS, MIN_LINES, Rect, col, compute_layout, leaf, row
 from .panels import (
-    LoadHistory, Painter, draw_feed, draw_frontier, draw_iterations, draw_load, draw_log, draw_loop, draw_plan,
+    LoadHistory, Painter, draw_feed, draw_frontier, draw_iterations, draw_load, draw_log, draw_loop,
     draw_run, draw_stages, draw_status, draw_time,
 )
 from .state import Snapshot, load_snapshot
@@ -31,7 +31,7 @@ RUN_STRIP_H = 8
 # message feed went. They were two panels saying half a thing each -- what was decided,
 # and what was being typed -- and joining them was left to the reader. The raw feed is
 # still here as panel 6 for when you want to watch a transcript on purpose.
-PANELS = ["iterations", "activity", "status", "time", "frontier", "messages", "plan", "log"]
+PANELS = ["iterations", "activity", "status", "time", "frontier", "messages", "log"]
 DEFAULT_ON = {"iterations", "activity", "status"}
 VIEW = col(
     row(leaf("iterations", 1), leaf("activity", 1), weight=10),
@@ -40,11 +40,11 @@ VIEW = col(
     # between them, in one box. min_h is 2 borders + history + stage + the summaries
     # with their spacing (STATUS_SPACED).
     leaf("status", weight=12, min_h=9),
-    row(leaf("messages", 3), leaf("plan", 1), leaf("log", 2), weight=8),
+    row(leaf("messages", 3), leaf("log", 2), weight=8),
 )
 DRAW = {
     "iterations": draw_iterations, "activity": draw_load, "time": draw_time,
-    "frontier": draw_frontier, "status": draw_status, "plan": draw_plan,
+    "frontier": draw_frontier, "status": draw_status,
     "loop": draw_loop, "stages": draw_stages, "log": draw_log,
 }
 

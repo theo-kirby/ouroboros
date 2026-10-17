@@ -1,7 +1,7 @@
 # Ouroboros
 
 Run Claude Code, Codex, or Pi on a repo indefinitely. You set the goal; agents
-make changes, check the work, and update the plan. Ouroboros keeps a record.
+make changes and check the work. Ouroboros keeps a record.
 
 ![Ouroboros loop: orient, work, prove, verify, judge, and adapt](docs/ouroboros.png)
 
@@ -36,8 +36,8 @@ Start with a clean working tree and a completed goal. Run `ouroboros` with
 no arguments for an interactive menu.
 
 Your goal lives in `.ouroboros/goal.md`, called the **charter**. It defines
-what to build, the constraints, and what counts as done. Agents adapt their
-plan as they learn, but cannot edit the charter.
+what to build, the constraints, and what counts as done. The critic picks each
+next step from it, but no agent can edit the charter.
 
 ## The loop
 
@@ -48,12 +48,11 @@ plan as they learn, but cannot edit the charter.
   claims of completion that do not hold up, names loops, and writes the message
   the next iteration starts from. Rejected changes are reverted by default.
 
-Two more roles exist and are off by default: a **maintainer** that runs the
-reconcile pass as a separate call, and a **planner** that writes bets into a
-plan. Turn them on in the config if the memory rots or the plan drifts.
+There are no other roles. The critic's reply names the next unit.
 
 If an agent hits a usage limit, Ouroboros switches to a configured fallback
-or waits for access to return. Set roles and limits in `.ouroboros/config.yml`:
+or waits for access to return. By default the actor falls back from Claude to
+Codex. Set roles and limits in `.ouroboros/config.yml`:
 
 ```yaml
 roles:
@@ -91,13 +90,10 @@ what is next, what is broken, the numbers. Tune it under `report:` in the config
 
 By default, agents leave handoff files. A repo whose memory is a
 [governor](https://github.com/theo-kirby/governor) graph (`.flywheel/db.sqlite`
-at the checkout, `governor` on `PATH`, no `.hypergraph/config.yml`) uses it for
-shared state and planning: records with declared impacts, a fold as the single
-writer of state, and the plan as `plan`-kind claims. Repos with
-`.hypergraph/config.yml` use
-[hypergraph-protocol](https://github.com/theo-kirby/hypergraph-protocol) the same
-way (`uv tool install hypergraph-protocol`). `memory: auto` picks in that order;
-`--memory governor|hypergraph|handoff` forces one. Keep `.flywheel/` and
+at the checkout, `governor` on `PATH`) uses it for shared state: records with
+declared impacts, and a fold as the single writer of state. `memory: auto` picks
+governor when it is there and handoff otherwise; `--memory governor|handoff`
+forces one. Keep `.flywheel/` and
 `.governor/` gitignored (a governor run adds them to `.gitignore` if they are not).
 
 Review the report and run branch before merging. Use a merge commit for

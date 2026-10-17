@@ -1,6 +1,6 @@
 ---
 name: ouroboros-checkup
-description: Check in on an Ouroboros run, live or finished. Reads the run directory, git, and the plan - what landed, whether the loop is moving or going in circles, decisions the critic made on the user's behalf, rejects and reverts, usage, and either a merge recommendation or a mid-run correction. Use when the user asks how a run is going or how one went.
+description: Check in on an Ouroboros run, live or finished. Reads the run directory, git, and the memory - what landed, whether the loop is moving or going in circles, decisions the critic made on the user's behalf, rejects and reverts, usage, and either a merge recommendation or a mid-run correction. Use when the user asks how a run is going or how one went.
 ---
 
 # Check in on a run
@@ -53,18 +53,15 @@ amount of loop detection fixes it.
 2. `.ouroboros/runs/<run>/NEEDS_HUMAN.md` if it exists: read it first, it is the
    one thing that blocked the loop.
 3. `.ouroboros/runs/<run>/iterations.jsonl`: steps `actor`, `commit`, `critique`,
-   `loop`, `revert`, `reconcile`, `plan` (older runs also have `oversee`).
+   `loop`, `revert` (older runs also have `oversee`, `reconcile` and `plan`, from
+   roles the loop no longer has).
    `critic.jsonl` (older runs: `overseer.jsonl`) for every verdict with its
    reason, reply, and `fix_first`. `loop.log` for backoffs, limit waits, and
    harness switches.
-4. The plan: `PLAN.md` and the `plan` view nodes under `.hypergraph/graph/plan/`
-   (hypergraph repos), the `plan`-kind claims in `governor snapshot` (governor repos),
-   or `.ouroboros/plan.md` and `.ouroboros/bets.md`.
+4. The next units: the critic's `reply` and `doing` in `critic.jsonl`, and in a
+   handoff repo the actor's `.ouroboros/plan.md`.
 5. Git: `git log --oneline main..<run branch>` and `git diff --stat main...<run branch>`.
-   Record nodes added: `git diff --stat main...<branch> -- .hypergraph/graph/record`. With a `store:` block in
-   `.hypergraph/config.yml` the node files are not in git: use `flywheel repo:log --format=json` (commit messages
-   name each `hypergraph new record`) or the record files' `created_at` since the run started. In a governor
-   repo records are never in git: `governor snapshot` lists them (`kind: record`, with `at` and `## Recorded`
+   Records are never in git: `governor snapshot` lists them (`kind: record`, with `at` and `## Recorded`
    naming the branch), `governor fold` shows what is still unfolded, and `governor check` must exit 0.
 6. The frontier before and after (`git show main:STATE.md` vs the branch), compared
    **by node status**, not by prose.
@@ -75,15 +72,15 @@ This is the question that matters most, and the one the raw numbers hide. A run 
 write twenty thousand lines and move nothing.
 
 - **`step="loop"` rows in `iterations.jsonl`** are the detector firing: `signal`
-  (`no_product` / `no_frontier` / `repeat_bet`), `streak`, `escalation` (1 name it,
-  2 re-plan, 3 rotate the model) and `acted`. Report the **first** firing and the
+  (`no_product` / `no_frontier`; older runs also `repeat_bet`), `streak`,
+  `escalation` (1 name it, 2 rotate the model) and `acted`. Report the **first** firing and the
   **longest** streak, not every row.
 - **`looping` verdicts** in `critic.jsonl`.
 - **Count what actually moved.** Nodes that changed status, and charter criteria
   ticked. If that count is near zero over a long run, say so plainly at the top,
   whatever the diff size says.
-- **Read the bets in order.** If they restate each other in different words, the
-  plan is the thing that is stuck, not the actor.
+- **Read the critic's replies in order.** If they restate each other in different
+  words, the steering is the thing that is stuck, not the actor.
 
 Do not soften this. A run that is busy and going nowhere looks healthy in every
 other metric.
@@ -95,23 +92,20 @@ other metric.
    and recorded), reverted, empty, wall clock, harness switches, and **usage per
    subscription window**. Only report money for a harness that bills per call.
 3. **Moving or circling.** The section above. If the detector fired, lead with it.
-4. **Bets the planner changed.** Each `Bet:` record with its `## Why`. Mark the
-   ones the user might want to overrule, and say how: edit `.ouroboros/goal.md`
-   (a new charter version) or tell the next run's planner in the ladder.
-5. **Decisions the critic made for you.** Every `answer` verdict: the question
+4. **Decisions the critic made for you.** Every `answer` verdict: the question
    the actor asked and the answer given. Every `done_rejected` with the reason.
-6. **Critic rejects and reverts.** What was thrown away and why; whether a
+5. **Critic rejects and reverts.** What was thrown away and why; whether a
    reverted patch under `.ouroboros/runs/<run>/reverted/` holds anything worth
    keeping. **Check whether a reject was fixed forward by a later iteration
    before recommending anything be undone.**
-7. **The frontier moved.** Gaps closed (open → working), gaps opened, gaps blocked.
-8. **Review hardest.** The largest or riskiest diffs: deletions, protocol changes,
+6. **The frontier moved.** Gaps closed (open → working), gaps opened, gaps blocked.
+7. **Review hardest.** The largest or riskiest diffs: deletions, protocol changes,
    generated files committed by accident, anything touching the constraints' zones.
-9. **The recommendation.**
+8. **The recommendation.**
    - Run finished → merge with a merge commit (record nodes cite commit SHAs;
-     **never squash a hypergraph or governor run**), merge after fixing X, or do not merge.
+     **never squash a governor run**), merge after fixing X, or do not merge.
    - Run live → the one correction worth making now, or "leave it alone".
-10. **Charter changes to consider.** What this run showed the charter got wrong:
+9. **Charter changes to consider.** What this run showed the charter got wrong:
     a rung that was empty, a constraint that was missing, a criterion that was
     vague, a gate the actor had no way to satisfy.
 

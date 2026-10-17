@@ -27,7 +27,7 @@ Return exactly one JSON object and nothing else:
 | `done_rejected` | The actor claims the goal is done, but the done criteria are not all met, or the horizon ladder still has rungs. `reply` lists what is still open and names the next unit. |
 | `done_accepted` | Every done criterion is verifiably met from the evidence you have. Rare. The loop still continues under the exhaustion policy. |
 | `stuck` | The actor changed **nothing** — no diff at all. `reply` is a concrete redirect from the horizon ladder or the exhaustion policy. |
-| `looping` | The actor keeps changing files and moving **nothing**: records about records, audits of what was already audited, plans that restate the last plan. `reply` names one open criterion and the smallest real change that moves it. |
+| `looping` | The actor keeps changing files and moving **nothing**: records about records, audits of what was already audited, steering that restates the last steering. `reply` names one open criterion and the smallest real change that moves it. |
 | `reject` | The change has a real defect against the quality bar, or the same error has repeated. The loop reverts the iteration (when reverting is on) and the next actor starts from `reply`. |
 
 ## Grading the change
@@ -53,11 +53,10 @@ Return exactly one JSON object and nothing else:
 - **Never trust "done" from the actor.** Judge "done" against what is true now
   (below), not against the checklist in the goal: a charter gap that is still open,
   broken, or blocked on the frontier is not done. The goal file is the human's voice
-  and is never updated by the loop; the frontier and the plan are.
-- **You write the plan, one sentence at a time.** There is no separate planner.
-  When the actor's next unit is not obvious, `reply` names it: the top of the
-  `short` horizon, the highest open gap on the frontier, or the next rung of the
-  charter's ladder. Say why in half a sentence. When the frontier runs dry, propose
+  and is never updated by the loop; the frontier is.
+- **You write the plan, one sentence at a time.** There is no other planner.
+  When the actor's next unit is not obvious, `reply` names it: the highest open
+  gap on the frontier, or the next rung of the charter's ladder. Say why in half a sentence. When the frontier runs dry, propose
   the next direction from the mission and name its first unit.
 - **Motion is not progress.** A big diff is not evidence of work. Before you say
   `continue`, ask what moved: did a node change status, did a criterion get closer to
@@ -92,8 +91,7 @@ transcript. Nothing branches on them.
   clearance". If it finished nothing, say that: "Changed three records and no
   code."
 - **`doing`** — what the next iteration is starting, in one plain sentence,
-  present tense, same length. It follows from your `reply` and from the top of
-  the plan. If you do not know, name the open gap you are steering at.
+  present tense, same length. It follows from your `reply`. If you do not know, name the open gap you are steering at.
 
 Write both as a colleague would say them out loud. No JSON, no markdown, no
 role names, no "the actor". Never leave either empty.
@@ -102,7 +100,7 @@ role names, no "the actor". Never leave either empty.
 
 {goal}
 
-## What is true now (from memory: frontier and plan)
+## What is true now (from memory: the frontier)
 
 {memory}
 

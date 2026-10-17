@@ -26,26 +26,24 @@ def governor_available(repo: Path) -> bool:
     )
 
 
-def make_memory(kind: str, repo: Path, *, recent: int = 3, plan: bool = True, plan_view: str = "plan",
-                plan_md: str = "PLAN.md", max_new_directions: int = 3, **hg_opts) -> MemoryAdapter:
+def make_memory(kind: str, repo: Path, *, recent: int = 3, **graph_opts) -> MemoryAdapter:
     if kind == "auto":
         kind = "governor" if governor_available(repo) else "hypergraph" if hypergraph_available(repo) else "handoff"
     if kind == "handoff":
-        return HandoffMemory(repo / ".ouroboros", recent=recent, plan=plan, max_new_directions=max_new_directions)
-    hg_opts.update(plan=plan, plan_view=plan_view, plan_md=plan_md, max_new_directions=max_new_directions)
+        return HandoffMemory(repo / ".ouroboros", recent=recent)
     if kind == "governor":
         if governor_repo(repo) is None:
             raise ValueError("memory: governor requested but there is no .flywheel/db.sqlite here or at the main checkout "
                              "(`flywheel repo:init`, then `governor init --title ...`)")
         if shutil.which("governor") is None:
             raise ValueError("memory: governor requested but the `governor` CLI is not on PATH (see the governor README)")
-        return GovernorMemory(repo, recent=recent, **hg_opts)
+        return GovernorMemory(repo, recent=recent, **graph_opts)
     if kind == "hypergraph":
         if not (repo / ".hypergraph" / "config.yml").exists():
             raise ValueError("memory: hypergraph requested but .hypergraph/config.yml is missing")
         if shutil.which("hypergraph") is None:
             raise ValueError("memory: hypergraph requested but the `hypergraph` CLI is not on PATH (uv tool install hypergraph-protocol)")
-        return HypergraphMemory(repo, recent=recent, **hg_opts)
+        return HypergraphMemory(repo, recent=recent, **graph_opts)
     raise ValueError(f"unknown memory adapter {kind!r}")
 
 

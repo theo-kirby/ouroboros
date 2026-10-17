@@ -8,7 +8,6 @@ from ouroboros.engine import Engine
 from ouroboros.gitguard import GitGuard
 from ouroboros.memory.handoff import HandoffMemory
 from ouroboros.recorder import Recorder
-from ouroboros.harness.base import Result
 
 from conftest import git
 from fake_harness import (FakeHarness, asks_question, claims_done, crashes, no_record, nothing,
@@ -16,7 +15,7 @@ from fake_harness import (FakeHarness, asks_question, claims_done, crashes, no_r
 
 
 def make_engine(repo: Path, harness: FakeHarness, *, max_iterations=5, resume_for=1, sleeps=None,
-                critic=None, goal_text=None, stop=None, planner=None):
+                critic=None, goal_text=None, stop=None):
     cfg = Config(run="t", stop=stop or StopConfig(max_iterations=max_iterations))
     cfg.roles["actor"].resume_for = resume_for
     git_ = GitGuard(repo, cfg.branch)
@@ -31,9 +30,6 @@ def make_engine(repo: Path, harness: FakeHarness, *, max_iterations=5, resume_fo
             raise KeyboardInterrupt("too many backoffs in a test")
 
     kw = {"critic": critic} if critic is not None else {}
-    # a planner of its own, so actor scripts are not consumed by planner passes; the
-    # planner role itself is off unless a test turns `cfg.planner` on
-    kw["planner"] = planner if planner is not None else FakeHarness([], default=nothing())
     eng = Engine(config=cfg, repo=repo, harness=harness, memory=mem, git=git_, recorder=rec,
                  budget=BudgetClock(cfg.stop), sleeper=fake_sleep,
                  goal_text=goal_text if goal_text is not None else (repo / ".ouroboros" / "goal.md").read_text(), **kw)
@@ -222,60 +218,16 @@ def test_failed_iteration_makes_no_empty_commit(repo):
     assert after == before
 
 
-def test_plan_signals_carry_the_run_budget(repo: Path):
-    from ouroboros.config import StopConfig
-    eng = make_engine(repo, FakeHarness([works("a")]), stop=StopConfig(max_iterations=3, after="2h"))
-    eng.run()
-    text = eng._plan_signals()
-    assert "iterations so far: 3 of 3" in text and "run budget:" in text and "h left" in text
-    eng2 = make_engine(repo, FakeHarness([works("b")]), max_iterations=1)
-    eng2.run()
-    assert "(no iteration cap)" not in eng2._plan_signals() and "no wall-clock cap" in eng2._plan_signals()
-
-
-def test_handoff_planner_runs_every_n_iterations(repo: Path):
-    def plans(cwd: Path, prompt: str) -> Result:
-        root = cwd / ".ouroboros"
-        (root / "plan.md").write_text("# Plan\n\n## short\n\n- unit A [handoff/0001.md]\n\n## medium\n\n- B\n\n## long\n\n- C\n")
-        with (root / "bets.md").open("a") as f:
-            f.write("# Bets\n\n## Bet 2026-09-06: A before B\n\n### Why\n\nevidence\n\n### Changed\n\nA moved up\n")
-        return Result(text="planned", cost_usd=0.05)
-
-    planner = FakeHarness([], default=plans)
-    h = FakeHarness([works()] * 4)
-    eng = make_engine(repo, h, max_iterations=4, planner=planner)
-    eng.config.planner = True
-    eng.config.plan.every = 2
-    eng.run()
-    assert len(planner.prompts) == 2 and "You are the planner" in planner.prompts[0]
-    assert "handoff/0001.md" in planner.prompts[1]           # recent handoffs are in the prompt
-    steps = eng.recorder.read_jsonl(eng.recorder.iterations)
-    bets = [s for s in steps if s.get("step") == "plan"]
-    assert [b["iteration"] for b in bets] == [2, 4] and "A before B" in bets[0]["bet"]
-    assert "unit A" in h.prompts[2]                          # the actor reads the plan next iteration
-
-
-def test_planner_is_off_by_default(repo: Path):
-    planner = FakeHarness([], default=nothing())
-    eng = make_engine(repo, FakeHarness([works()] * 2), max_iterations=2, planner=planner)
-    eng.config.plan.every = 1
-    eng.run()
-    assert planner.prompts == []
-
-
-def test_maintainer_is_off_by_default_and_the_actor_does_housekeeping(repo: Path, monkeypatch):
-    """With no maintainer role, a due reconcile becomes the actor's next iteration."""
+def test_the_actor_does_housekeeping(repo: Path, monkeypatch):
+    """A due reconcile becomes the actor's next iteration."""
     actor = FakeHarness([], default=works())
     eng = make_engine(repo, actor, max_iterations=3)
-    maintainer = FakeHarness([], default=nothing())
-    eng.maintainer = maintainer
     due = {"n": 1}
     monkeypatch.setattr(eng.memory, "needs_reconcile", lambda: due["n"] > 0)
     monkeypatch.setattr(eng.memory, "reconcile_prompt", lambda: "You are the maintainer for one reconcile pass")
     done = []
     monkeypatch.setattr(eng.memory, "mark_reconciled", lambda: (done.append(True), due.update(n=0)))
     eng.run()
-    assert maintainer.prompts == []
     assert actor.prompts[0].startswith("You are the maintainer")           # iteration 1 was housekeeping
     assert "You are one iteration" in actor.prompts[1]                      # then back to work
     assert done == [True]
@@ -294,69 +246,12 @@ def test_housekeeping_never_runs_two_iterations_in_a_row(repo: Path, monkeypatch
     assert [p.startswith("You are the maintainer") for p in actor.prompts] == [True, False, True, False]
 
 
-def test_a_separate_maintainer_when_turned_on(repo: Path, monkeypatch):
-    actor = FakeHarness([], default=works())
-    eng = make_engine(repo, actor, max_iterations=2)
-    eng.config.maintainer = True
-    maintainer = FakeHarness([], default=nothing())
-    eng.maintainer = maintainer
-    monkeypatch.setattr(eng.memory, "needs_reconcile", lambda: True)
-    monkeypatch.setattr(eng.memory, "reconcile_prompt", lambda: "reconcile")
-    eng.run()
-    assert len(maintainer.prompts) == 2 and all("You are one iteration" in p for p in actor.prompts)
-
-
-@pytest.mark.parametrize("own_commit", [False, True])
-def test_noop_reconcile_does_not_create_marker_commit(repo, monkeypatch, own_commit):
-    eng = make_engine(repo, FakeHarness([]))
-    eng.config.maintainer = True
-    def maintain(cwd, prompt):
-        if own_commit:
-            (cwd / "maintained.txt").write_text("reconciled")
-            git(cwd, "add", "-A")
-            git(cwd, "commit", "-qm", "maintainer work")
-        return Result()
-
-    eng.maintainer = FakeHarness([], default=maintain)
-    monkeypatch.setattr(eng.memory, 'needs_reconcile', lambda: True)
-    monkeypatch.setattr(eng.memory, 'reconcile_prompt', lambda: 'reconcile')
-    monkeypatch.setattr(eng, '_maybe_plan', lambda *args: None)
-    before = eng.git.head()
-    eng._maybe_reconcile(1)
-    if own_commit:
-        assert git(repo, "rev-parse", "HEAD^") == before
-        assert git(repo, "log", "-1", "--format=%s") == "maintainer work"
-    else:
-        assert eng.git.head() == before
-
-
-def test_newer_planner_usage_is_not_overwritten_by_actor(repo):
-    from ouroboros.usage import UsageSnapshot, Window
-
-    def actor(cwd, prompt):
-        result = works()(cwd, prompt)
-        result.usage = UsageSnapshot('claude', {'five_hour': Window('five_hour', .75)})
-        return result
-
-    def planner(cwd, prompt):
-        return Result(usage=UsageSnapshot('claude', {'five_hour': Window('five_hour', .96)}))
-
-    eng = make_engine(repo, FakeHarness([actor]), max_iterations=1,
-                      planner=FakeHarness([planner]))
-    eng.config.planner = True
-    eng.config.plan.every = 1
-    eng.run()
-    assert eng.budget.usage.latest['claude'].windows['five_hour'].utilization == .96
-
-
 def test_unchanged_iterations_do_not_schedule_bookkeeping(repo, monkeypatch):
     eng = make_engine(repo, FakeHarness([], default=nothing()), max_iterations=6)
     marked = []
-    reconciled = []
     monkeypatch.setattr(eng.memory, 'mark_iteration', lambda: marked.append(True))
-    monkeypatch.setattr(eng, '_maybe_reconcile', lambda n: reconciled.append(n))
     eng.run()
-    assert not marked and not reconciled and eng.since_plan == 0
+    assert not marked
 
 
 def test_stuck_verdicts_slow_down(repo):
@@ -433,11 +328,11 @@ def test_the_loop_is_named_to_the_actor_in_the_next_prompt(repo):
     eng.loops.cfg = eng.config.loop
     eng.run()
     assert "Record the role handoff" in h.prompts[-1]
-    assert "not a record and not a plan" in h.prompts[-1]
+    assert "not a record, or say" in h.prompts[-1]
 
 
 def test_escalation_rotates_the_actor_to_its_fallback(repo):
-    """Step 3 blocks the active harness on the shared board, so the pool falls back."""
+    """Step 2 blocks the active harness on the shared board, so the pool falls back."""
     from ouroboros.config import LoopConfig
     from ouroboros.harness.pool import LimitBoard, PooledHarness
     first, second = FakeHarness([], default=records_only()), FakeHarness([], default=works("b"))
@@ -450,25 +345,3 @@ def test_escalation_rotates_the_actor_to_its_fallback(repo):
     eng.run()
     assert board.is_blocked("first"), "the looping harness should have been rotated out"
     assert second.calls, "the fallback should have taken a turn"
-
-
-def test_a_loop_forces_a_planner_pass_that_is_told_not_to_repeat_itself(repo):
-    from ouroboros.config import LoopConfig
-    planner = FakeHarness([], default=nothing())
-    h = FakeHarness([], default=records_only())
-    eng = make_engine(repo, h, max_iterations=6, planner=planner)
-    eng.config.planner = True
-    eng.config.loop = LoopConfig(product_after=1, frontier_after=None, escalate_every=1)
-    eng.loops.cfg = eng.config.loop
-    eng.run()
-    assert planner.prompts, "escalation step 2 should have forced a planner pass"
-    assert any("LOOP DETECTED" in p for p in planner.prompts)
-
-
-def test_a_repeated_bet_is_measured_even_when_the_actor_is_productive(repo):
-    """The planner restating itself is a loop of its own, on the plan rather than the work."""
-    eng = make_engine(repo, FakeHarness([], default=works()), max_iterations=1)
-    for n in ("fifteen", "twenty", "twenty-four", "thirty-four"):
-        eng.loops.observe_bet(f"Bet: retain the conditional rehearsal after {n} unchanged iterations")
-    report = eng.loops.report()
-    assert report is not None and report.signal == "repeat_bet"

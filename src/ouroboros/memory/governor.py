@@ -1,11 +1,9 @@
 """Governor memory: a record/state graph in the repo's Flywheel repository (`.flywheel/`).
 
-The same loop shape as the hypergraph adapter, through the `governor` CLI: one
-iteration = one record; the reconcile pass is a fold (the single writer of state);
-the planner writes one `Bet:` record and folds it into `plan`-kind claims. Nothing is
-read from node files: every read is `governor snapshot` JSON (cached by head inside
-governor), and every write is a governor command, which commits to the Flywheel
-repository itself. There is nothing to `git add` but the rendered STATE.md / PLAN.md.
+Through the `governor` CLI: one iteration = one record; the reconcile pass is a fold (the single writer of state).
+Nothing is read from node files: every read is `governor snapshot` JSON (cached by
+head inside governor), and every write is a governor command, which commits to the
+Flywheel repository itself. There is nothing to `git add` but the rendered STATE.md.
 """
 
 from __future__ import annotations
@@ -15,25 +13,84 @@ import json
 import re
 import shutil
 import subprocess
-import tempfile
 from importlib import resources
 from pathlib import Path
 from .base import BaseMemory
-from .hypergraph import (
-    PLAN_MD_LIMIT,
-    STATE_MD_LIMIT,
-    _main_checkout,
-    _strip_front_matter,
-    charter_gaps,
-    directive_body,
-    maintainer_prompt,
-)
 from .. import goal as charter
 
 _GAP_LINE = re.compile(r"^- \[gap\] (\S+): (.*)$", re.MULTILINE)
 _NEW_LINE = re.compile(r"^- NEW ([a-z0-9-]+) — (.*)$", re.MULTILINE)
 FRONTIER_STATUSES = ("broken", "blocked", "open")
-HORIZONS = ("short", "medium", "long")
+
+
+STATE_MD_LIMIT = 16000
+
+
+def reconcile_pass_prompt(*, branch: str, tail: str, goal_text: str, procedure: str) -> str:
+    """The ouroboros-reconcile skill with this memory's own procedure filled in."""
+    tpl = _strip_front_matter(resources.files("ouroboros.skills").joinpath("ouroboros-reconcile/SKILL.md").read_text())
+    return (
+        tpl.replace("{procedure}", procedure)
+        .replace("{branch}", branch or "(run branch)")
+        .replace("{tail}", f"```\n{tail.strip()[-4000:]}\n```")
+        .replace("{goal}", (goal_text or "").strip()[:4000] or "(none)")
+    )
+
+
+def charter_gaps(goal_text: str) -> list[tuple[str, str]]:
+    """(gap-name, criterion) for every done criterion, names made unique."""
+    seen: dict[str, int] = {}
+    out: list[tuple[str, str]] = []
+    for crit in charter.done_criteria(goal_text):
+        name = charter.gap_name(crit)
+        seen[name] = seen.get(name, 0) + 1
+        if seen[name] > 1:
+            name = f"{name}-{seen[name]}"
+        out.append((name, crit))
+    return out
+
+
+def directive_body(*, goal_text: str, branch: str, previous: str | None, gaps: list[tuple[str, str]],
+                   dropped: list[tuple[str, str]]) -> str:
+    """The run directive's body: the charter verbatim and its done criteria as gaps."""
+    gap_lines = "\n".join(f"- [gap] {n}: {c}" for n, c in gaps) or "- (none declared)"
+    supersedes = (
+        f"\n\nThis directive supersedes `{previous}`: the operator edited the charter; this version applies at a run start or iteration boundary."
+        if previous else ""
+    )
+    dropped_text = (
+        "\n\nCriteria this version drops (the reconcile pass marks their gaps superseded):\n"
+        + "\n".join(f"- {n}: {c}" for n, c in dropped)
+    ) if dropped else ""
+    # fenced, so the charter's own headings do not read as the record's sections
+    text = f"~~~~markdown\n{goal_text.strip()}\n~~~~"
+    return (
+        "## What\n\nOperator directive: an Ouroboros loop starts on this repo. Every record of the run "
+        f"descends from this record.{supersedes}\n\n## Why\n\nThe charter (the operator's goal document), verbatim:\n\n"
+        f"{text}\n\n**Done criteria as gaps** (one open state claim each; work closes them through "
+        f"declared impacts):\n\n{gap_lines}{dropped_text}\n\n"
+        f"## Method\n\nOuroboros iterations on branch `{branch}`: orient, one dispatched unit, record, commit; "
+        "a reconcile pass folds the tail on pressure.\n\n"
+        "## Result\n\nDirective recorded. Work follows as child records.\n"
+    )
+
+
+def _main_checkout(repo: Path) -> Path:
+    """The main working tree for `repo` (itself unless `repo` is a git worktree)."""
+    try:
+        out = subprocess.run(["git", "-C", str(repo), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                             capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return repo
+    common = Path(out.stdout.strip()) if out.returncode == 0 and out.stdout.strip() else None
+    return common.parent if common is not None and common.name == ".git" else repo
+
+
+def _strip_front_matter(text: str) -> str:
+    if text.startswith("---"):
+        _, _, rest = text.partition("\n---\n")
+        return rest.lstrip("\n")
+    return text
 
 
 def governor_repo(repo: Path) -> Path | None:
@@ -151,18 +208,10 @@ class GovernorMemory(BaseMemory):
         budget_units: int = 1,
         binary: str = "governor",
         recent: int = 3,
-        plan: bool = True,
-        plan_view: str = "plan",
-        plan_md: str = "PLAN.md",
-        max_new_directions: int = 3,
         state_md: str = "STATE.md",
     ) -> None:
         self.repo = repo
         self.state_md = repo / state_md
-        self.plan = plan
-        self.plan_view = plan_view          # the plan component's title, and the `plan-` prefix of NEW horizons
-        self.plan_md = repo / plan_md
-        self.max_new_directions = max_new_directions
         self.reconcile_every = reconcile_every
         self.pressure = pressure
         self.budget_units = budget_units
@@ -179,7 +228,6 @@ class GovernorMemory(BaseMemory):
         self.reconcile_due = False
         self._home: Path | None = None
         self._cache: tuple | None = None
-        self.plan_root_slug: str | None = self._find_plan_root(self.graph()) if plan else None
 
     # -- CLI plumbing ----------------------------------------------------
     def gov(self, *args: str, stdin: str | None = None, timeout: float = 120) -> tuple[int, str]:
@@ -244,15 +292,6 @@ class GovernorMemory(BaseMemory):
         except json.JSONDecodeError as exc:
             self.last_error = f"governor snapshot: {exc}"
             return Graph(None)
-
-    def fold_apply(self, plan: dict) -> tuple[int, str]:
-        with tempfile.NamedTemporaryFile("w", suffix=".json", prefix="ouroboros-fold-", delete=False) as fh:
-            json.dump(plan, fh)
-            path = fh.name
-        try:
-            return self.gov("fold", "--apply", path, "--json")
-        finally:
-            Path(path).unlink(missing_ok=True)
 
     def render_state(self) -> bool:
         code, out = self.gov("render", "-o", str(self.state_md))
@@ -320,12 +359,11 @@ class GovernorMemory(BaseMemory):
             added = [(n, c) for n, c in gaps if n not in known]
             dropped = [(n, c) for n, c in known.items() if n not in {g_ for g_, _ in gaps}]
             body = directive_body(goal_text=goal_text, branch=branch, previous=previous, gaps=gaps,
-                                  dropped=dropped, fence_charter=True)
+                                  dropped=dropped)
             news = [
                 (n, f"Charter gap, status open: {c[:300].rstrip('.')}. Flip to working only when the criterion is verifiably met.")
                 for n, c in added
             ]
-            news += self.plan_seed_news(goal_text)
             self.directive_slug = self.new_record(
                 title=f"{versioned} — operator directive", body=body, parent=previous or "root", news=news,
                 none_reason="operator directive with no new gaps; impacts are declared by the work nodes that follow",
@@ -354,163 +392,6 @@ class GovernorMemory(BaseMemory):
             text = gi.read_text() if gi.exists() else ""
             gi.write_text(text + ("" if not text or text.endswith("\n") else "\n") + "".join(f"{d}\n" for d in missing))
 
-    # -- the plan --------------------------------------------------------
-    def _find_plan_root(self, g: Graph) -> str | None:
-        """The plan component: a plan-kind child of the root, preferring the one titled like the view.
-
-        New ones are status-less components; an older `open` one is still accepted."""
-        tops = [n for n in g.nodes.values() if n.get("kind") == "plan" and g.root in (n.get("parents") or [])]
-        tops.sort(key=lambda n: (n.get("title", "").lower() != self.plan_view.lower(), n.get("seq", 0)))
-        return tops[0].get("slug") if tops else None
-
-    def ensure_plan_view(self) -> bool:
-        """Create the plan component once, through a plan fold that folds no record. True when it exists."""
-        if not self.plan:
-            return False
-        if self.plan_root_slug:
-            return True
-        code, out = self.fold_apply({
-            "view": "plan",
-            "claims": [{
-                "new": self.plan_view, "parent": "root", "title": self.plan_view, "component": True,
-                "current": "- The planner's bets by horizon: `short`, `medium`, `long`. The planner is this "
-                           "component's single writer; Ouroboros created it.",
-            }],
-            "folded": [],
-        })
-        if code != 0:
-            self.last_error = out
-            return False
-        self.plan_root_slug = self._find_plan_root(self.graph())
-        return self.plan_root_slug is not None
-
-    def plan_nodes(self, g: Graph | None = None) -> list[dict]:
-        """Every live plan claim but the component: {slug, title, status, current}."""
-        g = g or self.graph()
-        out = []
-        for n in g.claims("plan"):
-            if n.get("slug") == self.plan_root_slug or n.get("status") == "superseded":
-                continue
-            out.append({"slug": n.get("slug"), "title": n.get("title", ""), "status": n.get("status") or "?",
-                        "current": _section(n.get("content", ""), "Current") or n.get("content", "")})
-        order = {h: i for i, h in enumerate(HORIZONS)}
-        out.sort(key=lambda n: (order.get(n["title"].lower(), 9), n["title"]))
-        return out
-
-    def plan_text(self, limit: int = PLAN_MD_LIMIT, g: Graph | None = None) -> str:
-        nodes = self.plan_nodes(g)
-        if not nodes:
-            return self.plan_md.read_text().strip()[:limit] if self.plan_md.exists() else ""
-        text = "\n\n".join(f"### {n['title']} (`{n['slug']}`, {n['status']})\n\n{n['current']}" for n in nodes)
-        return text[:limit]
-
-    def render_plan_md(self, g: Graph | None = None) -> None:
-        """`governor render --view plan -o PLAN.md`, so the commit after a planner pass carries the plan."""
-        if not self.plan_nodes(g):
-            return
-        code, out = self.gov("render", "--view", "plan", "-o", str(self.plan_md))
-        if code != 0:
-            self.last_error = out
-
-    def plan_seed_news(self, goal_text: str) -> list[tuple[str, str]]:
-        """NEW impacts that seed the plan horizons from the charter's horizon ladder, once."""
-        if not self.ensure_plan_view() or self.plan_nodes():
-            return []
-        ladder = charter.horizon_ladder(goal_text)
-        if not ladder:
-            return []
-
-        def rung(*names: str) -> str:
-            return " ".join(ladder.get(n, "") for n in names).strip()[:400] or "(the charter gives no rung here)"
-
-        seed = "Seeded from the charter's horizon ladder; the planner re-plans after each maintainer pass"
-        p = self.plan_view
-        return [
-            (f"{p}-short", f"{seed}. Next units, one iteration each: {rung('short')}"),
-            (f"{p}-medium", f"{seed}. Open gaps in order, several units each: {rung('medium')}"),
-            (f"{p}-long", f"{seed}. Directions and standing work: {rung('long')}"),
-        ]
-
-    def _is_plan_impact(self, target: dict | None, label: str) -> bool:
-        if target is not None:
-            return target.get("kind") == "plan"
-        return label.startswith(f"NEW {self.plan_view}-")
-
-    def plan_pending(self, g: Graph | None = None) -> str:
-        """Plan impacts not yet folded: declared by a record that no plan claim cites yet."""
-        g = g or self.graph()
-        cited = g.cited_by("plan")
-        lines = []
-        for r in g.records():
-            if r["id"] in cited:
-                continue
-            mine = [(label, delta) for target, label, delta in g.impacts_of(r) if self._is_plan_impact(target, label)]
-            if mine:
-                lines.append(f"- `{r.get('slug')}` {r.get('title', '')}")
-                lines += [f"  - → `{label}`: {delta}" for label, delta in mine]
-        return "\n".join(lines) or "(none)"
-
-    def planner_prompt(self, signals: str) -> str | None:
-        if not self.plan or not self.plan_root_slug:
-            return None
-        g = self.graph()
-        tpl = _strip_front_matter(resources.files("ouroboros.skills").joinpath("ouroboros-planner/SKILL.md").read_text())
-        recent = g.records()[-8:]
-        recent_text = "\n".join(f"- `{n.get('slug')}` — {n.get('title', '')}" for n in recent) or "(none)"
-        parent = self.last_record_slug or self.directive_slug or "<causal-parent-slug>"
-        p = self.plan_view
-        fold = (
-            f"1. Write ONE decision record, title starting `Bet:` (never more than one per pass). Body headings exactly "
-            f"`## What`, `## Why`, `## Method`, `## Result` (governor writes `## Recorded` and `## State Impact`). "
-            f"`## Why` carries the reasoning and cites the evidence. Record it:\n"
-            f"   `governor record --title \"Bet: <summary>\" --body bet.md --parent {parent} --impact \"<plan-slug>: <delta>\"`, "
-            f"one `--impact` per plan claim you change, `--new \"{p}-<horizon>: <delta>\"` for a horizon that does not exist yet. "
-            f"Use `--none \"plan holds: <reason>\"` when nothing changes; then stop after step 3. It prints the bet's slug.\n"
-            f"2. You are the single writer of the plan claims. Fold your own bet and every pending plan impact listed above "
-            f"in ONE plan fold. Write `plan.json`:\n"
-            f"   ```json\n"
-            f"   {{\"view\": \"plan\", \"folded\": [],\n"
-            f"    \"claims\": [\n"
-            f"     {{\"slug\": \"<existing-plan-slug>\", \"status\": \"open\", \"current\": \"1. … [rec: <bet-slug>]\", "
-            f"\"negative\": \"- …\", \"cites\": [\"<bet-slug>\"]}},\n"
-            f"     {{\"new\": \"short\", \"parent\": \"{self.plan_root_slug}\", \"title\": \"short\", \"status\": \"open\", "
-            f"\"current\": \"1. … [rec: <bet-slug>]\", \"cites\": [\"<bet-slug>\"]}}]}}\n"
-            f"   ```\n"
-            f"   `current` is the claim's WHOLE new text (ranked bullets, each ending `[rec: <slug>]`), `negative` what the "
-            f"plan tried and dropped. A claim that keeps its status may leave out cites it already has. New horizons go under the plan component `{self.plan_root_slug}`, titled `short`, "
-            f"`medium` or `long`. `cites` lists every record whose plan impact you applied (the bet, and the records "
-            f"under \"Pending plan impacts\"): a citation is what marks a plan impact folded. Keep `\"folded\": []` and "
-            f"`\"view\": \"plan\"`: tagging records folded is the state fold's job, not yours. Then "
-            f"`governor fold --apply plan.json` (it validates the whole plan first; exit 2 = nothing written, fix and retry; "
-            f"it commits as `governor fold (plan): …`).\n"
-            f"   Never put a state claim in the plan fold, never run a fold without `\"view\": \"plan\"`, and never edit STATE.md.\n"
-            f"3. `governor check` must exit 0. Delete your scratch files. There is nothing to `git add`: the bet and the plan "
-            f"are committed to the Flywheel repository, and Ouroboros renders `{self.plan_md.name}` and commits it after your pass."
-        )
-        frontier = self.frontier_text(g)
-        return (
-            tpl.replace("{max_new}", str(self.max_new_directions))
-            .replace("{charter}", (self.goal_text or "").strip()[:12000] or "(none)")
-            .replace("{frontier}", frontier or "(empty: no open gaps — propose directions)")
-            .replace("{plan}", self.plan_text(6000, g) or "(no plan claims yet: create short, medium, long from the pending impacts)")
-            .replace("{pending}", self.plan_pending(g))
-            .replace("{recent}", recent_text)
-            .replace("{signals}", signals.strip() or "(none)")
-            .replace("{fold}", fold)
-        )
-
-    def verify_bet(self, before: set[str]) -> str | None:
-        g = self.graph()
-        bet = None
-        for n in g.records():
-            if n["id"] not in before and (n.get("title") or "").startswith("Bet:"):
-                bet = n
-        if bet is None:
-            return None
-        self.last_record_slug = bet.get("slug")
-        self.render_plan_md(g)
-        return f"{bet.get('slug')} — {bet.get('title', '')}"
-
     # -- the frontier ----------------------------------------------------
     def frontier_text(self, g: Graph | None = None) -> str:
         g = g or self.graph()
@@ -523,7 +404,13 @@ class GovernorMemory(BaseMemory):
         return "\n".join(lines)
 
     def frontier_fingerprint(self) -> str | None:
-        """Every state claim's status, plus how many charter criteria are still open (see HypergraphMemory)."""
+        """Every state claim's status, plus how many charter criteria are still open.
+
+        These are the only two things that make a run's night worth having: a
+        claim changed status, or a criterion got ticked. Records, audits and docs
+        are how those happen, not whether they did. nt3 wrote 22,437 lines and
+        this digest changed once in 201 iterations.
+        """
         g = self.graph()
         if not g.ok:
             return None
@@ -552,7 +439,7 @@ class GovernorMemory(BaseMemory):
         for r in t:
             lines.append(f"- `{r.get('slug')}` {r.get('title', '')}")
             for target, label, delta in g.impacts_of(r):
-                mark = " (plan: the planner's)" if self._is_plan_impact(target, label) else ""
+                mark = " (plan: legacy, leave it)" if target is not None and target.get("kind") == "plan" else ""
                 lines.append(f"  - → `{label}`{mark}: {delta}")
             reason = g.none_reason(r)
             if reason:
@@ -569,7 +456,6 @@ class GovernorMemory(BaseMemory):
 
     def reconcile_prompt(self) -> str | None:
         _, tail = self.unreconciled()
-        p = self.plan_view
         procedure = (
             "Follow the `governor-fold` skill. If it is installed in this repo, read it "
             "(`.claude/skills/governor-fold/SKILL.md`). The short form:\n\n"
@@ -594,19 +480,15 @@ class GovernorMemory(BaseMemory):
             "   ```\n"
             "   `governor fold --apply fold.json` validates the whole plan first (exit 2 = nothing written; fix and "
             "retry), then writes it in one commit. `folded` lists **every** tail record you applied, including "
-            "the `none` ones and the `Bet:` records.\n"
+            "the `none` ones.\n"
             "4. `governor check` must exit 0. Fix a violation with another fold or a new record, never by hand.\n"
-            "5. `governor render -o STATE.md` (never `--view plan`: PLAN.md is the planner's), then `git add STATE.md` and commit with a message starting `reconcile:`. "
-            "The graph is already committed to the Flywheel repository (`.flywheel/` is gitignored): nothing else to add."
+            "5. `governor render -o STATE.md`, then `git add STATE.md` and commit with a message starting `reconcile:`. "
+            "The graph is already committed to the Flywheel repository (`.flywheel/` is gitignored): nothing else to add.\n\n"
+            "An older run may have left `plan`-kind claims (impacts marked `(plan: legacy, leave it)` below). No role "
+            "writes them now: leave them out of your fold's `claims`, but still list their records in `folded`. "
+            "Never write a fold with `\"view\": \"plan\"`."
         )
-        plan_rule = (
-            f"- **Never touch the plan claims** (kind `plan`: impacts marked `(plan: the planner's)` below, and "
-            f"`NEW {p}-…` lines). When a planner is on, its pass is their single writer and folds them itself. Leave "
-            f"them out of your fold's `claims`, but still list their records in `folded`: the planner tracks its own "
-            f"pending impacts by citation. Never write a fold with `\"view\": \"plan\"`, and never edit PLAN.md."
-        )
-        return maintainer_prompt(branch=self.branch, tail=tail, goal_text=self.goal_text,
-                                 procedure=procedure, plan_rule=plan_rule)
+        return reconcile_pass_prompt(branch=self.branch, tail=tail, goal_text=self.goal_text, procedure=procedure)
 
     # -- adapter protocol ------------------------------------------------
     def orient_prompt(self) -> str:
@@ -619,7 +501,7 @@ class GovernorMemory(BaseMemory):
             f"This iteration is **one dispatch with a budget of {self.budget_units} unit(s)**. Target: the goal, "
             "or a frontier claim (open / broken / blocked) that serves it. Say which in `## Why`.\n\n"
             "**Forbidden in a work iteration, no exceptions:** the governor-fold skill, `governor fold --apply`, "
-            "`governor init`, `governor migrate-hypergraph`, any `flywheel repo:*` write, editing STATE.md or PLAN.md. "
+            "`governor init`, any `flywheel repo:*` write, editing STATE.md. "
             "You are a contributor: you record; a separate fold pass applies the tail. If the tail looks fat, say so "
             "in `## Result` and keep working. Even when the done criteria are met, the next unit is a rung of the "
             "horizon ladder, never a fold.",
@@ -629,12 +511,7 @@ class GovernorMemory(BaseMemory):
             parts.append(f"## governor orient\n\n(failed: {text.strip()[-1000:]})")
         else:
             parts.append("## governor orient\n\n" + self._fit_orient(text.strip()))
-        g = self.graph()
-        plan = self.plan_text(g=g)
-        if plan:
-            parts.append("## Plan (agent-owned bets: short / medium / long)\n\nPick this iteration's unit from `short` unless the "
-                         "critic's message or a broken frontier claim says otherwise.\n\n" + plan)
-        count, _ = self.unreconciled(g)
+        count, _ = self.unreconciled()
         parts.append(f"Unfolded tail: {count} record(s) (listed with their impacts above).")
         return "\n\n".join(parts)
 
@@ -696,9 +573,6 @@ class GovernorMemory(BaseMemory):
         parts = ["### Frontier (open, broken, blocked state claims)\n\n" + (self.frontier_text(g) or "(empty: no open gaps)")]
         count, _ = self.unreconciled(g)
         parts.append(f"Unfolded records in the tail: {count} (their declared impacts are not on the frontier yet).")
-        plan = self.plan_text(g=g)
-        if plan:
-            parts.append("### Plan (agent-owned bets: short / medium / long)\n\n" + plan)
         return "\n\n".join(parts)
 
     def check_report(self) -> str | None:

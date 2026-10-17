@@ -22,12 +22,11 @@ FEED_EVENTS = 120
 LOG_LINES = 40
 
 # `oversee` is what runs before the overseer and the critic were one role wrote;
-# it lands on the critic's row so an old run still reads.
-STAGES = ("actor", "commit", "critic", "maintainer", "planner")
-STATE_TO_STAGE = {
-    "work": "actor", "critique": "critic", "oversee": "critic", "reconcile": "maintainer", "plan": "planner",
-}
-STEP_TO_STAGE = {"actor": "actor", "critique": "critic", "oversee": "critic", "reconcile": "maintainer", "plan": "planner"}
+# it lands on the critic's row so an old run still reads. The `reconcile` and `plan`
+# steps of the retired maintainer and planner belong to no stage.
+STAGES = ("actor", "commit", "critic")
+STATE_TO_STAGE = {"work": "actor", "critique": "critic", "oversee": "critic"}
+STEP_TO_STAGE = {"actor": "actor", "critique": "critic", "oversee": "critic"}
 
 
 # ---------------------------------------------------------------- transcript events
@@ -193,11 +192,10 @@ class Iteration:
     housekeeping: bool = False
     actor_seconds: float = 0.0
     cost: float = 0.0
-    bet: str | None = None
     error: str | None = None
 
 
-ROLE_ORDER = ("actor", "critic", "maintainer", "planner")
+ROLE_ORDER = ("actor", "critic")
 
 
 @dataclass
@@ -321,7 +319,6 @@ class Snapshot:
     feed_role: str
     feed_age: float | None
     log_tail: list[str]
-    plan_short: list[str]
     needs_human: str | None
     loadavg: tuple[float, float, float]
     procs: int
@@ -332,8 +329,6 @@ class Snapshot:
     chains: dict[str, list[str]]
     roles: dict = field(default_factory=dict)   # role -> [(harness, model), ...]
     switches: int = 0
-    reconciles: int = 0
-    plans: int = 0
     frontier: dict[str, int] = field(default_factory=dict)
 
     @property
@@ -472,7 +467,6 @@ def derive_iterations(steps: list[dict]) -> tuple[list[Iteration], dict[str, Sta
     iters: dict[int, Iteration] = {}
     stages = {s: StageStat() for s in STAGES}
     prev_ts = None
-    reconciles = plans = 0
     for s in sorted(steps, key=lambda r: _ts(r.get("ts", ""))):
         ts = _ts(s.get("ts", ""))
         n = s.get("iteration")
@@ -502,12 +496,7 @@ def derive_iterations(steps: list[dict]) -> tuple[list[Iteration], dict[str, Sta
             it.verdict = s.get("verdict") or it.verdict or ""
         elif step == "revert":
             it.reverted = True
-        elif step == "plan":
-            plans += 1
-            it.bet = s.get("bet") or s.get("error") or "no bet"
-        elif step == "reconcile":
-            reconciles += 1
-    return [iters[k] for k in sorted(iters)], stages, reconciles, plans
+    return [iters[k] for k in sorted(iters)], stages
 
 
 def _process_tree(pid: int | None) -> tuple[int, float, float]:
@@ -559,51 +548,6 @@ def _pid(run_dir: Path) -> tuple[int | None, bool]:
         return None, False
 
 
-def _items(body: str) -> list[str]:
-    """Numbered or bulleted items of a markdown body, citations stripped, bold kept as plain."""
-    out: list[str] = []
-    for line in body.splitlines():
-        s = line.strip()
-        m = re.match(r"^(?:[-*]|\d+[.)])\s+(.*)$", s)
-        if m:
-            out.append(re.sub(r"\s*\[rec: [^\]]+\]", "", m.group(1)).replace("**", ""))
-        elif out and s and line.startswith((" ", "\t")):
-            out[-1] += " " + s
-    return out
-
-
-def _plan_short(repo: Path, plan_md: str) -> list[str]:
-    nodes = repo / ".hypergraph" / "graph" / "plan"
-    if nodes.exists():
-        for f in nodes.glob("*.md"):
-            try:
-                text = f.read_text()
-            except OSError:
-                continue
-            if re.search(r"^title:\s*'?short'?\s*$", text, re.M) and "## Current" in text:
-                body = text.split("## Current", 1)[1].split("\n## ", 1)[0]
-                items = _items(body)
-                if items:
-                    return items[:8]
-    for cand in (repo / plan_md, repo / ".ouroboros" / "plan.md"):
-        if cand.exists():
-            text = cand.read_text()
-            # `governor render --view plan`: one line per horizon, `- [open] **short** (`slug`) — first item`
-            g = re.search(r"^\s*-\s*\[\w+\]\s+\*\*short\*\*\s+\(`[^`]+`\)\s+—\s+(.+)$", text, re.M)
-            if g:
-                return [re.sub(r"\s*\[\d+ record\(s\)\]$|\s*\[rec: [^\]]+\]", "", g.group(1)).strip()]
-            m = re.search(r"^#{2,3}\s+short\b.*?$([\s\S]*?)(?=^#{2,3}\s|\Z)", text, re.M | re.I)
-            body = m.group(1) if m else text
-            bullets = [l.strip() for l in body.splitlines() if l.strip().startswith(("-", "*", "1", "2", "3"))]
-            lines = [re.sub(r"\s*\[rec: [^\]]+\]", "", b.lstrip("-* ")) for b in bullets]
-            if lines:
-                return lines[:8]
-            plain = [l.strip() for l in body.strip().splitlines() if l.strip() and not l.startswith(("#", "("))]
-            if plain:
-                return plain[:8]
-    return []
-
-
 def frontier_counts(repo: Path) -> dict[str, int]:
     """Counts from STATE.md: frontier nodes by status, charter gaps still on it, charter gaps total."""
     out: dict[str, int] = {}
@@ -651,7 +595,7 @@ def _newest_transcript(run_dir: Path) -> Path | None:
     return files[0] if files else None
 
 
-def load_snapshot(run_dir: Path, *, repo: Path, plan_md: str = "PLAN.md", stop_after_s: float | None = None,
+def load_snapshot(run_dir: Path, *, repo: Path, stop_after_s: float | None = None,
                   max_iterations: int | None = None, chains: dict[str, list[str]] | None = None,
                   roles: dict | None = None) -> Snapshot:
     now = time.time()
@@ -665,7 +609,7 @@ def load_snapshot(run_dir: Path, *, repo: Path, plan_md: str = "PLAN.md", stop_a
     pid, alive = _pid(run_dir)
     steps = _read_jsonl(run_dir / "iterations.jsonl")
     decisions = _read_jsonl(run_dir / "critic.jsonl") or _read_jsonl(run_dir / "overseer.jsonl")
-    iterations, stages, reconciles, plans = derive_iterations(steps)
+    iterations, stages = derive_iterations(steps)
     state = (status or {}).get("state", "?")
     stage = STATE_TO_STAGE.get(state, state)
     stage_since = float((status or {}).get("epoch") or now)
@@ -690,8 +634,8 @@ def load_snapshot(run_dir: Path, *, repo: Path, plan_md: str = "PLAN.md", stop_a
     return Snapshot(
         now=now, status=status, alive=alive, pid=pid, iterations=iterations, stages=stages, stage=stage,
         stage_since=stage_since, decisions=decisions, feed=feed, feed_role=feed_role, feed_age=feed_age,
-        log_tail=log_tail, plan_short=_plan_short(repo, plan_md), needs_human=needs_human, loadavg=loadavg,
+        log_tail=log_tail, needs_human=needs_human, loadavg=loadavg,
         procs=procs, cpu_pct=cpu, rss_mb=rss, stop_after_s=stop_after_s, max_iterations=max_iterations,
-        chains=chains or {}, roles=roles or {}, switches=switches, reconciles=reconciles, plans=plans,
+        chains=chains or {}, roles=roles or {}, switches=switches,
         frontier=frontier_counts(repo),
     )

@@ -3,7 +3,7 @@
 
 Each scenario is a whole self-contained fake repo under `.ouroboros/synthetic/`, which
 is gitignored. It gets its own `.git` (so `repo_root()` stops there), its own config,
-STATE.md and PLAN.md, and a run directory with the same files a real run writes:
+STATE.md, and a run directory with the same files a real run writes:
 status.json, iterations.jsonl, critic.jsonl, loop.log and transcripts.
 
     python tools/fakerun.py                 # build every scenario
@@ -159,21 +159,6 @@ REPLIES = [
     "Keep going on the catalog. The variant study can wait until the walk runs on a fresh machine.",
     "Yes, measure it from the STEP. A magic number will not pass the criterion.",
 ]
-BETS = [
-    "making the clearance call scriptable unblocks both the headless walk and the variant study",
-    "the catalog is the bottleneck for the robot prompt; ten more parts should move two criteria",
-    "the fork delta will not fall further by deleting shims — the rest is real divergence",
-]
-PLAN_ITEMS = [
-    "Make the clearance call reachable without the GUI, then use it from the headless walk.",
-    "Widen the catalog to cover the parts the robot prompt actually asks for.",
-    "Thread a named angle through the headless renderer instead of hard-coding iso.",
-    "Qualify a second mechanism from a paper, so the library has more than the four-bar.",
-    "Upstream the three shims that are still real divergence in the fork.",
-    "Regenerate STATE.md from the graph on every reconcile, not by hand.",
-    "Add the L3 motors and the mechanisms that depend on them.",
-    "Get mg-legs tipping at the declared shove band.",
-]
 CRITERIA = [
     "the walk runs on a fresh machine", "compound mechanisms are library values",
     "the catalog is broad enough for a robot prompt", "a research report renders headlessly",
@@ -205,8 +190,6 @@ class Voice:
     def why(self):        return self._pick(OVERSEER_WHY, 160)
     def finished(self):   return self._pick(FINISHED, 160)
     def starting(self):   return self._pick(STARTING, 160)
-    def bet(self):        return self._pick(BETS, 90)
-    def plan_item(self):  return self._pick(PLAN_ITEMS, 120)
     def blurb(self, cap): return (LONG if self.hostile else self.rng.choice(SAID))[:cap]
 
     def reply(self):
@@ -238,7 +221,7 @@ def scenario(name: str) -> dict:
     """Everything that differs between scenarios, in one place."""
     common = dict(run=name, branch=f"ouroboros/{name}", state="work",
                   stop_after_s=15 * 3600, iterations=40, limited={}, needs_human=None,
-                  reverts=(), timeouts=(), gaps=(6, 14), plan_items=4, alive=True, hostile=False,
+                  reverts=(), timeouts=(), gaps=(6, 14), alive=True, hostile=False,
                   actor_median_s=360,
                   roles={"actor": [("claude", MODELS["claude"]), ("codex", MODELS["codex"])],
                          "critic": [("codex", MODELS["codex"]), ("claude", "claude-opus-5")]},
@@ -246,9 +229,9 @@ def scenario(name: str) -> dict:
     if name == "night":
         # No `elapsed_s`: the night is as long as its own iterations took, which is the
         # only way the per-iteration chart and the wall clock tell the same story.
-        return {**common, "iterations": 52, "state": "critique", "hypergraph": True,
+        return {**common, "iterations": 52, "state": "critique",
                 "actor_median_s": 260, "reverts": (11, 34, 47), "timeouts": (39,),
-                "gaps": (9, 16), "plan_items": 5,
+                "gaps": (9, 16),
                 "usage": {"claude": (0.16, 0.44), "codex": (0.05, 0.19)}}
     if name == "nominal":
         return common
@@ -259,13 +242,12 @@ def scenario(name: str) -> dict:
                 "needs_human": ("Iteration 233 was rejected, but reverting to `ouroboros/stress/ok-0232` failed:\n\n"
                                 "    revert to ouroboros/stress/ok-0232 left HEAD at 7dfc2ff9a9, whose tree still differs\n\n"
                                 "The rejected commit is still on `stress`. Undo it by hand before merging."),
-                "gaps": (19, 21), "plan_items": 8,
-                "hypergraph": True,
-                "roles": {**common["roles"], "planner": [("pi", MODELS["pi"]), ("claude", MODELS["claude"])]},
+                "gaps": (19, 21),
+                "roles": {**common["roles"], "critic": [("pi", MODELS["pi"]), ("claude", MODELS["claude"])]},
                 "usage": {"claude": (0.13, 0.33), "codex": (0.24, 0.97), "pi": (0.0, 0.03)}}
     if name == "fresh":
         return {**common, "iterations": 0, "state": "work", "elapsed_s": 40, "usage": {},
-                "gaps": (6, 14), "plan_items": 0}
+                "gaps": (6, 14)}
     if name == "done":
         return {**common, "iterations": 68, "state": "stopped", "elapsed_s": 11 * 3600, "alive": False,
                 "stop_reason": "max_usage 80% reached (codex seven_day at 81%)",
@@ -292,32 +274,14 @@ def write_repo(root: Path, spec: dict, rng, v: Voice) -> None:
                                    "\n\n## Architecture\n\n- **synthetic** (`fond-ember-4937`)\n"
                                    + "\n".join(arch) + "\n")
 
-    items = [f"{i + 1}. **{slug(rng)}.** {v.plan_item()}" for i in range(spec["plan_items"])]
-    if items:
-        (root / "PLAN.md").write_text("# synthetic — plan view\n\n## Frontier\n\n- [open] **short** "
-                                      "(`young-crane-9546`) — the short plan\n\n## Current\n\n"
-                                      + "\n".join(items) + "\n")
-    elif (root / "PLAN.md").exists():
-        (root / "PLAN.md").unlink()
-
-    # A hypergraph repo serves the plan from graph nodes, not PLAN.md, and that is the
-    # branch `_plan_short` tries first. `night` and `stress` use it so both paths run.
-    if spec.get("hypergraph") and items:
-        nodes = root / ".hypergraph" / "graph" / "plan"
-        nodes.mkdir(parents=True, exist_ok=True)
-        (nodes / "young-crane-9546.md").write_text(
-            "---\nnode_id: fake\nslug: young-crane-9546\ntitle: short\n---\nStatus: open\n\n"
-            "## Current\n\n" + "\n".join(items) + "\n")
-
     roles_yaml = "\n".join(
         f"  {r}:\n    harness: {c[0][0]}\n    model: {c[0][1]}\n    timeout: 30m"
         + ("\n    fallback:\n" + "\n".join(f"    - harness: {h}\n      model: {m}" for h, m in c[1:]) if len(c) > 1 else "")
         for r, c in spec["roles"].items())
     (root / ".ouroboros").mkdir(exist_ok=True)
     (root / ".ouroboros" / "config.yml").write_text(
-        f"run: {spec['run']}\nmemory: auto\nbackend: headless\ncritic: agent\nmaintainer: false\nplanner: false\n"
-        f"roles:\n{roles_yaml}\nstop:\n  after: 15h\n  max_usage: 0.8\n"
-        f"plan:\n  every: 5\n  md: PLAN.md\n")
+        f"run: {spec['run']}\nmemory: auto\nbackend: headless\ncritic: agent\n"
+        f"roles:\n{roles_yaml}\nstop:\n  after: 15h\n  max_usage: 0.8\n")
     # `gaps_total` and `gaps_unchecked` are counted off the charter's done criteria,
     # so the goal file needs real ones or the frontier panel reads zero.
     closed = total - open_gaps
@@ -429,7 +393,7 @@ def write_run(run_dir: Path, spec: dict, rng, v: Voice) -> None:
     usage, usage_lines = usage_block(spec)
     status = {"ts": ts(0), "epoch": time.time() - rng.uniform(2, 40), "run": spec["run"], "state": spec["state"],
               "iteration": n_iter, "branch": spec["branch"], "harness": "codex" if spec["limited"] else "claude",
-              "memory": "hypergraph", "cost_usd": round(cost_total, 4), "elapsed_s": int(elapsed),
+              "memory": "governor", "cost_usd": round(cost_total, 4), "elapsed_s": int(elapsed),
               "last_ok_tag": f"ouroboros/{spec['run']}/ok-{max(0, n_iter - 1):04d}"}
     if spec["limited"]:
         status["limited"] = spec["limited"]

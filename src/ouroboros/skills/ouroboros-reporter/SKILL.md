@@ -43,7 +43,7 @@ The tail of `loop.log` (backoffs, limit waits, harness switches):
 
 {goal}
 
-## The plan as it stands
+## The actor's plan (handoff repos only)
 
 {plan}
 
@@ -57,7 +57,7 @@ group, and drop a group only when it is empty:
 ```
 STATUS  one line: moving / circling / stalled / blocked / stopped, and why
 DONE    what landed since the last report, as things that changed in the repo, not as activity
-NEXT    what the critic set the actor on, and what the plan says comes after
+NEXT    what the critic set the actor on next
 BROKEN  reverts, rejects, errors, limits, anything in NEEDS_HUMAN, tests failing
 NUMBERS iterations, changed, reverted, usage windows, elapsed
 ```

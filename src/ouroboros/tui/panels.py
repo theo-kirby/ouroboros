@@ -1,4 +1,4 @@
-"""The panels: run strip, iterations, load, status, feed, plan, log."""
+"""The panels: run strip, iterations, load, status, feed, log."""
 
 from __future__ import annotations
 
@@ -29,12 +29,12 @@ DOT = "●"
 # `revert` is what older runs called a reject.
 BLOCKED = {"stuck", "looping", "reject", "revert", "done_rejected"}
 STATE_PAIR = {
-    "work": PAIR_GREEN, "critique": PAIR_CYAN, "oversee": PAIR_CYAN, "reconcile": PAIR_PURPLE, "plan": PAIR_MAGENTA,
+    "work": PAIR_GREEN, "critique": PAIR_CYAN, "oversee": PAIR_CYAN,
     "idle": PAIR_DIM, "backoff": PAIR_RED, "starting": PAIR_DIM, "stopped": PAIR_RED,
 }
 # The engine state each stage of the pipeline is drawn in.
-_STAGE_STATE = {"actor": "work", "critic": "critique", "maintainer": "reconcile", "planner": "plan"}
-_PIPELINE = ("actor", "critic", "maintainer", "planner")
+_STAGE_STATE = {"actor": "work", "critic": "critique"}
+_PIPELINE = ("actor", "critic")
 
 
 def _pipeline_of(s: Snapshot) -> tuple[str, ...]:
@@ -106,7 +106,7 @@ def meter(p: Painter, y: int, x: int, w: int, label: str, value: float, vmax: fl
 
 
 def _pipeline(p: Painter, y: int, x: int, w: int, s: Snapshot) -> int:
-    """actor→critic→maintainer→planner with the active stage lit; returns the width used."""
+    """actor→critic with the active stage lit; returns the width used."""
     t = p.theme
     cx = x
     pipeline = _pipeline_of(s)
@@ -283,8 +283,6 @@ def draw_stages(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
 def _outcome_glyph(it) -> tuple[str, int]:
     if it.reverted:
         return "✗", PAIR_RED
-    if it.bet:
-        return "◆", PAIR_MAGENTA
     if it.changed and it.recorded:
         return "■", PAIR_GREEN
     if it.changed:
@@ -328,7 +326,8 @@ def draw_loop(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
     productive = sum(1 for i in its if i.changed and i.recorded)
     empty = sum(1 for i in its if not i.changed)
     reverts = sum(1 for i in its if i.reverted)
-    p.text(y + 2, x, f"{productive} productive · {empty} empty · {reverts} reverted · {s.reconciles} reconciles · {s.plans} bets",
+    housekeeping = sum(1 for i in its if i.housekeeping)
+    p.text(y + 2, x, f"{productive} productive · {empty} empty · {reverts} reverted · {housekeeping} housekeeping",
            t.attr(PAIR_DIM), width=w)
     if inner.h < 4:
         return
@@ -562,7 +561,7 @@ def _verdict_lines(s: Snapshot, w: int) -> list[tuple[str, int]]:
 
 
 def _stage_line(p: Painter, y: int, x: int, w: int, s: Snapshot) -> None:
-    """actor→critic→maintainer→planner, lit where the loop is, with the clock."""
+    """actor→critic, lit where the loop is, with the clock."""
     t = p.theme
     cx = x
     pipeline = _pipeline_of(s)
@@ -630,24 +629,6 @@ def _status_rows(p: Painter, y: int, x: int, w: int, room: int, s: Snapshot) -> 
     p.text(y + room - 1, x + _LABEL_W, clip(raw, tw), t.attr(raw_pair), width=tw)
 
 
-# ---------------------------------------------------------------- plan
-def draw_plan(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
-    t = p.theme
-    inner = p.box(rect, "plan · short", num, PAIR_BOX_ITER)
-    if inner.h <= 0:
-        return
-    x, w = inner.x + 1, inner.w - 2
-    if not s.plan_short:
-        p.text(inner.y, x, "no plan file (with the planner off, the critic's reply names the next unit)", t.attr(PAIR_INACTIVE), width=w)
-        return
-    lines: list[str] = []
-    for i, item in enumerate(s.plan_short):
-        for j, l in enumerate(wrap(item, w - 3, 2)):
-            lines.append((f"{i + 1}. " if j == 0 else "   ") + l)
-    for i, l in enumerate(lines[: inner.h]):
-        p.text(inner.y + i, x, l, t.attr(PAIR_DIM if l.startswith("   ") else PAIR_TITLE), width=w)
-
-
 # ---------------------------------------------------------------- time by stage (meters)
 def draw_time(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
     inner = p.box(rect, "time by stage", num, PAIR_BOX_STAGES)
@@ -661,7 +642,7 @@ def draw_time(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
 
 
 # ---------------------------------------------------------------- harnesses
-_ROLE_SHORT = {"actor": "act", "critic": "crit", "maintainer": "maint", "planner": "plan"}
+_ROLE_SHORT = {"actor": "act", "critic": "crit"}
 
 
 def _roles_line(r, width: int) -> str:

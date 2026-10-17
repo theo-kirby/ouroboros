@@ -113,7 +113,7 @@ class HandoffConfig(BaseModel):
 
 class HypergraphConfig(BaseModel):
     """When housekeeping is due. Applies to both graph memories, hypergraph and governor."""
-    reconcile_every: int = 5   # maintainer pass after this many work iterations
+    reconcile_every: int = 5   # housekeeping after this many work iterations
     pressure: int = 3          # ...or as soon as this many record nodes are unreconciled
     budget_units: int = 1      # dispatch budget per iteration
 
@@ -130,19 +130,8 @@ class LoopConfig(BaseModel):
 
     product_after: int | None = 8     # iterations changing only bookkeeping
     frontier_after: int | None = 30   # iterations with the frontier unmoved
-    repeat_bet_after: int | None = 3  # planner bets restating an earlier bet
-    bet_similarity: float = 0.5       # Jaccard over content words; nt3 healthy peaked at 0.33
-    bet_window: int = 6               # how many recent bets a new one is compared against
     escalate_every: int = 5           # iterations past the threshold per escalation step
-    rotate: bool = True               # step 3 may switch the actor to its fallback
-
-
-class PlanConfig(BaseModel):
-    """The plan layer the planner writes (DESIGN.md section 20). `Config.planner` turns it on."""
-    every: int = 5                # handoff repos: planner pass every N work iterations (hypergraph: after each reconcile)
-    view: str = "plan"
-    md: str = "PLAN.md"
-    max_new_directions: int = 1   # per planner pass, not per run
+    rotate: bool = True               # step 2 may switch the actor to its fallback
 
 
 # What the reporter pushes without a model: each is a fact read straight off the
@@ -190,23 +179,17 @@ class Config(BaseModel):
     # systemd only: MemoryMax for the run's unit, which covers every process it
     # starts (e.g. "40G"). Unset: no cap beyond the user slice's.
     memory_max: str | None = None
-    # Two roles run every iteration: the actor, and the critic that judges it and
-    # writes the next prompt. `rules` is the critic with no model behind it -- the
-    # same deterministic fallback that runs when the agent call fails.
+    # Two roles, and only two: the actor, which writes, and the critic that judges it
+    # and writes the next prompt. Housekeeping is an actor iteration; the next unit is
+    # the critic's reply. `rules` is the critic with no model behind it -- the same
+    # deterministic fallback that runs when the agent call fails.
     critic: str = "agent"  # agent | rules
-    # Two more are separate calls that ot4 showed cost more than they moved. Off,
-    # their work does not vanish: when the memory says a reconcile is due, the actor
-    # runs the maintainer's pass as its iteration, and the critic's reply names the
-    # next unit instead of a planner writing bets.
-    maintainer: bool = False
-    planner: bool = False
     idle_interval: str = "30m"  # sleep between iterations after done_accepted under report_done
     roles: dict[str, RoleConfig] = Field(
         default_factory=lambda: {
-            "actor": RoleConfig(),
+            # Codex carries the actor while Claude is limited (cadex nt2: 54 of 68 turns).
+            "actor": RoleConfig(fallback=[FallbackConfig(harness="codex")]),
             "critic": RoleConfig(timeout="10m"),
-            "maintainer": RoleConfig(timeout="20m"),
-            "planner": RoleConfig(timeout="20m"),
             "reporter": RoleConfig(timeout="10m"),   # the digest writer; not in the pipeline
         }
     )
@@ -215,7 +198,6 @@ class Config(BaseModel):
     handoff: HandoffConfig = Field(default_factory=HandoffConfig)
     hypergraph: HypergraphConfig = Field(default_factory=HypergraphConfig)
     limits: LimitConfig = Field(default_factory=LimitConfig)
-    plan: PlanConfig = Field(default_factory=PlanConfig)
     loop: LoopConfig = Field(default_factory=LoopConfig)
     report: ReportConfig = Field(default_factory=ReportConfig)
 
@@ -228,8 +210,8 @@ class Config(BaseModel):
 
     @property
     def active_roles(self) -> list[str]:
-        """The roles this config will call, in pipeline order."""
-        return ["actor", "critic"] + (["maintainer"] if self.maintainer else []) + (["planner"] if self.planner else [])
+        """The roles the loop calls, in pipeline order."""
+        return ["actor", "critic"]
 
     @classmethod
     def load(cls, path: Path) -> "Config":

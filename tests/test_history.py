@@ -26,7 +26,7 @@ def run_dir(repo: Path, name: str, *, steps: list[dict], decisions: list[dict] =
     (d / "run.yml").write_text("run: x\nstarted: 2026-09-08T17:30:00\n")
     (d / "status.json").write_text(json.dumps({
         "ts": "2026-09-09T06:47:49+00:00", "state": "killed", "elapsed_s": 67138,
-        "branch": f"ouroboros/{name}", "memory": "hypergraph",
+        "branch": f"ouroboros/{name}", "memory": "governor",
         "usage_lines": ["claude seven_day 58% -> 1%"], **(status or {}),
     }))
     return d
@@ -36,7 +36,7 @@ def branch_with(repo: Path, name: str, commits: list[tuple[str, str]]) -> None:
     """A run branch carrying one commit per (subject, path) pair.
 
     The path is what decides whether a commit landed anything: a commit under
-    `.hypergraph/` is the loop talking to itself, whatever its subject says.
+    `.ouroboros/` is the loop talking to itself, whatever its subject says.
     """
     g = GitGuard(repo, f"ouroboros/{name}")
     g.start()
@@ -70,7 +70,7 @@ def test_the_run_is_measured_against_the_branch_not_the_working_tree(repo):
     branch_with(repo, "ot4", [
         ("A real change", "cli/main.py"),
         # nt3's record commits carry no prefix to match on, so the files decide.
-        ("Record the blocked transition", ".hypergraph/graph/record/witty-brook-9419.md"),
+        ("Record the blocked transition", ".ouroboros/handoff/0007.md"),
         ("ouroboros #201: reconcile", "STATE.md"),
     ])
     d = run_dir(repo, "ot4", steps=[])
@@ -116,7 +116,7 @@ def test_an_unmeasurable_tick_count_reads_as_unknown_rather_than_zero(repo):
 def test_a_merged_branch_reports_the_merge_commit_and_what_it_brought(repo):
     """`merged:` is a fact about the base branch, so it changes without the run changing."""
     branch_with(repo, "ot4", [("A real change", "cli/main.py"),
-                              ("Record it", ".hypergraph/graph/record/a.md")])
+                              ("Record it", ".ouroboros/handoff/0001.md")])
     d = run_dir(repo, "ot4", steps=[])
     assert history.gather(repo, Config(run="ot4"), d).merged == ""
 

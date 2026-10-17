@@ -1,9 +1,8 @@
 """The loop. One iteration = actor call -> verify record -> commit -> critic -> budget.
 
-Two roles run every iteration: the actor, which writes, and the critic, which reads
-the change and the memory and writes the next prompt. Housekeeping is the actor's
-iteration when the memory says it is due; a separate maintainer and planner exist
-but are off unless the config turns them on.
+Two roles, and only two: the actor, which writes, and the critic, which reads the
+change and the memory and writes the next prompt. Housekeeping is the actor's
+iteration when the memory says it is due; the next unit is the critic's reply.
 """
 
 from __future__ import annotations
@@ -34,7 +33,7 @@ MAX_RESET_WAIT = 6 * 3600.0  # never trust a parsed reset time further out than 
 
 CREATIVE_REPLY = (
     "The done criteria are met. Exhaustion policy: creative. Propose three new directions "
-    "that serve the mission, write them in the plan, pick the most valuable one, and do one unit of it."
+    "that serve the mission, record them, pick the most valuable one, and do one unit of it."
 )
 MAINTAIN_REPLY = (
     "The done criteria are met. Exhaustion policy: maintain. Run the tests, fix flakes, "
@@ -78,8 +77,6 @@ class Engine:
     recorder: Recorder
     budget: BudgetClock
     critic: Critic = field(default_factory=RulesCritic)
-    maintainer: Harness | None = None   # only called when config.maintainer is on
-    planner: Harness | None = None      # only called when config.planner is on
     sleeper: Sleeper = time.sleep
     goal_text: str = ""
     goal_path: Path | None = None  # supplied by CLI; read only at iteration boundaries
@@ -91,13 +88,11 @@ class Engine:
     last_error: str | None = None
     last_ok_tag: str | None = None
     session_id: str | None = None
-    since_plan: int = 0
     session_uses: int = 0
     failed_iterations: int = 0
     stuck_iterations: int = 0
     loops: LoopDetector = None   # type: ignore[assignment]  # built in __post_init__
-    forced_plan: str | None = None   # a loop escalation demanding the next planner pass
-    last_housekeeping: int = -1      # the iteration the actor last ran the maintainer's pass
+    last_housekeeping: int = -1      # the iteration the actor last ran the reconcile pass
     last_primary_role: str | None = None
     outcomes: list[IterationOutcome] = field(default_factory=list)
 
@@ -146,7 +141,7 @@ class Engine:
         self.iteration += 1
         n = self.iteration
         role = self.config.role("actor")
-        # Housekeeping is an iteration, not a side call: the actor runs the maintainer's
+        # Housekeeping is an iteration, not a side call: the actor runs the reconcile
         # pass, the critic judges it like any other change, and it shows in the history.
         housekeeping = self._housekeeping_prompt()
         if housekeeping:
@@ -198,7 +193,7 @@ class Engine:
 
         # What this iteration moved, as opposed to what it touched. The frontier
         # is sampled here rather than at the end of the iteration, so it reflects
-        # the previous maintainer pass -- a constant lag, and the signal only ever
+        # the previous reconcile pass -- a constant lag, and the signal only ever
         # compares one iteration against the next.
         files = self.git.changed_files(head_before, commit or "HEAD") if changed else []
         try:
@@ -280,20 +275,6 @@ class Engine:
             verdict.reply = f"{verdict.reply}\n\nThe memory checker reports a problem. Fix it first:\n{check_problem}".strip()
         self.injected = verdict.reply or None
 
-        if progressed and not verdict.rejected:
-            self.since_plan += 1
-            if housekeeping and result.ok:
-                self._maybe_plan(n, "after housekeeping")
-            elif self.config.maintainer:
-                self._maybe_reconcile(n)
-            if self.forced_plan:
-                self._maybe_plan(n, f"loop escalation: {self.forced_plan}")
-                self.forced_plan = None
-            elif verdict.verdict == "done_accepted":
-                self._maybe_plan(n, "done accepted: plan the next directions")
-            elif not self.memory.reconcile_prompt() and self.config.plan.every and self.since_plan >= self.config.plan.every:
-                self._maybe_plan(n, f"every {self.config.plan.every} iterations")
-
         self.budget.add(cost=result.cost_usd, iteration=True, harness=result.extra.get("harness"),
                         done_accepted=(verdict.verdict == "done_accepted") if verdict.verdict.startswith("done") else None,
                         stuck=(verdict.verdict == "stuck"))
@@ -354,7 +335,6 @@ class Engine:
         if hasattr(self.critic, "goal_text"):
             self.critic.goal_text = candidate
         self.session_id, self.session_uses = None, 0
-        self.forced_plan = None
         notice = ("The operator revised the charter. Follow the current charter above. "
                   "Reconsider the previous next-unit recommendation against it; preserve "
                   "unresolved correctness fixes that still apply. Previous handoff:\n")
@@ -371,8 +351,7 @@ class Engine:
                 return False
             request.unlink()
             self.recorder.log("manual refresh: checking current harness accounts")
-            pools = [self.harness, getattr(self.critic, "harness", None),
-                     self.maintainer, self.planner]
+            pools = [self.harness, getattr(self.critic, "harness", None)]
             boards = {}
             for pool in pools:
                 board = getattr(pool, "board", None)
@@ -397,7 +376,7 @@ class Engine:
         if previous is None or previous == role:
             return
         try:
-            pools = [self.harness, self.critic.harness, self.maintainer, self.planner]
+            pools = [self.harness, self.critic.harness]
             boards = {}
             for pool in pools:
                 board = getattr(pool, "board", None)
@@ -414,9 +393,9 @@ class Engine:
             self.recorder.log(f"limit refresh failed ({type(exc).__name__}); continuing with cooldowns")
 
     def _escalate(self, n: int, loop, verdict: Verdict) -> None:
-        """Name the loop, then force a re-plan, then change the model.
+        """Name the loop, then change the model.
 
-        There is no fourth step. A loop is a thing to break out of, not a thing
+        There is no third step. A loop is a thing to break out of, not a thing
         to die of: a false positive must never end a run nobody is awake for.
         The ladder ends at "try a different model" and the loop continues either
         way, so a wrong signal costs one wasted prompt, not a run.
@@ -434,10 +413,8 @@ class Engine:
         verdict.reply = f"{loop_reply(loop, step)}\n\n{verdict.reply}".strip()
         if not act:
             return
-        self.recorder.log(f"[{n}] loop: {loop.signal} x{loop.streak} (escalation {step}/3)")
-        if step >= 2 and self.plan_enabled:
-            self.forced_plan = f"{loop.signal} x{loop.streak}"
-        if step >= 3 and self.config.loop.rotate:
+        self.recorder.log(f"[{n}] loop: {loop.signal} x{loop.streak} (escalation {step}/2)")
+        if step >= 2 and self.config.loop.rotate:
             self._rotate_actor(f"{loop.signal} x{loop.streak}")
 
     def _rotate_actor(self, why: str) -> None:
@@ -457,13 +434,12 @@ class Engine:
         self.recorder.log(f"loop: actor harness {name} rotated out ({why})")
 
     def _housekeeping_prompt(self) -> str | None:
-        """The maintainer's pass, for the actor to run as this iteration.
+        """The reconcile pass, for the actor to run as this iteration.
 
-        Only when no separate maintainer holds the job and the memory says a
-        reconcile is due. Never two iterations in a row: a pass that fails to
-        clear the tail must not eat the whole night trying.
+        Only when the memory says a reconcile is due. Never two iterations in a
+        row: a pass that fails to clear the tail must not eat the whole night trying.
         """
-        if self.config.maintainer or self.last_housekeeping == self.iteration - 1:
+        if self.last_housekeeping == self.iteration - 1:
             return None
         try:
             if not self.memory.needs_reconcile():
@@ -477,114 +453,6 @@ class Engine:
         self.last_housekeeping = self.iteration
         self.recorder.log(f"[{self.iteration}] housekeeping: the actor runs the reconcile pass")
         return prompt
-
-    def _maybe_reconcile(self, n: int) -> None:
-        try:
-            due = self.memory.needs_reconcile()
-        except Exception as exc:
-            self.recorder.log(f"needs_reconcile raised {exc!r}")
-            return
-        if not due:
-            return
-        prompt = self.memory.reconcile_prompt()
-        if not prompt:
-            return
-        role = self.config.role("maintainer")
-        harness = self.maintainer or self.harness
-        self._status("reconcile", iteration=n)
-        self.recorder.log(f"[{n}] reconcile: maintainer pass ({harness.name})")
-        try:
-            result = harness.run(
-                prompt, cwd=self.repo, timeout=role.timeout_seconds, model=role.model,
-                log_path=self.recorder.transcript_path(n, "maintainer"),
-            )
-        except Exception as exc:
-            result = Result(exit_code=-1, error=f"harness raised {exc!r}")
-        sha = self.git.commit(f"ouroboros #{n}: reconcile", allow_empty=False)
-        self.budget.add(cost=result.cost_usd, usage=result.usage, harness=result.extra.get("harness"))
-        self.recorder.step(iteration=n, step="reconcile", exit=result.exit_code, timed_out=result.timed_out,
-                           error=(result.error or None) and result.error[:200], sha=sha[:10], cost=result.cost_usd)
-        if result.ok:
-            self.memory.mark_reconciled()
-            self._maybe_plan(n, "after reconcile")
-        else:
-            self.injected = f"{self.injected or ''}\n\nThe last reconcile pass failed ({result.error or 'timeout'}). Record only; a maintainer will retry.".strip()
-
-    # ------------------------------------------------------------------
-    @property
-    def plan_enabled(self) -> bool:
-        return bool(self.config.planner)
-
-    def _plan_signals(self) -> str:
-        outs = self.outcomes[-self.config.plan.every :]
-        stop = self.config.stop
-        cap = f"of {stop.max_iterations}" if stop.max_iterations else "(no iteration cap)"
-        elapsed = self.budget.elapsed / 3600
-        left = f"{max(stop.after_seconds / 3600 - elapsed, 0):.1f}h left" if stop.after_seconds else "no wall-clock cap"
-        lines = [
-            f"- iterations so far: {self.iteration} {cap}"
-            + (f"; subscription usage: {'; '.join(self.budget.usage.lines())}" if self.budget.usage else ""),
-            f"- run budget: {elapsed:.1f}h elapsed, {left}. Size the short horizon to what fits; the charter has no clock.",
-        ]
-        for o in outs:
-            lines.append(f"- #{o.iteration}: {o.verdict.verdict} ({o.verdict.reason[:100]}); changed={o.changed} recorded={o.recorded}")
-        if self.no_change_streak:
-            lines.append(f"- iterations in a row with no change: {self.no_change_streak}")
-        lines.append(self.loops.describe())
-        loop = self.loops.report()
-        if loop is not None:
-            # The planner is the role that can end a loop cheapest, because a
-            # loop is usually the plan repeating itself, not the actor failing.
-            lines.append("")
-            lines.append("LOOP DETECTED — " + loop.describe())
-            lines.append(
-                "Do not restate the current bet. Pick a different charter criterion and bet on "
-                "that. If every criterion looks blocked, say which and why, one line each."
-            )
-        return "\n".join(lines)
-
-    def _maybe_plan(self, n: int, why: str) -> None:
-        """One planner pass: a Bet record folded into the plan. Never raises."""
-        if not self.plan_enabled:
-            return
-        try:
-            prompt = self.memory.planner_prompt(self._plan_signals())
-        except Exception as exc:
-            self.recorder.log(f"planner_prompt raised {exc!r}")
-            return
-        if not prompt:
-            return
-        role = self.config.role("planner")
-        harness = self.planner or self.harness
-        before = self._bet_marker()
-        self._status("plan", iteration=n)
-        self.recorder.log(f"[{n}] plan: planner pass ({harness.name}, {why})")
-        try:
-            result = harness.run(
-                prompt, cwd=self.repo, timeout=role.timeout_seconds, model=role.model,
-                log_path=self.recorder.transcript_path(n, "planner"),
-            )
-        except Exception as exc:
-            result = Result(exit_code=-1, error=f"harness raised {exc!r}")
-        bet = None
-        try:
-            bet = self.memory.verify_bet(before)
-        except Exception as exc:
-            self.recorder.log(f"verify_bet raised {exc!r}")
-        near = self.loops.observe_bet(bet)
-        sha = self.git.commit(f"ouroboros #{n}: plan — {(bet or 'no bet')[:60]}", allow_empty=False)
-        self.budget.add(cost=result.cost_usd, usage=result.usage, harness=result.extra.get("harness"))
-        self.recorder.step(iteration=n, step="plan", why=why, bet=bet, exit=result.exit_code, timed_out=result.timed_out,
-                           error=(result.error or None) and result.error[:200], sha=sha[:10], cost=result.cost_usd,
-                           repeats=round(near, 2))
-        self.since_plan = 0
-        if not result.ok or not bet:
-            self.recorder.log(f"[{n}] plan: no bet landed ({result.error or 'planner wrote nothing'})")
-
-    def _bet_marker(self):
-        if hasattr(self.memory, "bets_size"):
-            return self.memory.bets_size()
-        return self.memory.snapshot()
 
     def _call_actor(self, prompt: str, timeout: float, model: str | None, *, housekeeping: bool = False) -> Result:
         """Call the harness. Retry on retriable errors with backoff, forever. One retry on other errors."""

@@ -37,13 +37,7 @@ class MemoryAdapter(Protocol):
         """Problems the memory's own checker sees after a commit, or None."""
 
     def critic_context(self) -> str:
-        """Short text for the critic: the frontier and the current plan."""
-
-    def planner_prompt(self, signals: str) -> str | None:
-        """The planner role prompt, or None when this memory has no plan layer."""
-
-    def verify_bet(self, before: Any) -> str | None:
-        """The bet the planner wrote since `before` (a slug or title), or None."""
+        """Short text for the critic: the frontier and the tail."""
 
     def frontier_fingerprint(self) -> str | None:
         """A digest of the frontier as it stands, or None when this memory has no frontier.
@@ -80,12 +74,6 @@ class BaseMemory:
 
     def critic_context(self) -> str:
         return ""
-
-    def planner_prompt(self, signals: str) -> str | None:
-        return None
-
-    def verify_bet(self, before) -> str | None:
-        return None
 
     def frontier_fingerprint(self) -> str | None:
         return None

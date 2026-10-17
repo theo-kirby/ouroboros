@@ -1,4 +1,4 @@
-"""Hypergraph-protocol memory: one iteration = one dispatch; reconcile is a maintainer pass."""
+"""Hypergraph-protocol memory: one iteration = one dispatch; reconcile is an actor housekeeping pass."""
 
 from __future__ import annotations
 
@@ -6,20 +6,18 @@ import hashlib
 import re
 import shutil
 import subprocess
-from importlib import resources
 from pathlib import Path
 
 import yaml
 
 from .base import BaseMemory
+from .governor import STATE_MD_LIMIT, _main_checkout, _strip_front_matter, charter_gaps, reconcile_pass_prompt
 from .. import goal as charter
 
 _FM_TITLE = re.compile(r"^title:\s*(.+)$", re.MULTILINE)
 _FM_ROOT = re.compile(r"^parents:\s*\[\s*\]\s*$", re.MULTILINE)
 _UNREC = re.compile(r"(\d+) unreconciled record node")
 _GAP_LINE = re.compile(r"^- \[gap\] (\S+): (.*)$", re.MULTILINE)
-STATE_MD_LIMIT = 16000
-PLAN_MD_LIMIT = 4000
 _FRONTIER = re.compile(r"^## Frontier\s*$(.*?)(?=^## |\Z)", re.MULTILINE | re.DOTALL)
 # `- [working] **Title** (`slug`) — ...` anywhere in STATE.md. Status plus slug is
 # the whole of what "the frontier moved" means; the prose around it is not.
@@ -49,38 +47,8 @@ HYPERGRAPH_PROCEDURE = """Follow the `hypergraph-reconcile` skill. If it is inst
 6. `git add .hypergraph/graph STATE.md` and commit with a message starting `reconcile:`. If the config has a
    `store:` block the node files are gitignored and already committed to the Flywheel store: `git add STATE.md` only."""
 
-HYPERGRAPH_PLAN_RULE = """- **Never touch the `plan` view** (`.hypergraph/graph/plan/`, `PLAN.md`, impacts that start
-  with `plan/`). When a planner is on, that pass is the view's single writer and folds
-  them itself. Leave `plan/...` impacts pending; they are not yours."""
-
-
-def maintainer_prompt(*, branch: str, tail: str, goal_text: str, procedure: str, plan_rule: str) -> str:
-    """The ouroboros-maintainer skill with this memory's own procedure filled in."""
-    tpl = _strip_front_matter(resources.files("ouroboros.skills").joinpath("ouroboros-maintainer/SKILL.md").read_text())
-    return (
-        tpl.replace("{procedure}", procedure)
-        .replace("{plan_rule}", plan_rule)
-        .replace("{branch}", branch or "(run branch)")
-        .replace("{tail}", f"```\n{tail.strip()[-4000:]}\n```")
-        .replace("{goal}", (goal_text or "").strip()[:4000] or "(none)")
-    )
-
-
-def charter_gaps(goal_text: str) -> list[tuple[str, str]]:
-    """(gap-name, criterion) for every done criterion, names made unique."""
-    seen: dict[str, int] = {}
-    out: list[tuple[str, str]] = []
-    for crit in charter.done_criteria(goal_text):
-        name = charter.gap_name(crit)
-        seen[name] = seen.get(name, 0) + 1
-        if seen[name] > 1:
-            name = f"{name}-{seen[name]}"
-        out.append((name, crit))
-    return out
-
-
 def directive_body(*, goal_text: str, branch: str, previous: str | None, gaps: list[tuple[str, str]],
-                   dropped: list[tuple[str, str]], fence_charter: bool = False) -> str:
+                   dropped: list[tuple[str, str]]) -> str:
     """The run directive's body: the charter verbatim and its done criteria as gaps."""
     gap_lines = "\n".join(f"- [gap] {n}: {c}" for n, c in gaps) or "- (none declared)"
     supersedes = (
@@ -88,39 +56,19 @@ def directive_body(*, goal_text: str, branch: str, previous: str | None, gaps: l
         if previous else ""
     )
     dropped_text = (
-        "\n\nCriteria this version drops (the maintainer marks their gaps superseded):\n"
+        "\n\nCriteria this version drops (the reconcile pass marks their gaps superseded):\n"
         + "\n".join(f"- {n}: {c}" for n, c in dropped)
     ) if dropped else ""
     text = goal_text.strip()
-    if fence_charter:   # keep the charter's own headings from reading as the record's sections
-        text = f"~~~~markdown\n{text}\n~~~~"
     return (
         "## What\n\nOperator directive: an Ouroboros loop starts on this repo. Every work node of the run "
         f"descends from this node.{supersedes}\n\n## Why\n\nThe charter (the operator's goal document), verbatim:\n\n"
         f"{text}\n\n**Done criteria as gaps** (one open state node each; work closes them through "
         f"declared impacts):\n\n{gap_lines}{dropped_text}\n\n"
         f"## Method\n\nOuroboros iterations on branch `{branch}`: orient, one dispatched unit, record, commit; "
-        "a reconcile pass folds the tail on pressure; with the planner on, a bet follows each reconcile.\n\n"
+        "a reconcile pass folds the tail on pressure.\n\n"
         "## Result\n\nDirective recorded. Work follows as child nodes.\n"
     )
-
-
-def _main_checkout(repo: Path) -> Path:
-    """The main working tree for `repo` (itself unless `repo` is a git worktree)."""
-    try:
-        out = subprocess.run(["git", "-C", str(repo), "rev-parse", "--path-format=absolute", "--git-common-dir"],
-                             capture_output=True, text=True, timeout=30)
-    except (OSError, subprocess.TimeoutExpired):
-        return repo
-    common = Path(out.stdout.strip()) if out.returncode == 0 and out.stdout.strip() else None
-    return common.parent if common is not None and common.name == ".git" else repo
-
-
-def _strip_front_matter(text: str) -> str:
-    if text.startswith("---"):
-        _, _, rest = text.partition("\n---\n")
-        return rest.lstrip("\n")
-    return text
 
 
 def _title_of(node_file: Path) -> str:
@@ -140,10 +88,6 @@ class HypergraphMemory(BaseMemory):
         budget_units: int = 1,
         binary: str = "hypergraph",
         recent: int = 3,
-        plan: bool = True,
-        plan_view: str = "plan",
-        plan_md: str = "PLAN.md",
-        max_new_directions: int = 3,
     ) -> None:
         self.repo = repo
         self.config_path = repo / ".hypergraph" / "config.yml"
@@ -159,11 +103,6 @@ class HypergraphMemory(BaseMemory):
         self.state_md = repo / cfg.get("state_md", "STATE.md")
         self.record_root_slug = (cfg.get("record_root") or {}).get("slug")
         self.state_root_slug = (cfg.get("state_root") or {}).get("slug")
-        self.plan = plan
-        self.plan_view = plan_view
-        self.plan_md = repo / plan_md
-        self.max_new_directions = max_new_directions
-        self.plan_root_slug = self._read_plan_root()
         self.reconcile_every = reconcile_every
         self.pressure = pressure
         self.budget_units = budget_units
@@ -178,13 +117,6 @@ class HypergraphMemory(BaseMemory):
         self.run_dir: Path | None = None
         self.last_error: str | None = None
         self.reconcile_due = False
-
-    def _read_plan_root(self) -> str | None:
-        try:
-            cfg = yaml.safe_load(self.config_path.read_text()) or {}
-        except (OSError, yaml.YAMLError):
-            return None
-        return (((cfg.get("views") or {}).get(self.plan_view) or {}).get("root") or {}).get("slug")
 
     # -- CLI plumbing ----------------------------------------------------
     def hg(self, *args: str, timeout: float = 120) -> tuple[int, str]:
@@ -302,7 +234,6 @@ class HypergraphMemory(BaseMemory):
                 f"NEW {n} — Charter gap, status open: {c[:300]}. Flip to working only when the criterion is verifiably met."
                 for n, c in added
             ]
-            impacts += self.plan_seed_impacts(goal_text)
             self.directive_slug = self.new_record(
                 title=f"{versioned} — operator directive", body=body, parent=previous or self.find_record_root(),
                 impacts=impacts,
@@ -316,126 +247,11 @@ class HypergraphMemory(BaseMemory):
         newest = files[-1].stem if files else None
         self.last_record_slug = newest or self.directive_slug
 
-    # -- the plan view ---------------------------------------------------
-    def ensure_plan_view(self) -> bool:
-        """Declare the plan view once (a reconcile-gated write Ouroboros owns). True when it exists."""
-        if not self.plan:
-            return False
-        if self.plan_root_slug:
-            return True
-        code, out = self.hg("views", "add", self.plan_view, "--md", str(self.plan_md.relative_to(self.repo)), "--reconcile", *self._cfg())
-        if code != 0:
-            self.last_error = out
-            return False
-        self.plan_root_slug = self._read_plan_root()
-        return self.plan_root_slug is not None
-
-    def plan_dir(self) -> Path:
-        return self.graph_dir / self.plan_view
-
-    def plan_nodes(self) -> list[dict]:
-        """Every plan node but the root: {slug, title, status, current}."""
-        out = []
-        d = self.plan_dir()
-        if not d.exists():
-            return out
-        for f in sorted(d.glob("*.md")):
-            if f.stem == self.plan_root_slug:
-                continue
-            text = f.read_text()
-            body = _strip_front_matter(text)
-            status = body.splitlines()[0].replace("Status:", "").strip() if body.startswith("Status:") else "?"
-            current = body.split("## Current", 1)[1].split("## Negative knowledge", 1)[0].strip() if "## Current" in body else body
-            out.append({"slug": f.stem, "title": _title_of(f), "status": status, "current": current})
-        order = {"short": 0, "medium": 1, "long": 2}
-        out.sort(key=lambda n: (order.get(n["title"].lower(), 9), n["title"]))
-        return out
-
-    def plan_text(self, limit: int = PLAN_MD_LIMIT) -> str:
-        nodes = self.plan_nodes()
-        if not nodes:
-            return self.plan_md_text()[:limit]
-        text = "\n\n".join(f"### {n['title']} (`{n['slug']}`, {n['status']})\n\n{n['current']}" for n in nodes)
-        return text[:limit]
-
-    def plan_seed_impacts(self, goal_text: str) -> list[str]:
-        """Impacts that seed the plan view from the charter's horizon ladder, once."""
-        if not self.ensure_plan_view() or self.plan_nodes():
-            return []
-        ladder = charter.horizon_ladder(goal_text)
-        if not ladder:
-            return []
-
-        def rung(*names: str) -> str:
-            return " ".join(ladder.get(n, "") for n in names).strip()[:400] or "(the charter gives no rung here)"
-
-        seed = "Seeded from the charter's horizon ladder; the planner re-plans after each maintainer pass"
-        return [
-            f"{self.plan_view}/NEW short — {seed}. Next units, one iteration each: {rung('short')}",
-            f"{self.plan_view}/NEW medium — {seed}. Open gaps in order, several units each: {rung('medium')}",
-            f"{self.plan_view}/NEW long — {seed}. Directions and standing work: {rung('long')}",
-        ]
-
-    def plan_pending(self) -> str:
-        """Lines of `check` that name pending impacts on the plan view."""
-        code, out = self.check()
-        lines = [l for l in out.splitlines() if f"[{self.plan_view}/" in l or "pending impact" in l]
-        return "\n".join(lines) or "(none)"
-
-    def planner_prompt(self, signals: str) -> str | None:
-        if not self.plan or not self.plan_root_slug:
-            return None
-        tpl = _strip_front_matter(resources.files("ouroboros.skills").joinpath("ouroboros-planner/SKILL.md").read_text())
-        frontier = frontier_of(self.state_md.read_text()) if self.state_md.exists() else "(STATE.md missing)"
-        recent = self.record_files()[-8:]
-        recent_text = "\n".join(f"- `{f.stem}` — {_title_of(f)}" for f in recent) or "(none)"
-        parent = self.last_record_slug or self.directive_slug or "<causal-parent-slug>"
-        fold = (
-            f"1. Write ONE decision record, title starting `Bet:` (never more than one per pass). Body headings exactly "
-            f"`## What`, `## Why`, `## Method`, `## Result`. `## Why` carries the reasoning and cites the evidence. Mint it:\n"
-            f"   `hypergraph new record --config .hypergraph/config.yml --title \"Bet: <summary>\" --body bet.md --parent {parent} "
-            f"--impact \"{self.plan_view}/<slug> — <delta>\" --repo-auto`, one `--impact` per plan node you change "
-            f"(`{self.plan_view}/NEW <name>` for a new one). Use `--none \"plan holds: <reason>\"` when nothing changes; then stop after step 5.\n"
-            f"2. You are the single writer of the `{self.plan_view}` view. Fold your own bet and every pending plan impact listed above:\n"
-            f"   - new node: `hypergraph new {self.plan_view} --config .hypergraph/config.yml --title <short|medium|long|name> --status open "
-            f"--parent {self.plan_root_slug} --prov \"<bet-slug> — why\" --reconcile --body current.md` where current.md holds ONLY the "
-            f"`## Current` content (ranked bullets, each with `[rec: <slug>]`).\n"
-            f"   - existing node: `hypergraph update <slug> --config .hypergraph/config.yml --print-sha`, then rewrite the FULL body "
-            f"(`Status: open`, `## Current`, `## Negative knowledge`, `## Provenance` with the bet slug added) and "
-            f"`hypergraph update <slug> --config .hypergraph/config.yml --body full.md --expect <sha> --reconcile`.\n"
-            f"   Never touch the state graph (`hypergraph new state`, `update` on a state slug) and never edit STATE.md.\n"
-            f"3. Advance the view's mark: `hypergraph export --config .hypergraph/config.yml`, then "
-            f"`hypergraph hwm --record .hypergraph/cache/record.json --state .hypergraph/cache/state.json --config .hypergraph/config.yml "
-            f"--view {self.plan_view} --tips` prints `high_water_mark: <slugs>`. Rewrite the view root `{self.plan_root_slug}` body "
-            f"(keep its prose, set `## Reconciliation` to that mark and `reconciled_at` now) through `hypergraph update --expect --reconcile`.\n"
-            f"4. `hypergraph sync --config .hypergraph/config.yml` renders `{self.plan_md.name}` and runs check. Fix any violation and sync again.\n"
-            + (f"5. `git add {self.plan_md.name}` (the plan nodes are already in the Flywheel store; the node files are gitignored) "
-               if self.store_backed else f"5. `git add .hypergraph {self.plan_md.name}` ")
-            + "and commit with a message starting `plan:`. Delete your scratch files."
-        )
-        return (
-            tpl.replace("{max_new}", str(self.max_new_directions))
-            .replace("{charter}", (self.goal_text or "").strip()[:12000] or "(none)")
-            .replace("{frontier}", frontier or "(empty: no open gaps — propose directions)")
-            .replace("{plan}", self.plan_text(6000) or "(no plan nodes yet: create short, medium, long from the pending impacts)")
-            .replace("{pending}", self.plan_pending())
-            .replace("{recent}", recent_text)
-            .replace("{signals}", signals.strip() or "(none)")
-            .replace("{fold}", fold)
-        )
-
-    def verify_bet(self, before: set[str]) -> str | None:
-        for f in self.record_files():
-            if f.name not in before and _title_of(f).startswith("Bet:"):
-                self.last_record_slug = f.stem
-                return f"{f.stem} — {_title_of(f)}"
-        return None
-
     def frontier_fingerprint(self) -> str | None:
         """Every state node's status, plus how many charter criteria are still open.
 
         These are the only two things that make a run's night worth having: a
-        node changed status, or a criterion got ticked. Records, plans, audits
+        node changed status, or a criterion got ticked. Records, audits
         and docs are how those happen, not whether they did. nt3 wrote 22,437
         lines and this digest changed once in 201 iterations.
         """
@@ -480,10 +296,6 @@ class HypergraphMemory(BaseMemory):
             parts.append(f"## STATE.md\n\n{text.strip()}")
         else:
             parts.append("## STATE.md\n\n(missing — run `hypergraph sync --config .hypergraph/config.yml`)")
-        plan = self.plan_text()
-        if plan:
-            parts.append("## Plan (agent-owned bets: short / medium / long)\n\nPick this iteration's unit from `short` unless the "
-                         "critic's message or a broken frontier node says otherwise.\n\n" + plan)
         count, out = self.unreconciled()
         parts.append(f"## Unreconciled tail ({count} node(s))\n\n```\n{out.strip()[-4000:]}\n```")
         recent = self.record_files()[-self.recent :]
@@ -537,13 +349,8 @@ class HypergraphMemory(BaseMemory):
 
     def reconcile_prompt(self) -> str | None:
         _, tail = self.unreconciled()
-        return maintainer_prompt(
-            branch=self.branch, tail=tail, goal_text=self.goal_text,
-            procedure=HYPERGRAPH_PROCEDURE, plan_rule=HYPERGRAPH_PLAN_RULE,
-        )
-
-    def plan_md_text(self) -> str:
-        return self.plan_md.read_text().strip() if self.plan_md.exists() else ""
+        return reconcile_pass_prompt(branch=self.branch, tail=tail, goal_text=self.goal_text,
+                                     procedure=HYPERGRAPH_PROCEDURE)
 
     def critic_context(self) -> str:
         parts = []
@@ -554,9 +361,6 @@ class HypergraphMemory(BaseMemory):
             parts.append("### Frontier\n\n(STATE.md missing)")
         count, _ = self.unreconciled()
         parts.append(f"Unreconciled record nodes past the high-water mark: {count} (their declared impacts are not on the frontier yet).")
-        plan = self.plan_text()
-        if plan:
-            parts.append("### Plan (agent-owned bets: short / medium / long)\n\n" + plan)
         return "\n\n".join(parts)
 
     def check_report(self) -> str | None:
