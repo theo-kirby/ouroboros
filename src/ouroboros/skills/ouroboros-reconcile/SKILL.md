@@ -1,6 +1,6 @@
 ---
 name: ouroboros-reconcile
-description: The reconcile pass prompt for an Ouroboros loop on a repo with graph memory (governor or hypergraph-protocol). The actor runs it as a housekeeping iteration when the memory says a reconcile is due. Folds the records' declared impacts into state, regenerates STATE.md, checks, commits.
+description: The reconcile pass prompt for an Ouroboros loop on a repo with governor memory. The actor runs it as a housekeeping iteration when the memory says a reconcile is due. Folds the records' declared impacts into state, regenerates STATE.md, checks, commits.
 ---
 
 # You run one reconcile pass

@@ -34,14 +34,14 @@ from typing import Iterable
 # bookkeeping: real, often necessary, and not the work. Everything else --
 # source, tests, docs, data, build files -- counts as product, because a
 # narrower rule would call a docs fix "not work", and it is.
-BOOKKEEPING = (".hypergraph/", ".ouroboros/", ".governor/", ".flywheel/")
+BOOKKEEPING = (".ouroboros/", ".governor/", ".flywheel/")
 GENERATED = ("STATE.md", "PLAN.md", "ROADMAP.md")
 
 def is_product_change(paths: Iterable[str]) -> bool:
     """True when the diff touched anything that is not the loop's own bookkeeping."""
     for raw in paths:
         p = (raw or "").strip()
-        if p.startswith("./"):   # lstrip("./") would also eat the dot of ".hypergraph"
+        if p.startswith("./"):   # lstrip("./") would also eat the dot of ".flywheel"
             p = p[2:]
         if not p or p in GENERATED or p.startswith(BOOKKEEPING):
             continue

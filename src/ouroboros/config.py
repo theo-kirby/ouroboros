@@ -111,8 +111,8 @@ class HandoffConfig(BaseModel):
     recent: int = 3
 
 
-class HypergraphConfig(BaseModel):
-    """When housekeeping is due. Applies to both graph memories, hypergraph and governor."""
+class GraphConfig(BaseModel):
+    """When housekeeping is due in the governor memory."""
     reconcile_every: int = 5   # housekeeping after this many work iterations
     pressure: int = 3          # ...or as soon as this many record nodes are unreconciled
     budget_units: int = 1      # dispatch budget per iteration
@@ -170,7 +170,7 @@ class ReportConfig(BaseModel):
 class Config(BaseModel):
     run: str = "run"
     goal: str = ".ouroboros/goal.md"
-    memory: Literal["auto", "governor", "hypergraph", "handoff"] = "auto"
+    memory: Literal["auto", "governor", "handoff"] = "auto"
     backend: str = "headless"
     # Where `run` puts the loop so it outlives the terminal (launch.py): tmux,
     # tern, a systemd user service, or the foreground. auto: tmux inside tmux,
@@ -196,7 +196,7 @@ class Config(BaseModel):
     git: GitConfig = Field(default_factory=GitConfig)
     stop: StopConfig = Field(default_factory=StopConfig)
     handoff: HandoffConfig = Field(default_factory=HandoffConfig)
-    hypergraph: HypergraphConfig = Field(default_factory=HypergraphConfig)
+    graph: GraphConfig = Field(default_factory=GraphConfig)
     limits: LimitConfig = Field(default_factory=LimitConfig)
     loop: LoopConfig = Field(default_factory=LoopConfig)
     report: ReportConfig = Field(default_factory=ReportConfig)

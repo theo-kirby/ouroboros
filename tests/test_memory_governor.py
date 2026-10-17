@@ -95,10 +95,7 @@ def test_auto_detects_governor(gov_repo):
     assert isinstance(make_memory("handoff", gov_repo), HandoffMemory)
 
 
-def test_auto_prefers_hypergraph_config_and_falls_back_without_a_repository(gov_repo, tmp_path):
-    (gov_repo / ".hypergraph").mkdir()
-    (gov_repo / ".hypergraph" / "config.yml").write_text("project: t\n")
-    assert not isinstance(make_memory("auto", gov_repo), GovernorMemory)
+def test_auto_falls_back_to_handoff_without_a_repository(tmp_path):
     bare = tmp_path / "bare"
     bare.mkdir()
     git(bare, "init", "-q", "-b", "main")

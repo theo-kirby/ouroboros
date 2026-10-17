@@ -36,8 +36,8 @@ def test_old_config_keys_are_ignored_not_fatal(tmp_path):
     assert not hasattr(cfg, "planner") and not hasattr(cfg, "plan")
 
 
-def test_graph_cadence_is_read_from_the_hypergraph_key(tmp_path):
+def test_graph_cadence_is_read_from_the_graph_key(tmp_path):
     p = tmp_path / "c.yml"
-    p.write_text("run: x\nmemory: governor\nhypergraph:\n  reconcile_every: 7\n  pressure: 2\n")
+    p.write_text("run: x\nmemory: governor\ngraph:\n  reconcile_every: 7\n  pressure: 2\n")
     cfg = Config.load(p)
-    assert cfg.hypergraph.reconcile_every == 7 and cfg.hypergraph.pressure == 2 and cfg.hypergraph.budget_units == 1
+    assert cfg.graph.reconcile_every == 7 and cfg.graph.pressure == 2 and cfg.graph.budget_units == 1

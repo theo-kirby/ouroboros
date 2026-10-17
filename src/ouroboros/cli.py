@@ -259,7 +259,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     try:
         memory = make_memory(
-            cfg.memory, repo, recent=cfg.handoff.recent, **cfg.hypergraph.model_dump(),
+            cfg.memory, repo, recent=cfg.handoff.recent, **cfg.graph.model_dump(),
         )
     except ValueError as exc:
         print(f"ouroboros: {exc}", file=sys.stderr)
@@ -899,7 +899,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--model")
     r.add_argument("--allow-dirty", action="store_true")
     r.add_argument("--critic", choices=["agent", "rules"], help="rules: the deterministic critic, no model call")
-    r.add_argument("--memory", choices=["auto", "governor", "hypergraph", "handoff"])
+    r.add_argument("--memory", choices=["auto", "governor", "handoff"])
     r.add_argument("--foreground", action="store_true", help="run here: the same as --launcher foreground")
     r.add_argument("--launcher", choices=launch.LAUNCHERS,
                    help="where the loop lives (overrides config `launcher:`): tmux, tern, a systemd user unit, or here")
