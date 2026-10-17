@@ -56,10 +56,12 @@ checks, the scribe writes.
 
 ## The run's page
 
-Every run keeps a live page at `.ouroboros/runs/<run>/view/index.html`. Ouroboros
-fills in the facts itself (the stage, the iteration, the criteria, the frontier,
-the critic's decisions, the timeline of records); the scribe writes the story
-(results, tables, figures). `ouroboros view` serves it; `ouroboros view --host
+Every run keeps a live page at `.ouroboros/runs/<run>/view/index.html`, written
+for someone who does not know the code. Ouroboros fills in the facts itself (the
+loop and its current stage, the key figures, usage, the criteria, the open
+problems, a timeline of every iteration, and the memory graph drawn by
+Governor's renderer); the scribe writes a plain-language
+summary and the findings (results, tables, figures). `ouroboros view` serves it; `ouroboros view --host
 0.0.0.0` lets a phone open it, for example over Tailscale. A repo can bring its
 own template at `.ouroboros/view/template.html`.
 

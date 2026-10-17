@@ -55,27 +55,49 @@ ouroboros mem record --title "<title>" --body body.md --impact "<claim-id>: <del
 ## 5. The view
 
 The run's live page is `{view_dir}/index.html`. Ouroboros renders the facts on it
-itself: the run, the stage, the iteration, the criteria, the frontier, the critic's
-decisions and the timeline of records. Do not repeat those. Your part is the story:
-`{story_path}`, an HTML fragment that shows what the run has achieved and found.
+itself: the run, the loop's stage, the iteration, the criteria, the open problems,
+the usage and a timeline of every iteration with the critic's verdict. Do not repeat
+those. Your part is two files.
+
+**Write for an outsider.** The reader is an operator who opens this page once a month,
+among many runs, and does not know this code. They must see in ten seconds what the
+run is for, how far it got, and what is in the way. Plain words first, technical
+detail second: say "the bot now looks two moves ahead", then give the name, the
+command and the record id in small print under it. Explain any term a newcomer
+would not know the first time you use it.
+
+**`{summary_path}`: the summary.** Plain text, no HTML, two short paragraphs, 120
+words at most. The first says what the run is trying to do and why it matters, in
+words anyone can follow. The second says where it stands now: the best result so
+far with its number, the main problem, and what comes next. Rewrite it whenever one
+of those changes, so it is always the current picture.
+
+**`{story_path}`: the findings.** An HTML fragment that shows what the run has
+achieved and found.
 
 - Update it when this iteration produced something worth seeing: a number that
   moved, a result table, a figure, a render, a milestone, a decision that changes
   direction. When nothing new came out, leave it as it is.
 - Curate, do not append: it is the current picture, newest and most important first.
   Replace a stale section instead of adding another one. Keep it under about 40 KB.
+- Each `<section>` starts with an `<h2>` that states the finding as a sentence
+  ("Looking ahead beats the simple bots by six times"), then one plain paragraph,
+  then the evidence: a figure, a table.
 - A fragment only: no `<html>`, `<head>`, `<body>`, `<style>` or `<script>`. Use
-  `<section>` with an `<h2>` each, tables, `<figure>` with `<figcaption>`, inline
-  `<svg>` for small charts. Classes you may use: `grid` (a responsive figure grid),
-  `chip`, `ok`, `warn`, `bad`, `num` (right-aligned numbers), `cap` (a caption).
+  `<section>`, tables, `<figure>` with `<figcaption>`, and inline `<svg>` for small
+  charts. Classes you may use: `grid` (figures side by side), `chip`, `ok`, `warn`,
+  `bad`, `num` (right-aligned numbers), `src` (a small source line).
+- Inline SVG fills the width of its column, so give it a `viewBox` about 600 wide
+  and 11 to 13 px text, and use `currentColor` for marks so the page's colours apply.
 - Images and SVG files go in `{assets_dir}/` and are referenced as `assets/<name>`.
   Copy them there; never link outside the view. Prefer small files.
-- Say where each number comes from (the record id, the command, the file).
+- Say where each number comes from, in a `<p class="src">` under it: the command,
+  the file, the record id.
 
 ## 6. Stop
 
 Your final message is one line: the record id you wrote, and whether you folded or
-changed the story.
+changed the summary or the story.
 
 ## The critic's verdict
 
