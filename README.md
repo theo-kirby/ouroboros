@@ -33,7 +33,12 @@ writes down what happened and why. Each change is checked, each step is
 recorded, and each iteration must move the work forward. You come back to a
 branch that you can read, and a report that tells you what to merge.
 
-![The Ouroboros loop: orient, work, prove, verify, judge, and adapt](docs/ouroboros.png)
+<a href="https://borris.dev">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/site-dark.png">
+    <img src="docs/site-light.png" alt="The borris.dev page in the style of an Ouroboros run report: the loop of actor, critic and scribe, the key figures, and usage from a real run">
+  </picture>
+</a>
 
 ## The five rules
 
