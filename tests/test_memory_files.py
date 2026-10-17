@@ -154,6 +154,7 @@ def test_the_prompts_name_only_ouroboros_mem(repo):
                                  fix_first="", diff_stat="", commit="abc", fold=mem.fold_prompt(), view_dir="v",
                                  story_path="v/story.html", assets_dir="v/assets")
     assert "ouroboros mem record" in scribe and "ouroboros mem fold --apply" in scribe and "v/story.html" in scribe
+    assert "v/summary.txt" in scribe and "{summary_path}" not in scribe
     for text in (actor, scribe):
         assert "governor record" not in text and "governor fold" not in text
         assert "{where}" not in text and "{" + "orient}" not in text and "{fold}" not in text

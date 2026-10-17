@@ -26,15 +26,23 @@ def run_dir(repo):
     (d / "status.json").write_text(json.dumps({
         "run": "nt9", "state": "critique", "iteration": 7, "branch": "ouroboros/nt9", "harness": "claude",
         "memory": "files", "elapsed_s": 3725, "usage_compact": "claude 5h 31%", "last_verdict": "continue",
-        "epoch": 1_800_000_000.0,
+        "epoch": 1_800_000_000.0, "stage_since": 1_799_999_900.0,
+        "usage": {"claude": {"windows": {"five_hour": {"utilization": 0.62, "resets_at": 1_800_004_000.0, "minutes": 300},
+                                         "seven_day": {"utilization": 0.2, "minutes": 10080}},
+                             "first_windows": {"five_hour": 0.27}}},
     }))
     (d / "critic.jsonl").write_text("\n".join(json.dumps(x) for x in [
-        {"iteration": 5, "verdict": "continue", "reason": "good unit", "doing": "next: tests"},
+        {"iteration": 5, "verdict": "continue", "reason": "good unit", "did": "Fix <script>alert(1)</script>",
+         "doing": "next: tests"},
         {"iteration": 6, "verdict": "reject", "reason": "broke <b>build</b>", "fix_first": "fix it"},
     ]) + "\nnot json\n")
     (d / "iterations.jsonl").write_text("\n".join(json.dumps(x) for x in [
-        {"iteration": 5, "step": "commit", "sha": "abc"}, {"iteration": 6, "step": "commit", "sha": "def"},
-        {"iteration": 6, "step": "revert", "to": "ok-5"},
+        {"ts": "2027-01-15T07:57:00+00:00", "iteration": 5, "step": "commit", "sha": "abc", "changed": True},
+        {"ts": "2027-01-15T07:58:00+00:00", "iteration": 5, "step": "critique", "verdict": "continue"},
+        {"ts": "2027-01-15T07:59:00+00:00", "iteration": 5, "step": "scribe", "recorded": True, "fold_due": True},
+        {"ts": "2027-01-15T08:03:00+00:00", "iteration": 6, "step": "commit", "sha": "def", "changed": True},
+        {"ts": "2027-01-15T08:03:30+00:00", "iteration": 6, "step": "critique", "verdict": "reject"},
+        {"ts": "2027-01-15T08:03:31+00:00", "iteration": 6, "step": "revert", "to": "ok-5"},
     ]) + "\n")
     return d
 
@@ -73,15 +81,70 @@ def test_render_writes_the_page_and_live_json(run_dir, repo, graph):
     j = live(run_dir)
     assert j["state"] == "critique" and j["iteration"] == 7 and j["ts"] == 1_800_000_000.0
     assert f'data-version="{j["version"]}"' in html
-    for fact in ("nt9", "Ship the widget", "ouroboros/nt9", "claude 5h 31%", "1 h 02 min", "updated 30 s ago"):
+    for fact in ("nt9", "Ship the widget", "ouroboros/nt9", "1 h 02", "updated 30 s ago"):
         assert fact in html
-    assert 'class="stage now" aria-current="step">critic' in html
-    assert ">2</span> <span class=\"sub-inline\">· 1 reverted" in html
+    assert '<path class="arc on"' in html and '<g class="node on">' in html and "now the critic" in html
+    assert 'id="stage-for" data-since="1799999900"' in html
+    assert "Commits kept</dt><dd><span class=\"num\">1</span><small>1 reverted</small>" in html   # 2 made, 1 reverted
     assert "Build passes clean" in html and "passes on CI" in html and ">met<" in html
     assert "Network test flakes" in html and ">broken<" in html
-    assert "Third" in html and "unfolded" in html
+    assert "1</span> record(s) not folded" in html
     assert "{{" not in html
     assert not list((run_dir / "view").glob(".*tmp"))
+
+
+def test_usage_is_a_row_of_cells_per_window(run_dir, repo):
+    view.render(run_dir, repo, goal_text=GOAL)
+    html = page(run_dir)
+    assert html.count('<div class="gauge">') == 2
+    assert 'aria-valuenow="62"' in html and html.count('<i class="on"') == 12 + 4   # 62% and 20% of 20 cells
+    assert "+35 this run" in html and 'data-at="1800004000"' in html and "weekly window" in html
+
+
+def test_the_timeline_has_a_column_and_a_row_per_iteration(run_dir, repo, graph):
+    view.render(run_dir, repo, goal_text=GOAL, graph=graph)
+    html = page(run_dir)
+    assert 'href="#it-5"' in html and 'href="#it-6"' in html
+    assert '<tr id="it-6">' in html and html.index('<tr id="it-6">') < html.index('<tr id="it-5">'), "newest first"
+    assert 'class="fold"' in html and 'class="x"' in html   # iteration 5 folded, iteration 6 reverted
+    assert "next: tests" in html and "Critic: good unit" in html
+    assert "typ. 1 min" in html   # the critic and the scribe each took a minute in iteration 5
+
+
+def test_the_summary_is_the_scribes_else_the_mission(run_dir, repo):
+    view.render(run_dir, repo, goal_text=GOAL)
+    assert "From the charter" in page(run_dir) and "Make the widget build &amp; ship &lt;fast&gt;." in page(run_dir)
+    view.summary_path(run_dir).write_text("It builds <now>.\n\nNext: ship it.")
+    view.render(run_dir, repo, goal_text=GOAL)
+    html = page(run_dir)
+    assert "<p>It builds &lt;now&gt;.</p><p>Next: ship it.</p>" in html and "From the charter" not in html
+
+
+def test_the_memory_graph_is_governors_report_shape(graph):
+    data = view.report_graph(graph)
+    ids = {n["id"] for n in data["nodes"]}
+    assert data["schemaVersion"] == 1 and data["head"] is None and len(ids) == len(data["nodes"])
+    assert all(n["parentId"] is None or n["parentId"] in ids for n in data["nodes"])
+    assert all(e["source"] in ids and e["target"] in ids for e in data["edges"])
+    assert len({e["id"] for e in data["edges"]}) == len(data["edges"])
+    tags = {t["id"] for n in data["nodes"] for t in n["tags"]}
+    assert {"graph:root", "graph:state", "graph:record", "status:working", "status:broken", "governor:folded"} <= tags
+    assert any(e["relation"] == "citation" for e in data["edges"])
+    assert data["loadedAt"] == max(n["createdAt"] for n in data["nodes"] if "createdAt" in n), "stable, not now"
+
+
+def test_the_graph_page_is_written_once_and_framed(run_dir, repo, graph):
+    view.render(run_dir, repo, goal_text=GOAL, graph=graph)
+    gp = run_dir / "view" / "graph.html"
+    text = gp.read_text()
+    assert 'id="flywheel-snapshot"' in text and "<script>alert(1)" not in text and "\\u003cscript>alert(1)" in text
+    html = page(run_dir)
+    assert '<iframe class="graph" data-src="graph.html?v=' in html and 'id="graph-sec" data-v="' in html
+    mtime = gp.stat().st_mtime_ns
+    view.render(run_dir, repo, goal_text=GOAL, graph=graph, now=1_800_009_999.0)
+    assert gp.stat().st_mtime_ns == mtime, "an unchanged memory does not rewrite the graph page"
+    view.render(run_dir, repo, goal_text=GOAL, graph=None)
+    assert "The memory could not be read." in page(run_dir)
 
 
 def test_everything_but_the_story_is_escaped(run_dir, repo, graph):
@@ -122,7 +185,7 @@ def test_broken_inputs_do_not_raise(run_dir, repo):
     (run_dir / "status.json").write_text("{nope")
     (run_dir / "critic.jsonl").write_text("[1,2]\n{\n")
     assert view.render(run_dir, repo, goal_text="", graph="not a graph") is not None
-    assert "No critic verdict yet." in page(run_dir)
+    assert "could not be made" not in page(run_dir) and "No usage reading yet." in page(run_dir)
 
 
 def test_render_returns_none_when_it_cannot_write(tmp_path, repo):

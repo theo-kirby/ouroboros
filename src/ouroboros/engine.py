@@ -115,6 +115,7 @@ class Engine:
     scribe: Scribe | None = None     # None: the loop writes each record itself (the rules scribe)
     check_problem: str | None = None  # the memory checker's last complaint, for the next scribe and critic
     last_primary_role: str | None = None
+    stage: tuple[str, float] | None = None   # (state, when it began): the view's "on the critic for 2 min"
     outcomes: list[IterationOutcome] = field(default_factory=list)
 
     def __post_init__(self) -> None:
@@ -329,6 +330,7 @@ class Engine:
                 report=result.text, verdict=verdict_text, fix_first=fix_first, diff_stat=diff_stat, commit=(commit or "")[:10],
                 fold=fold, view_dir=self._rel(vd), story_path=self._rel(view.story_path(self.recorder.run_dir)),
                 assets_dir=self._rel(view.assets_dir(self.recorder.run_dir)),
+                summary_path=self._rel(view.summary_path(self.recorder.run_dir)),
             )
             self._refresh_limits("scribe")
             with role_env("scribe"), self._heartbeat():
@@ -594,6 +596,9 @@ class Engine:
             harness=self.harness.name, memory=self.memory.name, cost_usd=round(self.budget.cost_usd, 4),
             elapsed_s=int(self.budget.elapsed), last_ok_tag=self.last_ok_tag,
         )
+        if self.stage is None or self.stage[0] != state:
+            self.stage = (state, time.time())
+        fields["stage_since"] = self.stage[1]
         if self.budget.usage:
             fields["usage"] = self.budget.usage.to_dict()
             fields["usage_lines"] = self.budget.usage.lines()

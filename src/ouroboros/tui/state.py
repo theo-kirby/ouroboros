@@ -614,7 +614,7 @@ def load_snapshot(run_dir: Path, *, repo: Path, stop_after_s: float | None = Non
     iterations, stages = derive_iterations(steps)
     state = (status or {}).get("state", "?")
     stage = STATE_TO_STAGE.get(state, state)
-    stage_since = float((status or {}).get("epoch") or now)
+    stage_since = float((status or {}).get("stage_since") or (status or {}).get("epoch") or now)
 
     feed: list[Event] = []
     feed_role, feed_age = "", None

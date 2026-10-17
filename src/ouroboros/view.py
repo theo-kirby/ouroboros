@@ -67,12 +67,28 @@ _GOAL_TITLE = re.compile(r"^#\s+Goal:\s*(.+?)\s*$", re.MULTILINE)
 _SAFE_ID = re.compile(r"[^A-Za-z0-9_-]+")
 
 
+def _logo() -> str:
+    try:
+        return resources.files("ouroboros").joinpath("logo.svg").read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+LOGO_SVG = _logo()
+LOGO = LOGO_SVG.replace("<svg ", '<svg class="logo" aria-hidden="true" ', 1)
+FAVICON = "data:image/svg+xml," + LOGO_SVG.replace('fill="currentColor"', 'fill="#1d1d1b"').replace("#", "%23").replace('"', "'")
+
+
 def view_dir(run_dir: Path) -> Path:
     return Path(run_dir) / VIEW
 
 
 def story_path(run_dir: Path) -> Path:
     return view_dir(run_dir) / "story.html"
+
+
+def summary_path(run_dir: Path) -> Path:
+    return view_dir(run_dir) / "summary.txt"
 
 
 def assets_dir(run_dir: Path) -> Path:
@@ -168,65 +184,279 @@ def _goal_name(goal_text: str) -> str:
     return m.group(1) if m else ""
 
 
-def _facts(status: dict, steps: list[dict], run_name: str, goal_text: str) -> str:
+def _epoch(ts) -> float | None:
+    """An ISO time ('2026-10-17T11:32:22+00:00' or '...Z') as epoch seconds."""
+    try:
+        return datetime.fromisoformat(str(ts).replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def _span(seconds) -> str:
+    """A short duration: '45 s', '4 min', '1 h 05'."""
+    s = _int(seconds)
+    if s is None or s < 0:
+        return "–"
+    if s < 60:
+        return f"{s} s"
+    if s < 3600:
+        return f"{s // 60} min"
+    return f"{s // 3600} h {s % 3600 // 60:02d}"
+
+
+def _median(values: list[float]) -> float | None:
+    v = sorted(x for x in values if x is not None)
+    if not v:
+        return None
+    mid = len(v) // 2
+    return v[mid] if len(v) % 2 else (v[mid - 1] + v[mid]) / 2
+
+
+def _iterations(steps: list[dict], decisions: list[dict], status: dict, graph: Graph | None) -> list[dict]:
+    """One row per finished or running iteration, from iterations.jsonl, critic.jsonl and the records.
+
+    A stage lasts from the end of the stage before it: the actor's time includes any
+    wait before it began. A record belongs to the iteration whose scribe step came
+    first at or after the record's time; the run's directive belongs to iteration 0.
+    """
+    epoch, elapsed = _float(status.get("epoch")), _float(status.get("elapsed_s"))
+    started = epoch - elapsed if epoch is not None and elapsed is not None else None
+    its: dict[int, dict] = {}
+    for st in steps:
+        n = _int(st.get("iteration"))
+        if n is None or n < 1:
+            continue
+        it = its.setdefault(n, {"n": n, "ts": {}, "reverted": False, "fold": False, "changed": None,
+                                "signal": None, "error": None})
+        ts = _epoch(st.get("ts"))
+        step = st.get("step")
+        if step in ("commit", "critique", "scribe") and ts is not None:
+            it["ts"][step] = ts
+        if step == "commit":
+            it["changed"] = bool(st.get("changed"))
+        elif step == "critique":
+            it["verdict"] = st.get("verdict")
+        elif step == "revert":
+            it["reverted"] = True
+        elif step == "scribe":
+            it["fold"] = bool(st.get("fold_due")) and bool(st.get("recorded"))
+        elif step == "loop":
+            it["signal"] = st.get("signal")
+        elif step in ("actor", "engine_error") and st.get("error"):
+            it["error"] = st.get("error")
+        if ts is not None:
+            it["end"] = max(it.get("end", ts), ts)
+    for d in decisions:
+        n = _int(d.get("iteration"))
+        if n in its:
+            its[n]["decision"] = d
+            its[n]["verdict"] = d.get("verdict") or its[n].get("verdict")
+    rows = [its[k] for k in sorted(its)]
+    prev = started
+    for it in rows:
+        t = it["ts"]
+        a, c, w = t.get("commit"), t.get("critique"), t.get("scribe")
+        it["start"] = prev
+        it["actor_s"] = a - prev if a is not None and prev is not None else None
+        it["critic_s"] = c - a if c is not None and a is not None else None
+        it["scribe_s"] = w - c if w is not None and c is not None else None
+        prev = it.get("end", prev)
+    if graph is not None and graph.ok:
+        cut = [(it["ts"].get("scribe") or it.get("end"), it) for it in rows]
+        for r in graph.records():
+            at = _epoch(r.get("at"))
+            if at is None or graph.root in (r.get("parents") or []):   # the run's directive: before iteration 1
+                continue
+            for end, it in cut:
+                if end is not None and at <= end:
+                    it.setdefault("records", []).append(r)
+                    break
+    return rows
+
+
+# -- the parts ---------------------------------------------------------------
+
+def _header(status: dict, run_name: str, goal_text: str) -> str:
     state = str(status.get("state") or "unknown")
-    word = STATE_WORD.get(state, state)
-    if state == "work" and status.get("housekeeping"):
-        word = "actor (reconcile)"
-    if state == "backoff" and status.get("seconds"):
-        word = f"backoff {_duration(status.get('seconds'))}"
+    epoch = _float(status.get("epoch"))
+    live = "1" if state in LIVE_STATES else "0"
+    goal = _goal_name(goal_text)
+    updated = (f'<span id="ago" class="ago" data-ts="{epoch:.0f}" data-live="{live}">{_AGO}</span>'
+               if epoch else '<span class="ago">no status yet</span>')
+    meta = " · ".join(x for x in (
+        f"branch <code>{_e(status.get('branch'))}</code>" if status.get("branch") else "",
+        f"harness {_e(status.get('harness'))}" if status.get("harness") else "",
+        f"memory {_e(status.get('memory'))}" if status.get("memory") else "") if x)
+    notes = []
+    if status.get("stop_reason"):
+        notes.append(f'<p class="notice">Stopped: {_e(_clip(str(status["stop_reason"]), 300))}</p>')
+    if state == "backoff" and status.get("why"):
+        notes.append(f'<p class="notice warn">Waiting {_e(_duration(status.get("seconds")))}: '
+                     f'{_e(_clip(str(status["why"]), 300))}</p>')
+    return (f'<header class="mast"><div class="brand">{LOGO}<span class="kick">Ouroboros · run report</span></div>'
+            f'<div class="stamp"><span class="run">{_e(run_name)}</span> · {updated}'
+            '<button class="theme" type="button" aria-label="Switch light or dark">◐</button></div></header>'
+            f'<h1>{_e(goal or run_name)}</h1>'
+            + (f'<p class="meta">{meta}</p>' if meta else "") + "".join(notes))
+
+
+def _summary(run_dir: Path, goal_text: str) -> str:
+    """The scribe's plain-language summary (view/summary.txt), else the charter's mission."""
+    text = _read_text(summary_path(run_dir), 8000).strip()
+    source = ""
+    if not text:
+        text = charter.mission(goal_text or "").strip()
+        source = '<p class="src">From the charter\'s mission. The scribe writes a summary after its first iteration.</p>'
+    if not text:
+        return ""
+    paras = [one_line(p) for p in re.split(r"\n\s*\n", text) if p.strip()][:4]
+    return '<div class="lede">' + "".join(f"<p>{_e(_clip(p, 900))}</p>" for p in paras) + source + "</div>"
+
+
+def _figures(status: dict, steps: list[dict], graph: Graph | None, goal_text: str) -> str:
     commits = sum(1 for s in steps if s.get("step") == "commit" and s.get("sha"))
     reverts = sum(1 for s in steps if s.get("step") == "revert")
     verdict = status.get("last_verdict")
-    epoch = _float(status.get("epoch"))
-    live = "1" if state in LIVE_STATES else "0"
-    mission = _clip(charter.mission(goal_text or ""), MISSION_LIMIT)
-    goal = _goal_name(goal_text)
+    met, total = _criteria_count(graph, goal_text)
 
-    def cell(label: str, value: str, cls: str = "") -> str:
-        return f'<div class="fact{(" " + cls) if cls else ""}"><dt>{_e(label)}</dt><dd>{value}</dd></div>'
+    def fig(label: str, value: str, sub: str = "") -> str:
+        return (f'<div class="fig"><dt>{_e(label)}</dt><dd>{value}'
+                f'{f"<small>{sub}</small>" if sub else ""}</dd></div>')
 
     cells = [
-        cell("State", _chip(word, STATE_CLASS.get(state, ""))),
-        cell("Iteration", f'<span class="num">{_e(status.get("iteration", "–"))}</span>'),
-        cell("Elapsed", f'<span class="num">{_e(_duration(status.get("elapsed_s")))}</span>'),
-        cell("Last verdict", _chip(verdict, VERDICT_CLASS.get(str(verdict), "")) if verdict else "–"),
-        cell("Commits", f'<span class="num">{commits}</span>'
-             + (f' <span class="sub-inline">· {reverts} reverted</span>' if reverts else "")),
-        cell("Branch", f"<code>{_e(status.get('branch') or '–')}</code>"),
-        cell("Harness", _e(status.get("harness") or "–")),
-        cell("Memory", _e(status.get("memory") or "–")),
+        fig("Iteration", f'<span class="num">{_e(status.get("iteration", "–"))}</span>'),
+        fig("Elapsed", f'<span class="num">{_e(_span(status.get("elapsed_s")))}</span>'),
+        fig("Criteria met", f'<span class="num">{met}<span class="of">/{total}</span></span>' if total else "–"),
+        fig("Commits kept", f'<span class="num">{max(0, commits - reverts)}</span>',
+            f"{reverts} reverted" if reverts else ""),
+        fig("Last verdict", _chip(verdict, VERDICT_CLASS.get(str(verdict), "")) if verdict else "–"),
     ]
-    if status.get("usage_compact"):
-        cells.append(cell("Usage", _e(status["usage_compact"]), "wide"))
-    if status.get("stop_reason"):
-        cells.append(cell("Stop reason", _e(status["stop_reason"]), "wide"))
-    if state == "backoff" and status.get("why"):
-        cells.append(cell("Backoff because", _e(_clip(str(status["why"]), 300)), "wide"))
-    updated = (f'<span id="ago" class="ago" data-ts="{epoch:.0f}" data-live="{live}">{_AGO}</span>'
-               if epoch else '<span class="ago">no status yet</span>')
-    head = [
-        '<header class="top">',
-        f'<p class="kicker">Ouroboros run <strong>{_e(run_name)}</strong> · {updated}</p>',
-        f"<h1>{_e(goal or run_name)}</h1>",
-    ]
-    if mission:
-        head.append(f'<p class="mission" title="{_e(mission)}">{_e(mission)}</p>')
-    head += ["</header>", f'<dl class="facts">{"".join(cells)}</dl>']
-    return "\n".join(head)
+    return f'<dl class="figs">{"".join(cells)}</dl>'
+
+
+def _facts(status: dict, steps: list[dict], run_name: str, goal_text: str) -> str:
+    """The header and the key figures, for a template that has one `{{facts}}` slot."""
+    return _header(status, run_name, goal_text) + _figures(status, steps, None, goal_text)
+
+
+def _point(cx: float, cy: float, r: float, deg: float) -> tuple[float, float]:
+    import math
+    a = math.radians(deg)
+    return cx + r * math.cos(a), cy + r * math.sin(a)
+
+
+def _loop(status: dict, its: list[dict]) -> str:
+    """The loop as a ring: actor -> critic -> scribe, the stage now lit, and how long it has run."""
+    state = str(status.get("state") or "")
+    now_key = state if state in dict(STAGES) else None
+    since = _float(status.get("stage_since")) or _float(status.get("epoch"))
+    cx = cy = 150
+    r = 104
+    nodes = {"work": -90, "critique": 30, "scribe": 150}
+    what = {"work": "does the work", "critique": "judges it", "scribe": "writes it down"}
+    typical = {"work": _median([i["actor_s"] for i in its if i.get("actor_s") is not None]),
+               "critique": _median([i["critic_s"] for i in its if i.get("critic_s") is not None]),
+               "scribe": _median([i["scribe_s"] for i in its if i.get("scribe_s") is not None])}
+    out = ['<svg class="ring" viewBox="-62 -26 424 316" role="img" aria-label="The loop: actor, then critic, then scribe'
+           + (f'; now the {STATE_WORD[now_key]}' if now_key else "") + '">',
+           f'<circle class="track" cx="{cx}" cy="{cy}" r="{r}"/>']
+    keys = [k for k, _ in STAGES]
+    for i, key in enumerate(keys):
+        a0, a1 = nodes[key] + 17, nodes[keys[(i + 1) % 3]] - 17 + (360 if i == 2 else 0)
+        x0, y0 = _point(cx, cy, r, a0)
+        x1, y1 = _point(cx, cy, r, a1)
+        d = f"M{x0:.1f},{y0:.1f} A{r},{r} 0 0 1 {x1:.1f},{y1:.1f}"
+        on = key == now_key
+        out.append(f'<path class="arc{" on" if on else ""}" d="{d}" marker-end="url(#tip)"/>')
+        if on:
+            out.append(f'<circle class="mover" r="4.5"><animateMotion dur="2.4s" repeatCount="indefinite" '
+                       f'keyPoints="0;1" keyTimes="0;1" calcMode="spline" keySplines=".45 0 .55 1" path="{d}"/></circle>')
+    for key, label in STAGES:
+        x, y = _point(cx, cy, r, nodes[key])
+        on = key == now_key
+        lx, ly = _point(cx, cy, r + 30, nodes[key])
+        anchor = "middle" if key == "work" else ("start" if key == "critique" else "end")
+        ys = (y - 52, y - 35, y - 21) if key == "work" else (ly + 2, ly + 19, ly + 34)
+        t = typical[key]
+        out.append(f'<g class="node{" on" if on else ""}">'
+                   + (f'<circle class="halo" cx="{x:.1f}" cy="{y:.1f}" r="15"/>' if on else "")
+                   + f'<circle class="dot" cx="{x:.1f}" cy="{y:.1f}" r="9"/>'
+                   f'<text x="{lx:.1f}" y="{ys[0]:.1f}" text-anchor="{anchor}" class="nl">{_e(label)}</text>'
+                   f'<text x="{lx:.1f}" y="{ys[1]:.1f}" text-anchor="{anchor}" class="ns">{_e(what[key])}</text>'
+                   + (f'<text x="{lx:.1f}" y="{ys[2]:.1f}" text-anchor="{anchor}" class="ns">typ. {_e(_span(t))}</text>'
+                      if t is not None else "")
+                   + "</g>")
+    word = STATE_WORD.get(state, state) or "–"
+    timer = (f'<text x="{cx}" y="{cy + 52}" text-anchor="middle" class="ct" id="stage-for" data-since="{since:.0f}"'
+             f' data-live="{1 if state in LIVE_STATES else 0}"></text>' if since and state in LIVE_STATES else "")
+    out.append(f'<text x="{cx}" y="{cy - 30}" text-anchor="middle" class="cl">iteration</text>'
+               f'<text x="{cx}" y="{cy + 10}" text-anchor="middle" class="cn">{_e(status.get("iteration", "–"))}</text>'
+               f'<text x="{cx}" y="{cy + 34}" text-anchor="middle" class="cs">{_e(word if now_key else state or "–")}</text>'
+               + timer)
+    out.insert(1, '<defs><marker id="tip" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="5" markerHeight="5" '
+               'orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9z" class="tipm"/></marker></defs>')
+    out.append("</svg>")
+    return "".join(out)
 
 
 def _stages(status: dict) -> str:
-    state = str(status.get("state") or "")
-    items = []
-    for key, label in STAGES:
-        on = state == key
-        items.append(f'<li class="stage{" now" if on else ""}"{" aria-current=\"step\"" if on else ""}>'
-                     f'{_e(label)}{"<span class=\"sr\"> (now)</span>" if on else ""}</li>')
-    rest = "" if state in dict(STAGES) else f'<li class="stage rest">{_e(STATE_WORD.get(state, state) or "–")}</li>'
-    arrow = '<li class="arrow" aria-hidden="true">→</li>'
-    return (f'<ol class="stages" aria-label="Loop stage">{arrow.join(items)}'
-            f'<li class="arrow" aria-hidden="true" title="then the loop starts again">↺</li>{rest}</ol>')
+    """The loop ring without the per-stage timings, for a template that has the old `{{stages}}` slot."""
+    return _loop(status, [])
+
+
+USAGE_CELLS = 20
+WINDOW_WORDS = {"five_hour": "5-hour window", "seven_day": "weekly window", "seven_day_opus": "weekly, Opus",
+                "seven_day_sonnet": "weekly, Sonnet", "daily": "daily window", "hourly": "hourly window"}
+
+
+def _usage(status: dict) -> str:
+    """Each rationing window as a row of cells that ramp from green to red, Grafana style."""
+    rows = []
+    usage = status.get("usage") if isinstance(status.get("usage"), dict) else {}
+    for harness, d in sorted(usage.items()):
+        if not isinstance(d, dict):
+            continue
+        first = d.get("first_windows") or {}
+        wins = [(n, w) for n, w in (d.get("windows") or {}).items() if isinstance(w, dict)]
+        for name, w in sorted(wins, key=lambda kv: -(_int(kv[1].get("minutes"), 0) or 0)):
+            u = _float(w.get("utilization"))
+            if u is None:
+                continue
+            u = max(0.0, min(u, 1.0))
+            lit = round(u * USAGE_CELLS)
+            cells = "".join(
+                f'<i class="on" style="--h:{round(130 - 130 * k / (USAGE_CELLS - 1))}"></i>' if k < lit else "<i></i>"
+                for k in range(USAGE_CELLS))
+            was = _float(first.get(name))
+            rose = f"+{round(100 * (u - was))} this run" if was is not None and u - was >= 0.005 else ""
+            reset = _float(w.get("resets_at"))
+            sub = " · ".join(x for x in (
+                rose, f'resets <span class="reset" data-at="{reset:.0f}"></span>' if reset else "") if x)
+            rows.append(f'<div class="gauge"><span class="gl">{_e(harness)} <small>{_e(WINDOW_WORDS.get(name, name.replace("_", " ")))}</small></span>'
+                        f'<span class="cells" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{round(100 * u)}"'
+                        f' aria-label="{_e(harness)} {_e(name)} used">{cells}</span>'
+                        f'<span class="gv num">{round(100 * u)}<small>%</small></span>'
+                        + (f'<span class="gs">{sub}</span>' if sub else "") + "</div>")
+    money = status.get("money") if isinstance(status.get("money"), dict) else {}
+    for harness, amount in sorted(money.items()):
+        if harness not in usage and _float(amount):
+            rows.append(f'<div class="gauge"><span class="gl">{_e(harness)} <small>API, billed per call</small></span>'
+                        f'<span class="gv num wide">${_float(amount):.2f}</span></div>')
+    if not rows:
+        text = status.get("usage_compact")
+        return f'<p class="quiet">{_e(text)}</p>' if text else '<p class="quiet">No usage reading yet.</p>'
+    return "".join(rows)
+
+
+def _criteria_count(graph: Graph | None, goal_text: str) -> tuple[int, int]:
+    if graph is not None and graph.ok:
+        gaps = [n for n in graph.claims("state") if str(n.get("slug") or n.get("id") or "").startswith("gap-")
+                and n.get("status") != "superseded"]
+        if gaps:
+            return sum(1 for n in gaps if n.get("status") == "working"), len(gaps)
+    every = charter.done_criteria(goal_text or "", include_checked=True)
+    open_ = set(charter.done_criteria(goal_text or ""))
+    return sum(1 for c in every if c not in open_), len(every)
 
 
 def _criteria(graph: Graph | None, goal_text: str) -> str:
@@ -342,6 +572,211 @@ def _timeline(graph: Graph | None) -> str:
     return out
 
 
+PROGRESS_ROWS = 25
+VERDICT_WORD = {"continue": "kept", "accept": "kept", "answer": "answered", "done_accepted": "done",
+                "done_rejected": "not done yet", "stuck": "stuck", "looping": "looping", "reject": "rejected",
+                "revert": "reverted"}
+
+
+def _progress(its: list[dict], status: dict) -> str:
+    """Every iteration as a column: how long each stage took, the verdict under it, the folds above.
+
+    Then the same iterations as a table, newest first: what was done, what the critic
+    said, what comes next and the record it left.
+    """
+    if not its:
+        return '<p class="quiet">No iteration has finished yet.</p>'
+    current = _int(status.get("iteration"), 0) or 0
+    live = str(status.get("state")) in LIVE_STATES
+    W, H, top, base = 800, 230, 22, 176
+    n = len(its)
+    step = (W - 60) / max(n, 1)
+    bw = max(2.0, min(28.0, step * 0.62))
+    span = max([sum(i.get(k) or 0 for k in ("actor_s", "critic_s", "scribe_s")) for i in its] + [60])
+    scale = (base - top) / span
+    tick = next(t for t in (60, 120, 300, 600, 900, 1800, 3600, 7200, 10 ** 9) if span / t <= 4)
+    g = [f'<svg class="chart" viewBox="0 0 {W} {H}" role="img" aria-label="Time per iteration, by stage, with the verdict">']
+    t = tick
+    while t <= span:
+        y = base - t * scale
+        g.append(f'<line class="grid" x1="48" x2="{W}" y1="{y:.1f}" y2="{y:.1f}"/>'
+                 f'<text class="ax" x="42" y="{y + 4:.1f}" text-anchor="end">{_e(_span(t))}</text>')
+        t += tick
+    g.append(f'<line class="base" x1="48" x2="{W}" y1="{base}" y2="{base}"/>')
+    every = max(1, round(n / 16))
+    for k, it in enumerate(its):
+        x = 54 + k * step + (step - bw) / 2
+        y = base
+        running = live and it["n"] == current and "scribe" not in it["ts"]
+        v = str(it.get("verdict") or "")
+        tip = f'#{it["n"]} · {VERDICT_WORD.get(v, v) or "running"}'
+        d = it.get("decision") or {}
+        if d.get("did") or d.get("reason"):
+            tip += " — " + _clip(str(d.get("did") or d.get("reason")), 160)
+        g.append(f'<a href="#it-{it["n"]}"><g class="col"><title>{_e(tip)}</title>')
+        for key, cls in (("actor_s", "s-actor"), ("critic_s", "s-critic"), ("scribe_s", "s-scribe")):
+            h = (it.get(key) or 0) * scale
+            if h > 0:
+                y -= h
+                g.append(f'<rect class="{cls}" x="{x:.1f}" y="{y:.1f}" width="{bw:.1f}" height="{h:.1f}"/>')
+        if running:
+            g.append(f'<rect class="s-run" x="{x:.1f}" y="{y - 16:.1f}" width="{bw:.1f}" height="16"/>')
+            y -= 16
+        vc = VERDICT_CLASS.get(v, "mute") if v else "mute"
+        mark = min(bw, 12.0)
+        mx = x + (bw - mark) / 2
+        g.append(f'<rect class="v {vc}" x="{mx:.1f}" y="{base + 6}" width="{mark:.1f}" height="{mark:.1f}"/>')
+        if it.get("reverted"):
+            g.append(f'<path class="x" d="M{mx:.1f},{base + 6} l{mark:.1f},{mark:.1f} M{mx + mark:.1f},{base + 6} l{-mark:.1f},{mark:.1f}"/>')
+        if it.get("fold"):
+            fx = x + bw / 2
+            g.append(f'<path class="fold" d="M{fx:.1f},{y - 12:.1f} l5,5 l-5,5 l-5,-5z"/>')
+        if k % every == 0 or k == n - 1:
+            g.append(f'<text class="ax" x="{x + bw / 2:.1f}" y="{base + 36}" text-anchor="middle">{it["n"]}</text>')
+        g.append("</g></a>")
+    g.append("</svg>")
+    legend = ('<p class="legend"><span><i class="s-actor"></i>actor</span><span><i class="s-critic"></i>critic</span>'
+              '<span><i class="s-scribe"></i>scribe</span><span><i class="v ok"></i>kept</span>'
+              '<span><i class="v warn"></i>held back</span><span><i class="v bad"></i>reverted</span>'
+              '<span><i class="fold"></i>memory folded</span><span class="quiet">bar height: time taken · x: iteration</span></p>')
+    rows = []
+    for it in reversed(its):
+        d = it.get("decision") or {}
+        v = str(it.get("verdict") or "")
+        recs = it.get("records") or []
+        did = d.get("did") or (recs[0].get("title") if recs else "") or ("(no change)" if it.get("changed") is False else "")
+        why = d.get("reason") or ""
+        running = live and it["n"] == current and "scribe" not in it["ts"]
+        took = sum(it.get(k) or 0 for k in ("actor_s", "critic_s", "scribe_s"))
+        rec = "".join(f'<code>{_e(r.get("slug") or r.get("id", "")[:8])}</code> ' for r in recs[:2])
+        flags = "".join(x for x in (
+            _chip("folded", "mute") if it.get("fold") else "",
+            _chip(f"loop: {it['signal']}", "warn") if it.get("signal") else "",
+            _chip("error", "bad") if it.get("error") and not v else "") if x)
+        rows.append(
+            f'<tr id="it-{it["n"]}"><td class="num">{it["n"]}</td>'
+            f'<td>{_chip("running", "on") if running else _chip(VERDICT_WORD.get(v, v), VERDICT_CLASS.get(v, "")) if v else "–"}</td>'
+            f'<td class="what">{_e(_clip(str(did), 300)) or "–"} {flags}'
+            f'{f"<span class=\"sub\">Critic: {_e(_clip(str(why), 300))}</span>" if why else ""}</td>'
+            f'<td class="next">{_e(_clip(str(d.get("doing") or ""), 220)) or "–"}</td>'
+            f'<td class="num">{_e(_span(took)) if took else "–"}</td><td class="rec">{rec or "–"}</td></tr>')
+    head = ('<thead><tr><th class="num">#</th><th>Verdict</th><th>What happened</th><th class="next">Next</th>'
+            '<th class="num">Took</th><th class="rec">Record</th></tr></thead>')
+    shown, older = rows[:PROGRESS_ROWS], rows[PROGRESS_ROWS:]
+    table = f'<div class="tablewrap"><table class="its">{head}<tbody>{"".join(shown)}</tbody></table></div>'
+    if older:
+        table += (f'<details id="it-older" class="older"><summary>{len(older)} older iteration(s)</summary>'
+                  f'<div class="tablewrap"><table class="its">{head}<tbody>{"".join(older)}</tbody></table></div></details>')
+    return f'<figure class="wide">{"".join(g)}<figcaption>{legend}</figcaption></figure>{table}'
+
+
+# -- the memory graph: Governor's hub renderer, fed from either store ------------
+
+GRAPH_PAGE = "graph.html"
+GRAPH_MAX_NODES, GRAPH_MAX_EDGES, GRAPH_MAX_BYTES = 5000, 20000, 1_000_000
+_HEAD = re.compile(r"^sha256:[a-f0-9]{64}$")
+_GRAPH_KINDS = ("root", "state", "record", "plan")
+_GRAPH_STATUSES = ("open", "working", "broken", "blocked", "superseded")
+
+
+def report_graph(graph: Graph) -> dict | None:
+    """The memory as Governor's ReportGraph (shared/report.ts): topology, titles, kinds and statuses.
+
+    The same mapping as Governor's `toViewer`, done here so a files memory draws the
+    same way a governor one does. None when the graph is too big for the embed.
+    """
+    ids = set(graph.nodes)
+    nodes, edges = [], []
+    children: dict[str, int] = {}
+    for nid, n in graph.nodes.items():
+        for p in n.get("parents") or []:
+            if p in ids:
+                children[p] = children.get(p, 0) + 1
+    stamps = []
+    for nid, n in graph.nodes.items():
+        kind = n.get("kind") if n.get("kind") in _GRAPH_KINDS else "other"
+        parents = [p for p in (n.get("parents") or []) if p in ids]
+        tags = [{"id": f"graph:{kind}", "name": kind}]
+        if n.get("status") in _GRAPH_STATUSES:
+            tags.append({"id": f"status:{n['status']}", "name": n["status"]})
+        if n.get("folded"):
+            tags.append({"id": "governor:folded", "name": "folded"})
+        node = {"id": str(nid), "title": str(n.get("title") or n.get("slug") or nid)[:2000],
+                "parentId": parents[0] if parents else None, "childCount": children.get(nid, 0), "edgeCount": 0,
+                "lifecycle": "live", "tags": tags}
+        if _epoch(n.get("at")) is not None:
+            node["createdAt"] = str(n["at"])
+            stamps.append(str(n["at"]))
+        nodes.append(node)
+        edges += [{"id": f"parent:{p}:{nid}", "source": p, "target": str(nid), "kind": "semantic", "relation": "parent"}
+                  for p in parents]
+    for i, e in enumerate(graph.edges):
+        if e.get("source") in ids and e.get("target") in ids:
+            edges.append({"id": f"edge:{i}", "source": str(e["source"]), "target": str(e["target"]),
+                          "kind": "semantic", "relation": "citation"})
+    out_degree: dict[str, int] = {}
+    for e in edges:
+        out_degree[e["source"]] = out_degree.get(e["source"], 0) + 1
+    for node in nodes:
+        node["edgeCount"] = out_degree.get(node["id"], 0)
+    if len(nodes) > GRAPH_MAX_NODES or len(edges) > GRAPH_MAX_EDGES or any(len(x["id"]) > 256 for x in nodes):
+        return None
+    head = graph.head if isinstance(graph.head, str) and _HEAD.match(graph.head) else None
+    # loadedAt is the newest record, not now: the page then changes only when the memory does
+    return {"schemaVersion": 1, "repositoryId": str(graph.root or "ouroboros")[:256], "head": head,
+            "loadedAt": max(stamps, key=lambda t: _epoch(t) or 0) if stamps else "1970-01-01T00:00:00Z",
+            "nodes": nodes, "edges": edges}
+
+
+def _vendor(name: str) -> str:
+    try:
+        return resources.files("ouroboros").joinpath("vendor", name).read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _graph_page(vdir: Path, graph: Graph | None) -> str | None:
+    """Write view/graph.html (the embed, its CSS and the snapshot) when it changed. Its version, or None."""
+    if graph is None or not graph.ok:
+        return None
+    data = report_graph(graph)
+    script, css = _vendor("governor-report.js"), _vendor("governor-report.css")
+    if data is None or not script:
+        return None
+    payload = json.dumps(data, separators=(",", ":"), ensure_ascii=False).replace("<", "\\u003c")
+    if len(payload.encode()) > GRAPH_MAX_BYTES or re.search(r"</script", script, re.I) or re.search(r"</style", css, re.I):
+        return None
+    page = ('<!doctype html><html lang="en" data-theme="light"><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width,initial-scale=1"><title>Memory graph</title>'
+            '<script>if(/[?&]theme=dark(&|$)/.test(location.search))document.documentElement.dataset.theme="dark"</script>'
+            f"<style>{css}</style></head><body><div id=\"root\"></div>"
+            f'<script id="flywheel-snapshot" type="application/json">{payload}</script><script>{script}</script></body></html>\n')
+    version = hashlib.sha256(page.encode()).hexdigest()[:16]
+    path = vdir / GRAPH_PAGE
+    if _read_text(path) != page:
+        _write(path, page)
+    return version
+
+
+def _graph(graph: Graph | None, version: str | None) -> str:
+    if graph is None or not graph.ok:
+        return '<p class="quiet">The memory could not be read.</p>'
+    if not version:
+        return '<p class="quiet">The memory graph is too large to draw here.</p>'
+    claims = [n for n in graph.claims("state") if n.get("status") != "superseded"]
+    records = graph.records()
+    folded = sum(1 for r in records if r.get("folded"))
+    swatch = "".join(f'<span><i class="g-{k}"></i>{w}</span>' for k, w in (
+        ("working", "true now (met)"), ("open", "open"), ("broken", "broken"), ("blocked", "blocked"),
+        ("record", "record of an iteration")))
+    return (f'<figure class="graphfig"><iframe class="graph" data-src="{GRAPH_PAGE}?v={version}" title="The run\'s memory graph"'
+            ' loading="lazy"></iframe>'
+            f'<figcaption><b>Fig. 2. What the run knows.</b> The centre is the run. Around it are <b>claims</b>: what is true now'
+            f' ({len(claims)}), coloured by status. On the rim are <b>records</b>: one per iteration, what happened'
+            f' ({len(records)}, {folded} folded into the claims; older ones are paler). Click a dot to show its links;'
+            f' drag to move, scroll to zoom, F to fit.<span class="legend">{swatch}</span></figcaption></figure>')
+
+
 def _story(run_dir: Path) -> str:
     text = _read_text(story_path(run_dir))
     if not text.strip():
@@ -410,6 +845,14 @@ def render(run_dir: Path, repo: Path, *, goal_text: str, graph=None, now: float 
             except Exception as exc:   # one broken part must not lose the others
                 return f'<p class="quiet">This part could not be made ({_e(type(exc).__name__)}).</p>'
 
+        try:
+            its = _iterations(steps, decisions, status, graph)
+        except Exception:   # the ring and the timeline then show no history; the rest stands
+            its = []
+        try:
+            graph_version = _graph_page(vdir, graph)
+        except Exception:   # no graph section; the rest of the page stands
+            graph_version = None
         parts = {
             "title": _e(f"{run_name} · {goal}" if goal else f"{run_name} · Ouroboros"),
             "run": _e(run_name),
@@ -417,6 +860,16 @@ def render(run_dir: Path, repo: Path, *, goal_text: str, graph=None, now: float 
             "mission": _e(_clip(charter.mission(goal_text or ""), MISSION_LIMIT)),
             "state": _e(status.get("state") or ""),
             "iteration": _e(status.get("iteration", "")),
+            "logo": LOGO,
+            "favicon": FAVICON,
+            "header": part(_header, status, run_name, goal_text or ""),
+            "summary": part(_summary, run_dir, goal_text or ""),
+            "figures": part(_figures, status, steps, graph, goal_text or ""),
+            "loop": part(_loop, status, its),
+            "usage": part(_usage, status),
+            "progress": part(_progress, its, status),
+            "graph": part(_graph, graph, graph_version),
+            "graph_version": _e(graph_version or ""),
             "facts": part(_facts, status, steps, run_name, goal_text or ""),
             "stages": part(_stages, status),
             "criteria": part(_criteria, graph, goal_text or ""),
@@ -448,7 +901,7 @@ def render(run_dir: Path, repo: Path, *, goal_text: str, graph=None, now: float 
 
 # -- the server ----------------------------------------------------------------
 
-NO_STORE = {"index.html", "live.json", "story.html"}
+NO_STORE = {"index.html", "live.json", "story.html", "summary.txt", GRAPH_PAGE}
 _TYPES = {".svg": "image/svg+xml", ".json": "application/json", ".html": "text/html; charset=utf-8",
           ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".webp": "image/webp",
           ".txt": "text/plain; charset=utf-8", ".csv": "text/plain; charset=utf-8", ".md": "text/plain; charset=utf-8"}

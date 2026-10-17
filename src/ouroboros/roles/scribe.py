@@ -35,7 +35,7 @@ def summary_of(text: str, limit: int = 72) -> str:
 
 def build_scribe_prompt(*, iteration: int, goal_text: str, where: str, report: str, verdict: str,
                         fix_first: str, diff_stat: str, commit: str, fold: str | None,
-                        view_dir: str, story_path: str, assets_dir: str) -> str:
+                        view_dir: str, story_path: str, assets_dir: str, summary_path: str = "") -> str:
     return (
         skill("ouroboros-scribe")
         .replace("{iteration}", str(iteration))
@@ -44,6 +44,7 @@ def build_scribe_prompt(*, iteration: int, goal_text: str, where: str, report: s
         .replace("{fold}", fold or "No fold is due this iteration. Do not fold.")
         .replace("{view_dir}", view_dir)
         .replace("{story_path}", story_path)
+        .replace("{summary_path}", summary_path or f"{view_dir}/summary.txt")
         .replace("{assets_dir}", assets_dir)
         .replace("{verdict}", verdict)
         .replace("{commit}", commit or "none")

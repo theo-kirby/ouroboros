@@ -690,7 +690,7 @@ without touching code and so a harness can load them natively.
   status.json                # state, iteration, harness, usage windows, elapsed, last verdict, limit blocks
   transcripts/NNNN-<role>[-attempt].json   # raw harness output (+ .stderr); roles: actor, critic, scribe (older runs: housekeeping, maintainer, planner)
   reverted/NNNN.patch        # what a revert threw away
-  view/index.html            # the run's live page; live.json, story.html (the scribe's), assets/
+  view/index.html            # the run's live page; live.json, summary.txt + story.html (the scribe's), assets/
   NEEDS_HUMAN.md             # only exists while something needs you (auth failure)
   REPORT.md                  # written by `ouroboros report`
   reporter.json              # where the reporter (`ouroboros watch`) is up to; reports/ holds its digests
@@ -731,26 +731,53 @@ The delta is measured against the charter at the merge base.
 
 - **The facts, which need no model.** The engine re-renders the page at every
   status change, and once a minute while a model call runs (the heartbeat, so a
-  long turn does not read as a dead loop): the run, the charter's goal and
-  mission, the state, the stage strip (actor → critic → scribe), iteration,
-  elapsed, branch, harness, last verdict, usage; the criteria (the gap claims, or
-  the charter's boxes); the frontier; the critic's last decisions; the timeline of
-  records. All of it is read from the run directory and the memory snapshot and is
-  escaped.
-- **The story, which does.** `view/story.html` is the scribe's: an HTML fragment
-  with what the run has achieved and found (tables, figures, small inline SVG
-  charts), curated rather than appended, with images in `view/assets/`. The
-  template gives it styles and a few classes (`grid`, `chip`, `ok`/`warn`/`bad`,
-  `num`).
+  long turn does not read as a dead loop). It reads the run directory and the
+  memory snapshot, escapes everything, and shows: the run and the goal; the loop
+  as a ring (actor → critic → scribe, the running stage lit, how long it has run
+  from `stage_since` in status.json, and each stage's median time); the key
+  figures (iteration, elapsed, criteria met, commits kept and reverted, last
+  verdict); usage, one row of 20 cells per rationing window that ramp from green
+  to red, with the rise this run and the reset time; the criteria (the gap claims,
+  or the charter's boxes); the open problems (the frontier); and the timeline:
+  one column per iteration (stacked by stage time, the verdict under it, a fold
+  above it) and one table row per iteration, newest first (the critic's `did`,
+  `reason` and `doing`, the time taken, the records the scribe wrote). A record
+  belongs to the iteration whose scribe step is the first at or after its time.
+- **The memory graph, drawn by Governor.** `view/graph.html` holds Governor's
+  report embed (its hub renderer: the root in the centre, claims around it by
+  status, records on the rim) and the memory as Governor's `ReportGraph`, which
+  `view.report_graph` builds from the snapshot either store gives (the same
+  mapping as Governor's `toViewer`). The page frames it. The embed is vendored in
+  `src/ouroboros/vendor/` (`scripts/vendor-governor-report.sh` refreshes it from a
+  Governor checkout; `GOVERNOR_VERSION` names the commit), so a files run draws
+  its graph with no Node and no Governor installed. The graph page is rewritten
+  only when the memory changes, and a live swap keeps its frame, so pan and zoom
+  survive.
+- **The scribe's two files, which need judgment.** `view/summary.txt` is plain
+  text: what the run is for and where it stands, in words for someone who does
+  not know the code (before the scribe writes one, the charter's mission stands
+  in). `view/story.html` is an HTML fragment with what the run has found, each
+  section a finding stated as a sentence, then its evidence (tables, figures,
+  small inline SVG charts), curated rather than appended, images in
+  `view/assets/`. The template gives it a few classes (`grid`, `chip`,
+  `ok`/`warn`/`bad`, `num`, `src`).
 
-The page has no external resources, works in dark and light, fits a phone (no
-sideways page scroll; wide tables scroll in place) and works without JavaScript.
-With it, a small script polls `live.json` every 10 s while the tab is visible and
-swaps the page in place when its version changes, keeping open sections open.
-"updated N s ago" counts from the loop's last render; past two minutes in a live
-state the page says it is stale, which means the loop process is gone. A repo can
-replace the template with `.ouroboros/view/template.html` (slots like
-`{{facts}}`, `{{criteria}}`, `{{story}}`, `{{timeline}}`; unknown slots are kept).
+The page looks like a report, not a dashboard: light by default (a button
+switches to dark and the browser remembers it), serif text, ruled numbered
+sections instead of boxes, the Ouroboros logo in the masthead and as the icon.
+The reader it is written for opens it once a month among many runs. It has no
+external resources, fits a phone (no sideways page scroll; wide tables scroll in
+place) and works without JavaScript. With it, a small script polls `live.json`
+every 10 s while the tab is visible and swaps the page in place when its version
+changes, keeping open sections open, and ticks the clocks (stage timer, "updated
+N s ago", window resets). Past two minutes in a live state the page says it is
+stale, which means the loop process is gone. A repo can replace the template with
+`.ouroboros/view/template.html`. Slots: `{{header}}`, `{{summary}}`, `{{loop}}`,
+`{{figures}}`, `{{usage}}`, `{{criteria}}`, `{{frontier}}`, `{{story}}`,
+`{{progress}}`, `{{graph}}` (with `{{graph_version}}`), `{{logo}}`, `{{favicon}}`, plus the older `{{facts}}`,
+`{{stages}}`, `{{decisions}}`, `{{timeline}}` and the plain values `{{title}}`,
+`{{run}}`, `{{goal}}`, `{{mission}}`, `{{state}}`, `{{iteration}}`,
+`{{generated}}`, `{{version}}`. Unknown slots are kept.
 
 `ouroboros view` serves the view directory only (GET and HEAD, no listings, no
 path outside it, `no-store` on the live files) on `127.0.0.1:8765`; `--host
@@ -992,6 +1019,7 @@ ouroboros/
     recorder.py             # jsonl, status.json, loop.log, NEEDS_HUMAN.md
     watch.py                # the reporter: triggers off the run directory, digests since the last one
     view.py  view_template.html   # the run's live page: render (facts + the scribe's story), serve
+    logo.svg  vendor/governor-report.{js,css}   # the page's logo; Governor's graph embed (vendored)
     notify.py               # Pushover; credentials from the environment or .env files
     history.py              # the durable record: .ouroboros/history/<run>.md digests + RUNS.md index
     operator.py             # .ouroboros/AGENTS.md, the guide for the agent that drives runs in the target repo
@@ -1108,6 +1136,12 @@ the memory when a fold is due, and writes the page's story.
   without end. So the facts are rendered by code at every stage change, and the
   scribe writes only what needs judgment. The `ouroboros web` telemetry dashboard
   is removed.
+- **The page is for an outsider** (2026-10-17, after the first look at it). The
+  first template was a dark grid of boxed cards: it read as a tool for whoever
+  wrote the code. The reader is an operator who checks in rarely, across many
+  runs, so the page now opens with the scribe's plain-language summary, shows the
+  loop as a ring and usage as a gauge, and merges the decisions and the records
+  into one timeline. Technical detail stays, under the plain sentence it supports.
 - One more model call per iteration. The scribe's default chain can take a
   lighter model; `scribe: rules` runs without it.
 
