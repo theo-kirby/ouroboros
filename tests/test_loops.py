@@ -15,7 +15,8 @@ from ouroboros.roles.critic import RulesCritic, Signals
 
 def test_a_diff_confined_to_the_memory_graph_is_not_product():
     assert not is_product_change([
-        ".ouroboros/handoff/0007.md",
+        ".ouroboros/graph/records/r-0007.md",
+        ".ouroboros/graph/STATE.md",
         ".ouroboros/journal.md",
         "STATE.md",
         "PLAN.md",

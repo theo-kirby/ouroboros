@@ -52,7 +52,7 @@ VERDICT_SCHEMA = {
 
 RULES_REPLY = (
     "Decide for yourself. Pick the option that is most reversible. "
-    "Write your assumption in the handoff. Continue."
+    "Write your assumption in the record. Continue."
 )
 DONE_REPLY = (
     "Do not stop. The whole goal is never done from your side. Check the done criteria "
@@ -62,7 +62,7 @@ DONE_REPLY = (
 STUCK_REPLY = (
     "The last iterations changed nothing. Apply the exhaustion policy from the goal: "
     "pick a rung of the horizon ladder that still has items, or propose three new "
-    "directions in the plan, pick one, and do one unit of it now."
+    "directions in the record, pick one, and do one unit of it now."
 )
 LOOPING_REPLY = (
     "The last iterations changed files but moved nothing. Writing about the work is "
@@ -72,11 +72,11 @@ LOOPING_REPLY = (
 )
 REJECT_REPLY = (
     "The same error happened three times. That path is dead. Record it as a dead end "
-    "in the handoff and take a different approach."
+    "(`ouroboros mem record`) and take a different approach."
 )
 NO_RECORD_REPLY = (
-    "The previous iteration did not write its handoff file. Write it FIRST, "
-    "from the git log and the diff, then continue with one unit."
+    "The previous iteration did not record its unit. Record it FIRST "
+    "(`ouroboros mem record`), from the git log and the diff, then continue with one unit."
 )
 
 _QUESTION = re.compile(
@@ -111,7 +111,7 @@ class Signals:
     def describe(self) -> str:
         lines = [
             f"- files changed this iteration: {'yes' if self.changed else 'no'}",
-            f"- handoff recorded: {'yes' if self.recorded else 'NO'}",
+            f"- unit recorded: {'yes' if self.recorded else 'NO'}",
             f"- iterations in a row with no changes: {self.no_change_streak}",
             f"- identical errors in a row: {self.error_streak}",
         ]

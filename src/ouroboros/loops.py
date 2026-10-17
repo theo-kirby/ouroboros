@@ -189,7 +189,7 @@ _NAMED = {
 
 _ROTATE = (
     "\n\nA different model is taking the next turn, because this approach has not worked "
-    "for {streak} iterations. Leave a handoff that says what you tried and what you would "
+    "for {streak} iterations. Leave a record that says what you tried and what you would "
     "try next."
 )
 

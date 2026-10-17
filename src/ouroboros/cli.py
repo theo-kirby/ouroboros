@@ -27,8 +27,8 @@ from .harness import login, make_harness
 from .harness import backend_headless
 from .harness.backend_headless import kill_active
 from .harness.pool import LimitBoard, PooledHarness
-from .memory import make_memory
-from .memory.handoff import HandoffMemory
+from . import memcli
+from .memory import ENV as MEMORY_ENV, FilesStore, make_memory
 from . import notify, operator
 from .recorder import Recorder
 from . import watch as watcher
@@ -70,7 +70,7 @@ How to decide for me when I am not here:
 
 - prefer the reversible option
 - when unsure, match the existing style
-- never add a dependency without writing why in the handoff
+- never add a dependency without writing why in the record
 
 ## Exhaustion policy
 
@@ -116,7 +116,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     else:
         goal.write_text(GOAL_TEMPLATE.format(name=name))
         print(f"wrote {goal}  <- fill this in (or run the ouroboros-design skill)")
-    HandoffMemory(root).ensure()
+    FilesStore(repo).prepare()
     guide = operator.write_guide(repo, name)
     print(f"wrote {guide.relative_to(repo)}  <- how a run is operated here" if guide
           else f"{repo / operator.GUIDE_PATH} exists")
@@ -259,13 +259,12 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     try:
         memory = make_memory(
-            cfg.memory, repo, recent=cfg.handoff.recent, **cfg.graph.model_dump(),
+            cfg.memory, repo, **cfg.graph.model_dump(),
         )
     except ValueError as exc:
         print(f"ouroboros: {exc}", file=sys.stderr)
         return 2
-    if isinstance(memory, HandoffMemory):
-        memory.ensure()
+    os.environ[MEMORY_ENV] = memory.name   # the harnesses' `ouroboros mem` acts on this run's store
     goal_path = repo / cfg.goal
     goal_text = goal_path.read_text() if goal_path.exists() else ""
     if not goal_text.strip():
@@ -735,9 +734,11 @@ def cmd_report(args: argparse.Namespace) -> int:
         lines += [f"- #{r.get('iteration')}: `{r.get('sha')}` never reached `{r.get('to')}`"
                   + (f" — {r['error']}" if r.get("error") else "") for r in failed_reverts]
         lines += ["", "Undo each by hand before merging, or the critic's rejections ship with the run.", ""]
-    plan_file = repo / ".ouroboros" / "plan.md"   # handoff memory: the actor's own plan
-    if plan_file.exists() and plan_file.read_text().strip():
-        lines += [f"## The plan now (`{plan_file.relative_to(repo)}`)", "", plan_file.read_text().strip()[:6000], ""]
+    state_file = watcher.state_md(repo)
+    if state_file is not None:
+        frontier = watcher.frontier_section(state_file.read_text())
+        if frontier:
+            lines += [f"## The frontier now (`{state_file.relative_to(repo)}`)", "", frontier[:6000], ""]
     lines += ["", "## Critic verdicts", ""] + [f"- {k}: {v}" for k, v in sorted(counts.items())] + [""]
     answered = [d for d in decisions if d["verdict"] in ("answer", "done_rejected", "stuck", "looping", "reject", "revert")]
     if answered:
@@ -899,7 +900,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--model")
     r.add_argument("--allow-dirty", action="store_true")
     r.add_argument("--critic", choices=["agent", "rules"], help="rules: the deterministic critic, no model call")
-    r.add_argument("--memory", choices=["auto", "governor", "handoff"])
+    r.add_argument("--memory", choices=["auto", "governor", "files"])
     r.add_argument("--foreground", action="store_true", help="run here: the same as --launcher foreground")
     r.add_argument("--launcher", choices=launch.LAUNCHERS,
                    help="where the loop lives (overrides config `launcher:`): tmux, tern, a systemd user unit, or here")
@@ -950,7 +951,17 @@ def build_parser() -> argparse.ArgumentParser:
     sk.add_argument("--user", action="store_true", help="install to ~/.claude, ~/.codex, ~/.pi/agent, ~/.agents skill dirs")
     sk.add_argument("--target")
     sk.set_defaults(fn=cmd_skills)
+
+    memcli.add_parser(sub)
+    sub.choices["mem"].set_defaults(fn=cmd_mem)
     return p
+
+
+def cmd_mem(args: argparse.Namespace) -> int:
+    repo = repo_root()
+    path = repo / DEFAULT_CONFIG_PATH
+    configured = Config.load(path).memory if path.exists() else "auto"
+    return memcli.run(args, repo, configured)
 
 
 def design_command(harness: str, skill_dir: Path, installed: bool) -> list[str]:

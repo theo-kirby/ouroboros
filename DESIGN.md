@@ -84,7 +84,7 @@ ten minutes.
 | Question | Decision |
 |---|---|
 | How to drive a harness | Headless subprocess by default. A tmux TUI driver is a second backend. |
-| Memory between iterations | A governor graph when `.flywheel/db.sqlite` exists; handoff documents otherwise. |
+| Memory between iterations | One record/state model: a governor graph when `.flywheel/db.sqlite` exists, else the same model as files in `.ouroboros/graph/`. |
 | Who judges the change, answers questions, and writes the next prompt | One critic agent, read-only, every iteration. Rules as fallback. |
 | Git | Auto-commit every iteration on `ouroboros/<run-name>`. |
 
@@ -96,7 +96,7 @@ ouroboros run
       ├── Harness pool       .................. one chain per role, one limit board per run (section 9)
       │    ├── Driver        .................. claude | codex | pi
       │    └── Backend       .................. headless | tmux
-      ├── Memory adapter     .................. governor | handoff  (section 7)
+      ├── Memory (ouroboros mem) ............. governor | files  (section 7)
       │    └── Charter parser ................. goal.md → gaps, ladder, policies (section 20)
       ├── Critic             .................. grades the diff, answers, judges done, writes the next prompt (section 8)
       ├── Git guard          .................. branch, commit, tag, revert (section 11)
@@ -122,9 +122,9 @@ failure; it is a recorded event and the loop continues.
 
 | Step | What happens | Who runs it |
 |---|---|---|
-| **ORIENT** | Read the charter, the memory (STATE.md, the plan, the unreconciled tail, or the recent handoffs), the critic's message. Pick the next unit from the plan's `short` horizon, a frontier node, or the critic's steer. When the memory says a reconcile is due, this iteration is **housekeeping** instead: the actor runs the reconcile pass (section 7) as its unit. | actor (headless call) |
+| **ORIENT** | Read the charter, the memory (`ouroboros mem orient`: the frontier, the unfolded tail, the architecture, the recent records), the critic's message. Pick the next unit from the critic's steer, a frontier claim, or the charter's horizon ladder. When the memory says a reconcile is due, this iteration is **housekeeping** instead: the actor runs the reconcile pass (section 7) as its unit. | actor (headless call) |
 | **WORK** | Do one bounded unit of work. Budget: N units (default 1). | actor (same call) |
-| **RECORD** | Write the memory entry for that unit (a governor record or a handoff file). | actor (same call) |
+| **RECORD** | Record the unit: `ouroboros mem record`, one record with its declared impact. | actor (same call) |
 | **COMMIT** | Git guard commits whatever changed on the run branch. No change, no commit. | ouroboros (local) |
 | **CRITIC** | Every iteration, changed or not. Reads the diff, the actor's final message, the frontier, and the loop's signals, with read-only tools. Grades the change against the quality bar, answers a question as the user would, refuses a false "done", names a loop, and writes the message the next iteration starts from. `reject` reverts the iteration. | critic (headless call) |
 | **RECONCILE** | Graph memory only. Fold recorded impacts into the state graph. Due after `reconcile_every` iterations with changes or records, at `pressure` unreconciled nodes, or at once after a directive that declared gaps. It is the actor's next iteration (housekeeping), judged by the critic like any other. | actor |
@@ -207,74 +207,105 @@ at iteration **#50** (`no_product`, one iteration into the stall) and **#74**
 `no_product` is the signal that earns its place. A third counter, `repeat_bet`
 (planner bets restating each other, first firing #118), went with the planner.
 
-## 7. Memory adapters
+## 7. Memory: one model, two stores
 
-### 7a. Governor (default when available)
+Every run keeps the same memory model, governor's (its `docs/CONVENTIONS.md`):
+append-only **records**, each declaring what it changes in state (`--impact
+"claim: Δ"`, `--new "name: Δ"`, or `--none "why"`), and **state claims** that cite
+the records they rest on. A **fold** is the single writer of state: it applies the
+unfolded tail, tags it folded, and renders STATE.md. Only where the model is kept
+differs:
 
-Detection: `.flywheel/db.sqlite` at the checkout or its main checkout, and
-`governor` on `PATH`. `memory/governor.py` drives the `governor` CLI and reads
-only `governor snapshot` JSON. One Ouroboros iteration **is** one dispatch:
+| `memory:` | Store | Where | In git? |
+|---|---|---|---|
+| `governor` | `memory/governor.py`, the `governor` CLI | the Flywheel repository, `.flywheel/` | no; only STATE.md |
+| `files` | `memory/files.py`, Python, no dependency | `.ouroboros/graph/` (records, claims, folds, STATE.md) | yes, on the run branch |
 
-| Ouroboros step | Governor |
-|---|---|
-| ORIENT | `governor orient`: the frontier, the unfolded tail with its declared impacts, the architecture, the recent records |
-| WORK | one unit against the goal or a frontier claim; budget = `graph.budget_units` |
-| RECORD | `governor record --parent <slug> (--impact "slug: Δ" \| --new "name: Δ" \| --none "why")`; committed to the Flywheel repository, nothing to `git add` |
-| RECONCILE | a fold: `governor fold --apply fold.json` tags the tail `folded`, then `governor render -o STATE.md` |
+`auto` picks `governor` when `.flywheel/db.sqlite` is at the checkout or its main
+checkout and `governor` is on `PATH`, else `files`. `handoff`, the old name of the
+fallback, reads as `files`. Ouroboros does not run `flywheel repo:init` or
+`governor init` for you.
 
-Rules Ouroboros enforces:
+### 7a. `ouroboros mem`: the only surface an agent sees
+
+The agent never learns which store it has. Every prompt names one command, and
+the command does whatever the store needs (`memcli.py`):
+
+| Verb | Governor store | Files store |
+|---|---|---|
+| `orient` | `governor orient` | the same text, rendered in Python (`graph.orient_text`) |
+| `show <id>` | the node from `governor snapshot` | the node file |
+| `record --title … (--impact \| --new \| --none)` | `governor record --json`; parent defaults to the newest record | writes `records/r-NNNN.md`; same default |
+| `fold` | the tail with its impacts (shared code) | the same |
+| `fold --apply FILE` | `governor fold --apply`, then `governor render -o STATE.md` | validates like governor, writes `claims/`, logs `folds/f-NNNN.json`, renders |
+| `check` | `governor check --json` | the same rules (below) in Python |
+
+`run` sets `OUROBOROS_MEMORY` for the harnesses it starts, so their `ouroboros mem`
+acts on the run's store even when `--memory` overrode the config. The prompts are
+three skills written once for both stores: `ouroboros-orient`, `ouroboros-record`
+and `ouroboros-reconcile`. The loop logic is written once too: `graph.GraphMemory`
+holds the directive, the reconcile cadence, the frontier fingerprint, the prompts
+and the critic's context, over either store's snapshot in governor's snapshot
+shape. A difference between the stores is a failing test, not a second prompt.
+
+Neither the actor nor the reconcile pass runs git for the memory: the loop's
+commit (`git add -A`) carries STATE.md and, in a files repo, the memory files.
+
+### 7b. The rules, on both stores
 
 - The run branch `ouroboros/<run>` is the **single-writer branch for the run**.
-  Only the RECONCILE step writes state claims. Only one RECONCILE runs at a time.
-- The actor prompt says: *never fold, never write claims, record only.*
-- RECONCILE triggers: every `graph.reconcile_every` iterations with changes or
-  records, at `graph.pressure` unfolded records, or at once after a directive
-  that declared gaps.
-- A unit with no new record is reported to the critic as `handoff recorded: NO`
-  and the next prompt starts with "record first".
-- `governor check` runs after every commit. A failing check does not stop the
+  Only the reconcile pass (an actor housekeeping iteration) writes claims. A work
+  iteration records only; its prompt forbids `ouroboros mem fold`, hand edits, and
+  the store's own tools.
+- Reconcile triggers: every `graph.reconcile_every` iterations with changes or
+  records, at `graph.pressure` unfolded records, or at once after a directive that
+  declared gaps.
+- A unit with no new record is reported to the critic as `unit recorded: NO`, and
+  the next prompt starts with "record first".
+- The memory's check runs after every commit. A failing check does not stop the
   loop. Its violations are appended to the next prompt as the first thing to fix.
 - The charter is recorded once per version, at run start, as an
-  operator-directive record titled `Ouroboros run: <run> [<sha256[:8]>]`, with
-  one `--new gap-*` per open done criterion. A re-versioned charter gets a new
+  operator-directive record titled `Ouroboros run: <run> [<sha256[:8]>]`, with one
+  `--new gap-*` per open done criterion. A re-versioned charter gets a new
   directive whose parent is the previous one. Every record of the run descends
-  from a directive.
-- No plan component. An older graph's `plan`-kind claims stay where they are:
-  the tail marks their impacts `(plan: legacy, leave it)`, and the fold lists
+  from a directive. The engine commits what the start wrote before iteration 1.
+- No plan component. An older governor graph's `plan`-kind claims stay where they
+  are: the tail marks their impacts `(plan: legacy, leave it)`, and the fold lists
   those records in `folded` but leaves the claims out.
-- The frontier fingerprint is every state claim's status tag, from the snapshot.
-- Reads use `--json` (`record`, `fold --apply`, `check`); the snapshot is cached
-  by `governor head`, with the database's stat as a free pre-check.
+- The frontier fingerprint is every state claim's status, from the snapshot. A
+  files repo has a frontier too, so the `no_frontier` loop signal works there.
 
-A repo without a Flywheel repository gets handoff memory. Ouroboros does not run
-`flywheel repo:init` or `governor init` for you.
-
-### 7b. Handoff documents (fallback)
+### 7c. The files store
 
 ```
-.ouroboros/
-  goal.md            # the contract (section 13)
-  plan.md            # the actor's working plan, rewritten freely
-  journal.md         # append-only, one block per iteration
-  handoff/
-    0001.md          # "what I did, what I learned, what is next, what I assumed"
-    0002.md
-  runs/<run>/        # ouroboros-owned, machine state (section 12)
+.ouroboros/graph/
+  records/r-0007.md     frontmatter (id, kind, title, parents, at, node_id, digest) + body
+  claims/<name>.md      frontmatter (id, kind, title, status, parents, seq, node_id, digest) + body
+  folds/f-0003.json     {at, folded, claims, created}
+  STATE.md              rendered; never edited by hand
+  README.md             what the files are
 ```
 
-The actor prompt says: read `goal.md`, `plan.md`, and the last 3 handoffs.
-Do one unit. Write the next handoff. Append to the journal.
+The idea is flywheel-local's (one markdown file per node, canonical frontmatter in
+a fixed key order, a doctor), without its snapshot store: git versions the files
+and the run branch carries them next to the code. The bodies are exactly what a
+governor node holds in `content`: a record's `## What / ## Why / ## Method /
+## Result` and the generated `## Recorded` (at, branch, commit) and `## State
+Impact`; a claim's `## Current / ## Negative knowledge / ## Evidence`. A uuid
+`node_id` per node lets a later import into a Flywheel graph run twice without
+duplicating anything; record ids (`r-0007`) and claim names map to Flywheel slugs
+at that import. The importer is not built yet; the format is what makes it simple.
 
-Both adapters expose the same interface to the loop engine:
+`check` keeps governor's rules: G1 every file parses, its id matches its name, its
+kind is right; G2 a record's body matches its `digest` (append-only); G3 every
+record declares an impact; G4 every claim but a component has one status and cites
+a record; G5 impacts name claims and citations name records; G6 lineage stays
+within a kind, with no cycles; G7 a claim's body matches its `digest`, which only
+a fold writes. Where governor reads G2 and G7 from Flywheel's commit log, this
+store reads them from the digests. A tail over 3 is a warning.
 
-```python
-class MemoryAdapter(Protocol):
-    def orient_prompt(self) -> str          # text injected before the work prompt
-    def record_prompt(self) -> str          # text that tells the agent how to record
-    def verify_recorded(self, before, after) -> bool
-    def needs_reconcile(self) -> bool
-    def reconcile_prompt(self) -> str | None
-```
+While the files memory is young (three records or fewer), the orient text carries
+the last `.ouroboros/handoff/NNNN.md` from the memory it replaced, read-only.
 
 ## 8. The critic
 
@@ -286,9 +317,8 @@ Both are judgment jobs over the same evidence, so they are one read-only call
 now, after every actor turn, changed or not. It gets:
 
 - the charter (the user's voice),
-- what is true now: the STATE.md frontier, the unreconciled count, and the
-  plan (`short` / `medium` / `long`); for handoff repos the plan file and the last
-  handoff's `## Next`,
+- what is true now: the frontier of open, broken and blocked claims, and the
+  unfolded count,
 - the actor's final message,
 - the loop's signals: changed, recorded, no-change streak, error streak, the
   loop detector's counters, whether the iteration was housekeeping,
@@ -498,8 +528,7 @@ yet.
 - On start: create `ouroboros/<run-name>` from the current HEAD (or check it
   out when it exists). Refuse to run on a dirty tree unless `--allow-dirty`.
 - After every WORK: `git add -A && git commit -m "ouroboros #<n>: <summary>"`,
-  where the summary is the title of the record node or the handoff's first
-  line. **No change, no commit.** The actor may commit on its own; the loop
+  where the summary is the title of the newest record. **No change, no commit.** The actor may commit on its own; the loop
   counts a moved HEAD as change.
 - After a `continue`, `answer`, `done_rejected`, or `done_accepted` verdict:
   tag `ouroboros/<run>/ok-<n>`. This is the revert target.
@@ -761,8 +790,8 @@ is moving), and **loop.log**. For the feed
 to be live the headless backend streams each call's stdout to the transcript
 file line by line, and Claude runs with `stream-json` in every backend.
 
-`ouroboros report` renders the run into `REPORT.md`: the handoff plan file when
-there is one, verdict counts, the decisions the critic made for you, cost.
+`ouroboros report` renders the run into `REPORT.md`: the STATE.md frontier,
+verdict counts, the decisions the critic made for you, cost.
 
 **The reporter** (`ouroboros watch`, `watch.py`, `notify.py`) is the run's voice on
 a phone. It is a separate process that reads the run directory and never the
@@ -825,7 +854,7 @@ skill, editable by hand. Every key with its default:
 ```yaml
 run: run                    # branch ouroboros/<run>, run dir .ouroboros/runs/<run>
 goal: .ouroboros/goal.md    # the charter
-memory: auto                # auto | governor | handoff
+memory: auto                # auto | governor | files  (handoff = files)
 backend: headless           # headless | tmux (one window per harness call)
 launcher: auto              # auto | tmux | tern | systemd | foreground: where `run` puts the loop (section 15)
 memory_max: null            # systemd only: MemoryMax on the run's unit, e.g. 40G
@@ -848,9 +877,7 @@ stop:                       # all optional; none set = run until killed
   until: null               # ISO timestamp
   on_done_accepted: null    # this many done_accepted in a row
   max_stuck: 25             # this many `stuck` verdicts in a row; null to never stop
-handoff:
-  recent: 3                 # handoff files shown to the actor
-graph:                      # the governor memory's housekeeping cadence
+graph:                      # the housekeeping cadence, either store
   reconcile_every: 5        # housekeeping is due after this many worked iterations
   pressure: 3               # ...or at this many unfolded records
   budget_units: 1           # dispatch budget per iteration
@@ -897,7 +924,10 @@ ouroboros/
       backend_headless.py   # subprocess in its own process group, timeouts, kill_active, backend switch
       backend_tmux.py       # one tmux window per call, output to files
     memory/
-      base.py  governor.py  handoff.py   # orient/record prompts, verify, reconcile
+      graph.py              # the model, the snapshot, rendering, GraphMemory: the loop logic for both stores
+      governor.py  files.py # the two stores
+      base.py               # the adapter protocol
+    memcli.py               # `ouroboros mem`: the agent's only memory surface
     roles/
       actor.py  critic.py                  # prompt assembly, JSON parsing, the rules critic
     gitguard.py             # branch, commit, tag, diff, revert_to
@@ -911,11 +941,11 @@ ouroboros/
     tmux.py                 # the run session: launch, kill
     tui/                    # the status TUI: theme, widgets, layout (from vllmtop), state (run-dir reader), panels, app
     skills/                 # packaged with the wheel; `ouroboros skills install` copies them out
-      ouroboros-actor/  ouroboros-critic/  ouroboros-reconcile/
+      ouroboros-actor/  ouroboros-orient/  ouroboros-record/  ouroboros-critic/  ouroboros-reconcile/
       ouroboros-reporter/  ouroboros-design/  ouroboros-launch/  ouroboros-checkup/   (each SKILL.md)
   tests/                    # 290 tests; fake_harness.py scripts actors and critics
     test_engine.py test_pool.py test_critic.py test_goal.py
-    test_memory_handoff.py test_memory_governor.py (needs the governor and flywheel CLIs)
+    test_memory_files.py test_memory_governor.py (needs the governor and flywheel CLIs)
     test_claude_parse.py test_drivers_parse.py test_headless.py test_backend_tmux.py (needs tmux)
     test_gitguard.py test_recorder.py test_config.py test_history.py test_operator.py
     test_watch.py test_notify.py (the reporter and its channel)
@@ -1017,11 +1047,40 @@ the plan view, or bets, read it as history.
 
 The operator decided that Ouroboros, Flywheel and Governor are the whole stack.
 The earlier graph-memory adapter, its CLI, its config detection and its tests
-are gone; `memory:` takes `auto`, `governor` or `handoff`. The ideas carry over
+are gone; `memory:` takes `auto`, `governor` or `handoff` (now `files`, below). The ideas carry over
 unchanged in governor: append-only records with declared impacts, a fold as the
 single writer of state, a frontier of open claims, a directive per charter
 version. The config key for the housekeeping cadence is now `graph:`; an old
 key under another name is ignored, and its defaults are the same.
+
+### One model on two stores, behind `ouroboros mem` (2026-10-17)
+
+The handoff memory (plan.md, journal.md, `handoff/NNNN.md`) kept no state and was
+checked by nothing, so a repo without governor got a weaker loop: no frontier, no
+`no_frontier` signal, no fold, and notes that could not seed a graph later. The
+operator asked for the fallback to follow governor's ideas instead, so that what a
+run leaves behind can fill a Flywheel graph's gaps later. It is now the `files`
+store: the same records, claims and folds as markdown under `.ouroboros/graph/`
+(section 7c). `handoff` reads as `files`; `plan.md` and the journal are gone, and
+the reporter and the report show the STATE.md frontier instead.
+
+The operator also asked that the agent not have to choose between two sets of
+instructions. So the agent sees one command, `ouroboros mem`, and the machinery
+behind it is deterministic: the same verbs, the same fold JSON, the same rules, on
+either store. That forces the two stores to stay aligned: they share the loop
+logic, the prompts and the tail listing, and a test drives each through the same
+verbs. Two choices fell out of that: neither the actor nor the reconcile pass runs
+git for the memory (the loop's commit does), and a fold renders STATE.md itself.
+
+Not built yet, by choice: the importer that loads a files memory into a governor
+graph, and a files run that reads a governor graph's state as its starting point.
+The second is the answer to "one graph, one writer" (Cadex, while sb1x writes its
+graph): a run records into files on its branch, and the merge imports them, so the
+big graph keeps one writer. Separate roots, run tags, or a cloned Flywheel
+repository per run were considered and rejected: separate roots give parallel
+truths, the directive lineage and `## Recorded`'s branch already say which run
+wrote a record, and Flywheel has no repository branches, so a clone per run means
+rebasing graph conflicts.
 
 ### Live charter edits (2026-09-12)
 

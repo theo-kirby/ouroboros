@@ -43,9 +43,9 @@ The tail of `loop.log` (backoffs, limit waits, harness switches):
 
 {goal}
 
-## The actor's plan (handoff repos only)
+## The frontier (open, broken, blocked claims from STATE.md)
 
-{plan}
+{frontier}
 
 ## What to write
 

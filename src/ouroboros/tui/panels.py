@@ -755,7 +755,7 @@ def draw_frontier(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
     x, w = inner.x + 1, inner.w - 2
     f = s.frontier
     if not f:
-        p.text(inner.y, x, "no STATE.md (handoff memory)", p.theme.attr(PAIR_INACTIVE), width=w)
+        p.text(inner.y, x, "no STATE.md yet", p.theme.attr(PAIR_INACTIVE), width=w)
         return
     rows = []
     total_gaps = f.get("gaps_total", 0)

@@ -14,9 +14,8 @@ Read `DESIGN.md` section 20 in the Ouroboros repo if you can; the short form is 
 
 ## Before you ask anything
 
-1. Read the repo: `AGENTS.md` / `CLAUDE.md`, `README.md`, `STATE.md`
-   if present (a governor repo; `governor orient`
-   is the cheapest read), `docs/ROADMAP.md` or similar, the test
+1. Read the repo: `AGENTS.md` / `CLAUDE.md`, `README.md`, the memory if
+   there is one (`ouroboros mem orient` is the cheapest read, on either store), `docs/ROADMAP.md` or similar, the test
    command, the last 30 commits. Form a view of what is broken, what is next, and
    what the repo's own rules are.
 2. Check for an existing charter: `.ouroboros/goal.md`. If it exists, this is a
@@ -67,14 +66,15 @@ the user to correct it. Never accept a vague answer; ask for the concrete versio
    node rules, doc-with-code rules.
 8. **Run shape.** Duration (`stop.after`), harness chain and fallbacks for the
    actor and the critic (the only two roles), memory (`auto` picks governor when
-   the repo has a `.flywheel/` governor graph, handoff otherwise).
+   the repo has a `.flywheel/` governor graph, else `files`: the same records and
+   claims as markdown under `.ouroboros/graph/`).
 
 ## Write the files
 
 - `.ouroboros/goal.md` with exactly these sections, in this order:
   `# Goal: <name>`, `## Mission`, `## Done criteria`, `## Horizon ladder`,
   `## Constraints`, `## Question policy`, `## Exhaustion policy`, `## Quality bar`,
-  and for governor repos `## Reconcile`. Done criteria are `- [ ]` checkboxes.
+  and `## Reconcile` (how the reconcile pass folds records into state). Done criteria are `- [ ]` checkboxes.
   Ladder rungs are `- **short-term:** ...`, `- **medium-term:** ...`, `- **long-term:** ...` lines.
 - `.ouroboros/config.yml` (run `ouroboros init` first if missing). Example:
 
@@ -86,7 +86,7 @@ roles:
   actor:  { harness: claude, timeout: 90m, fallback: [{ harness: codex }] }
   critic: { harness: codex, timeout: 10m, fallback: [{ harness: claude }] }
 stop: { after: 10h, max_usage: 0.8 }   # 0.8 = stop at 80% of a subscription's weekly window
-graph: { reconcile_every: 5, pressure: 3, budget_units: 1 }   # when housekeeping is due (governor repos)
+graph: { reconcile_every: 5, pressure: 3, budget_units: 1 }   # when housekeeping is due
 ```
 
 - Read both files back to the user in full. Then say: `ouroboros run` starts it,
@@ -100,5 +100,3 @@ graph: { reconcile_every: 5, pressure: 3, budget_units: 1 }   # when housekeepin
   outcome into a done criterion.
 - A re-version replaces the file; Ouroboros mints a new directive record for it
   and declares only the criteria it adds. Say so.
-- Never write `.ouroboros/plan.md` yourself. In a handoff repo it is the actor's
-  working plan.

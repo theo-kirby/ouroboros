@@ -112,7 +112,7 @@ def test_harness_exception_falls_back(tmp_path):
 
 def test_rules_do_not_demand_a_record_from_housekeeping(tmp_path):
     from ouroboros.roles.critic import RulesCritic
-    assert "handoff" in RulesCritic().judge(sig("x", recorded=False)).reply
+    assert "did not record" in RulesCritic().judge(sig("x", recorded=False)).reply
     v = RulesCritic().judge(sig("x", recorded=False, housekeeping=True))
     assert v.verdict == "continue" and v.reply == "" and v.reason == "housekeeping done"
 

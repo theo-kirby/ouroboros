@@ -74,7 +74,7 @@ Return exactly one JSON object and nothing else:
 ## `fix_first`
 
 The memory is the actor's to write and yours to check. When a record does not link,
-an impact names the wrong node, the handoff contradicts the diff, or the frontier
+an impact names the wrong node, the record contradicts the diff, or the frontier
 shows something the diff already closed, say so here in one or two lines, naming the
 file or node. The actor does it before its next unit. Leave it empty when the memory
 is clean; a housekeeping iteration (see the signals) needs no record of its own.

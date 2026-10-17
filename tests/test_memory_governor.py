@@ -8,7 +8,9 @@ import pytest
 
 from ouroboros.harness.base import Result
 from ouroboros.memory import GovernorMemory, make_memory
-from ouroboros.memory.handoff import HandoffMemory
+from ouroboros.memory import ENV
+from ouroboros.memory.files import FilesMemory
+from ouroboros import cli
 
 from conftest import git
 from fake_harness import FakeHarness
@@ -54,7 +56,7 @@ def gov_template(tmp_path_factory) -> Path:
     (r / ".gitignore").write_text(".ouroboros/runs/\n.flywheel/\n.governor/\n")
     subprocess.run(["flywheel", "repo:init"], cwd=r, capture_output=True, text=True, check=True)
     gv(r, "init", "--title", "t")
-    HandoffMemory(r / ".ouroboros").ensure()
+    (r / ".ouroboros").mkdir()
     (r / ".ouroboros" / "goal.md").write_text(GOAL)
     git(r, "add", "-A")
     git(r, "commit", "-q", "-m", "init")
@@ -92,14 +94,14 @@ def fold_all(repo: Path, claims: list[dict] | None = None, view: str | None = No
 def test_auto_detects_governor(gov_repo):
     assert isinstance(make_memory("auto", gov_repo), GovernorMemory)
     assert isinstance(make_memory("governor", gov_repo), GovernorMemory)
-    assert isinstance(make_memory("handoff", gov_repo), HandoffMemory)
+    assert isinstance(make_memory("files", gov_repo), FilesMemory)
 
 
 def test_auto_falls_back_to_handoff_without_a_repository(tmp_path):
     bare = tmp_path / "bare"
     bare.mkdir()
     git(bare, "init", "-q", "-b", "main")
-    assert isinstance(make_memory("auto", bare), HandoffMemory)
+    assert isinstance(make_memory("auto", bare), FilesMemory)
     with pytest.raises(ValueError, match="governor requested"):
         make_memory("governor", bare)
 
@@ -217,17 +219,17 @@ def test_prompts_and_verify(gov_repo):
     mem = GovernorMemory(gov_repo)
     start(mem, gov_repo)
     orient = mem.orient_prompt()
-    assert "## governor orient" in orient and "## Frontier" in orient and "one dispatch" in orient
-    assert "Forbidden" in orient and "governor fold --apply" in orient
+    assert "## What is true now" in orient and "## Frontier" in orient and "one dispatch" in orient
+    assert "Forbidden" in orient and "`ouroboros mem fold`" in orient and "Flywheel repository" in orient
     rec = mem.record_prompt()
-    assert f"--parent {mem.directive_slug}" in rec and "governor record" in rec and "nothing to `git add`" in rec
+    assert f"(`{mem.directive_slug}`)" in rec and "ouroboros mem record" in rec and "governor record" not in rec
     before = mem.snapshot()
     assert not mem.verify_recorded(before)
     slug = mint(gov_repo, "Did a unit", mem.directive_slug)
     assert mem.verify_recorded(before)
     assert mem.last_record_slug == slug
     assert mem.last_summary() == "Did a unit"
-    assert f"--parent {slug}" in mem.record_prompt()
+    assert f"(`{slug}`)" in mem.record_prompt()
     assert mem.check_report() is None
 
 
@@ -246,8 +248,8 @@ def test_needs_reconcile_pressure_and_cadence(gov_repo):
     cad.mark_reconciled()
     assert not cad.needs_reconcile()
     prompt = cad.reconcile_prompt()
-    assert "one reconcile pass" in prompt and "governor fold --apply" in prompt and "governor render -o STATE.md" in prompt
-    assert "two" in prompt and "{procedure}" not in prompt
+    assert "one reconcile pass" in prompt and "ouroboros mem fold --apply" in prompt and "renders STATE.md" in prompt
+    assert "two" in prompt and "{where}" not in prompt and "governor fold" not in prompt
     fold_all(gov_repo)
     assert mem.unreconciled()[0] == 0 and not mem.needs_reconcile()
 
@@ -273,11 +275,11 @@ def test_check_report_names_a_violation(gov_repo, monkeypatch):
     findings = [{"level": "violation", "rule": "G3", "node": "x", "message": "declares no state impact"},
                 {"level": "warning", "rule": "tail", "message": "3 unfolded"}]
     out = json.dumps({"ok": False, "violations": 1, "warnings": 1, "findings": findings, "head": "h"})
-    monkeypatch.setattr(mem, "check", lambda: (1, out))
+    monkeypatch.setattr(mem.store, "gov", lambda *a, **k: (1, out))
     report = mem.check_report()
-    assert report.startswith("`governor check` exit 1") and "VIOLATION G3 x: declares no state impact" in report
+    assert report.startswith("`ouroboros mem check` failed") and "VIOLATION G3 x: declares no state impact" in report
     assert "unfolded" not in report
-    monkeypatch.setattr(mem, "check", lambda: (2, "error: no Flywheel repository here"))
+    monkeypatch.setattr(mem.store, "gov", lambda *a, **k: (2, "error: no Flywheel repository here"))
     assert "no Flywheel repository" in mem.check_report()
 
 
@@ -337,7 +339,7 @@ class FakeCritic:
 
 
 def records(cwd: Path, prompt: str) -> Result:
-    parent = re.search(r"--parent (\S+)", prompt).group(1)
+    parent = re.search(r"newest record \(`(\S+)`\)", prompt).group(1)
     (cwd / "work.txt").open("a").write("x\n")
     mint(cwd, "unit", parent)
     return Result(text="did a unit", session_id="s", cost_usd=0.1)
@@ -365,7 +367,7 @@ def test_engine_counts_a_record_and_runs_the_fold_on_pressure(gov_repo):
     assert eng.iteration == 4
     # directive + #1 + #2 = 3 unfolded: pressure makes #3 housekeeping; #4 leaves one in the tail
     assert [o.housekeeping for o in eng.outcomes] == [False, False, True, False]
-    assert "governor fold --apply" in actor.prompts[2]
+    assert "ouroboros mem fold --apply" in actor.prompts[2]
     assert eng.outcomes[0].recorded and eng.outcomes[1].recorded and eng.outcomes[3].recorded
     assert not any(s.get("step") == "reconcile" for s in eng.recorder.read_jsonl(eng.recorder.iterations))
     assert mem.unreconciled()[0] == 1
@@ -396,3 +398,23 @@ def test_the_actor_runs_the_fold_as_housekeeping(gov_repo):
     steps = eng.recorder.read_jsonl(eng.recorder.iterations)
     assert [s.get("housekeeping") for s in steps if s.get("step") == "commit"] == [True, None, None]
     assert git(gov_repo, "status", "--porcelain") == ""
+
+
+def test_the_mem_cli_drives_governor_with_the_same_verbs(gov_repo, monkeypatch, capsys):
+    """The agent's commands are the files store's commands; only the store differs."""
+    monkeypatch.setenv(ENV, "governor")
+    monkeypatch.chdir(gov_repo)
+    import io
+    monkeypatch.setattr("sys.stdin", io.StringIO("## What\n\nx\n\n## Why\n\ny\n\n## Method\n\nz\n\n## Result\n\nok\n"))
+    assert cli.main(["mem", "record", "--title", "A unit", "--new", "gap-a: open"]) == 0
+    slug = capsys.readouterr().out.split()[0]
+    assert node(gov_repo, slug)["title"] == "A unit"
+    assert cli.main(["mem", "fold"]) == 0
+    assert "NEW gap-a" in capsys.readouterr().out
+    (gov_repo / "fold.json").write_text(json.dumps({"claims": [{"new": "gap-a", "parent": "root", "title": "Gap A",
+        "status": "open", "current": f"- open [rec: {slug}]", "cites": [slug]}], "folded": [slug]}))
+    assert cli.main(["mem", "fold", "--apply", "fold.json"]) == 0
+    assert "Gap A" in (gov_repo / "STATE.md").read_text(), "a fold renders STATE.md on either store"
+    claim = next(n for n in snap(gov_repo)["nodes"].values() if n["title"] == "Gap A")
+    assert cli.main(["mem", "show", claim["slug"]]) == 0 and "## Current" in capsys.readouterr().out
+    assert cli.main(["mem", "check"]) == 0

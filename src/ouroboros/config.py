@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 _DUR = re.compile(r"(\d+(?:\.\d+)?)\s*([smhd]?)")
 _UNIT = {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}
@@ -107,12 +107,8 @@ class StopConfig(BaseModel):
         return datetime.fromisoformat(self.until) if self.until else None
 
 
-class HandoffConfig(BaseModel):
-    recent: int = 3
-
-
 class GraphConfig(BaseModel):
-    """When housekeeping is due in the governor memory."""
+    """When housekeeping is due. Both memories are the same model, so this applies to both."""
     reconcile_every: int = 5   # housekeeping after this many work iterations
     pressure: int = 3          # ...or as soon as this many record nodes are unreconciled
     budget_units: int = 1      # dispatch budget per iteration
@@ -170,7 +166,9 @@ class ReportConfig(BaseModel):
 class Config(BaseModel):
     run: str = "run"
     goal: str = ".ouroboros/goal.md"
-    memory: Literal["auto", "governor", "handoff"] = "auto"
+    # governor: a Flywheel graph; files: the same model as markdown in `.ouroboros/graph/`.
+    # auto: governor when the repo has one, else files. `handoff` is the old name of files.
+    memory: Literal["auto", "governor", "files"] = "auto"
     backend: str = "headless"
     # Where `run` puts the loop so it outlives the terminal (launch.py): tmux,
     # tern, a systemd user service, or the foreground. auto: tmux inside tmux,
@@ -195,11 +193,15 @@ class Config(BaseModel):
     )
     git: GitConfig = Field(default_factory=GitConfig)
     stop: StopConfig = Field(default_factory=StopConfig)
-    handoff: HandoffConfig = Field(default_factory=HandoffConfig)
     graph: GraphConfig = Field(default_factory=GraphConfig)
     limits: LimitConfig = Field(default_factory=LimitConfig)
     loop: LoopConfig = Field(default_factory=LoopConfig)
     report: ReportConfig = Field(default_factory=ReportConfig)
+
+    @field_validator("memory", mode="before")
+    @classmethod
+    def _old_memory_names(cls, value):
+        return "files" if value == "handoff" else value
 
     @property
     def branch(self) -> str:

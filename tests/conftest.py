@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from ouroboros.memory.handoff import HandoffMemory
+from ouroboros.memory.files import FilesStore
 
 
 @pytest.fixture(autouse=True)
@@ -40,8 +40,7 @@ def repo(tmp_path: Path) -> Path:
     git(r, "config", "user.name", "t")
     (r / ".gitignore").write_text(".ouroboros/runs/\n")
     (r / "README.md").write_text("hi\n")
-    mem = HandoffMemory(r / ".ouroboros")
-    mem.ensure()
+    FilesStore(r).prepare()
     (r / ".ouroboros" / "goal.md").write_text("# Goal: test\n\n## Mission\n\nkeep going.\n")
     git(r, "add", "-A")
     git(r, "commit", "-q", "-m", "init")

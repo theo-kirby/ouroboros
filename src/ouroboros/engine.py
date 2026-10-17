@@ -337,7 +337,7 @@ class Engine:
         self.session_id, self.session_uses = None, 0
         notice = ("The operator revised the charter. Follow the current charter above. "
                   "Reconsider the previous next-unit recommendation against it; preserve "
-                  "unresolved correctness fixes that still apply. Previous handoff:\n")
+                  "unresolved correctness fixes that still apply. Previous message:\n")
         self.injected = notice + (self.injected or "(none)")
         digest = hashlib.sha256(candidate.encode()).hexdigest()
         self.recorder.step(iteration=self.iteration + 1, step="goal_reload",

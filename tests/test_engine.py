@@ -6,7 +6,7 @@ from ouroboros.budget import BudgetClock
 from ouroboros.config import Config, StopConfig
 from ouroboros.engine import Engine
 from ouroboros.gitguard import GitGuard
-from ouroboros.memory.handoff import HandoffMemory
+from ouroboros.memory.files import FilesMemory
 from ouroboros.recorder import Recorder
 
 from conftest import git
@@ -20,7 +20,7 @@ def make_engine(repo: Path, harness: FakeHarness, *, max_iterations=5, resume_fo
     cfg.roles["actor"].resume_for = resume_for
     git_ = GitGuard(repo, cfg.branch)
     git_.start()
-    mem = HandoffMemory(repo / ".ouroboros")
+    mem = FilesMemory(repo, reconcile_every=0, pressure=10**6)   # no housekeeping unless a test asks
     rec = Recorder(repo / ".ouroboros" / "runs" / "t", echo=lambda *_: None)
     sleeps = sleeps if sleeps is not None else []
 
@@ -102,7 +102,7 @@ def test_missing_record_is_noticed(repo):
     eng.run()
     assert eng.outcomes[0].recorded is False
     assert eng.outcomes[0].changed is True
-    assert "did not write its handoff" in h.prompts[1]
+    assert "did not record its unit" in h.prompts[1]
 
 
 def test_driver_exception_is_survived(repo):
@@ -160,8 +160,8 @@ def test_engine_bug_does_not_kill_loop(repo, monkeypatch):
     orig = eng.git.commit
 
     def flaky(msg, **kw):
-        calls["n"] += 1
-        if calls["n"] == 1:
+        calls["n"] += msg.startswith("ouroboros #")   # the run-start commit of the memory is not an iteration
+        if calls["n"] == 1 and msg.startswith("ouroboros #"):
             raise RuntimeError("disk hiccup")
         return orig(msg, **kw)
 
@@ -200,8 +200,8 @@ def test_actor_own_commit_counts_as_change(repo):
         (cwd / "self.txt").write_text("x\n")
         git(cwd, "add", "-A")
         git(cwd, "commit", "-q", "-m", "actor commit")
-        from fake_harness import _handoff
-        _handoff(cwd, "committed myself")
+        from fake_harness import _record
+        _record(cwd, "committed myself")
         from ouroboros.harness.base import Result
         return Result(text="done a unit", session_id="s")
 
@@ -211,11 +211,10 @@ def test_actor_own_commit_counts_as_change(repo):
 
 
 def test_failed_iteration_makes_no_empty_commit(repo):
-    before = len(git(repo, "log", "--oneline").splitlines())
     eng = make_engine(repo, FakeHarness([crashes("x"), crashes("x")]), max_iterations=1)
     eng.run()
-    after = len(git(repo, "log", "--oneline").splitlines())
-    assert after == before
+    subjects = git(repo, "log", "--format=%s").splitlines()
+    assert not [s for s in subjects if s.startswith("ouroboros #")]   # only the run-start commit of the memory
 
 
 def test_the_actor_does_housekeeping(repo: Path, monkeypatch):

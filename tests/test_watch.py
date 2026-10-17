@@ -166,10 +166,9 @@ def test_loop_escalation_fires_once_per_step(fake, clock):
     fake.step(step="loop", signal="no_product", streak=14, escalation=2, acted=True, evidence=["x"])
     fake.step(step="loop", signal="no_product", streak=15, escalation=2, acted=False, evidence=["x"])
     events = w.check()
-    assert kinds(events) == ["looping"] and "re-plan" in events[0].body
-    fake.step(step="loop", signal="no_product", streak=19, escalation=3, acted=True, evidence=["x"])
-    events = w.check()
     assert kinds(events) == ["looping"] and "rotating" in events[0].body
+    fake.step(step="loop", signal="no_product", streak=19, escalation=2, acted=True, evidence=["x"])
+    assert w.check() == []                   # the top step reaches the phone once
 
 
 def test_limit_lines_fire_once_per_harness_per_cooldown(fake, clock):
@@ -608,7 +607,7 @@ def test_stats_text_reads_the_status(fake, clock):
 
 def test_prompt_fills_every_placeholder(tmp_path):
     ctx = DigestContext(trigger="interval", stats="s", verdicts="", commits="", log="", needs_human="",
-                        goal="", plan="", run="r", run_dir=tmp_path, max_chars=900)
+                        goal="", frontier="", run="r", run_dir=tmp_path, max_chars=900)
     text = build_reporter_prompt(ctx)
     assert "{" not in text.replace("{stats}", "") or "{" not in text
     assert "900 characters" in text and "run `r`" in text and "(none since the last report)" in text
@@ -629,7 +628,7 @@ def test_agent_reporter_walks_the_chain_read_only(tmp_path):
     fine = H("codex", Result(text="  the read  "))
     rep = AgentReporter([("claude", None), ("codex", "gpt")], cwd=tmp_path, timeout=5, harnesses={"claude": limited, "codex": fine},
                         transcript_dir=tmp_path / "reports")
-    ctx = DigestContext(trigger="t", stats="", verdicts="", commits="", log="", needs_human="", goal="", plan="",
+    ctx = DigestContext(trigger="t", stats="", verdicts="", commits="", log="", needs_human="", goal="", frontier="",
                         run="r", run_dir=tmp_path, max_chars=100)
     assert rep.write(ctx) == "the read"
     assert [c[0] for c in calls] == ["claude", "codex"]
@@ -645,7 +644,7 @@ def test_agent_reporter_returns_none_when_no_one_answers(tmp_path):
             raise RuntimeError("no")
 
     rep = AgentReporter([("x", None), ("nope", None)], cwd=tmp_path, timeout=5, harnesses={"x": Raises()})
-    ctx = DigestContext(trigger="t", stats="", verdicts="", commits="", log="", needs_human="", goal="", plan="",
+    ctx = DigestContext(trigger="t", stats="", verdicts="", commits="", log="", needs_human="", goal="", frontier="",
                         run="r", run_dir=tmp_path, max_chars=100)
     assert rep.write(ctx) is None
 

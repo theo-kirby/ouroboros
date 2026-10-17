@@ -88,12 +88,17 @@ what is next, what is broken, the numbers. Tune it under `report:` in the config
 
 ## Memory and review
 
-By default, agents leave handoff files. A repo whose memory is a
-[governor](https://github.com/theo-kirby/governor) graph (`.flywheel/db.sqlite`
-at the checkout, `governor` on `PATH`) uses it for shared state: records with
-declared impacts, and a fold as the single writer of state. `memory: auto` picks
-governor when it is there and handoff otherwise; `--memory governor|handoff`
-forces one. Keep `.flywheel/` and
+Every run keeps the [governor](https://github.com/theo-kirby/governor) model:
+append-only records, each declaring what it changes, and state claims that cite
+them, written only by a fold. A repo with a governor graph (`.flywheel/db.sqlite`
+at the checkout, `governor` on `PATH`) keeps it there. Any other repo keeps the
+same records and claims as markdown files under `.ouroboros/graph/`, committed with
+the code, shaped so they can seed a Flywheel graph later. `memory: auto` picks
+governor when it is there and `files` otherwise; `--memory governor|files` forces
+one (`handoff` is the old name of `files`).
+
+Agents see one command either way: `ouroboros mem orient | show | record | fold |
+check | render`. You can run it too. Keep `.flywheel/` and
 `.governor/` gitignored (a governor run adds them to `.gitignore` if they are not).
 
 Review the report and run branch before merging. Use a merge commit for

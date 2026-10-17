@@ -551,8 +551,8 @@ def _pid(run_dir: Path) -> tuple[int | None, bool]:
 def frontier_counts(repo: Path) -> dict[str, int]:
     """Counts from STATE.md: frontier nodes by status, charter gaps still on it, charter gaps total."""
     out: dict[str, int] = {}
-    state = repo / "STATE.md"
-    if not state.exists():
+    state = next((p for p in (repo / ".ouroboros" / "graph" / "STATE.md", repo / "STATE.md") if p.exists()), None)
+    if state is None:
         return out
     try:
         text = state.read_text()

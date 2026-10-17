@@ -58,13 +58,15 @@ amount of loop detection fixes it.
    `critic.jsonl` (older runs: `overseer.jsonl`) for every verdict with its
    reason, reply, and `fix_first`. `loop.log` for backoffs, limit waits, and
    harness switches.
-4. The next units: the critic's `reply` and `doing` in `critic.jsonl`, and in a
-   handoff repo the actor's `.ouroboros/plan.md`.
+4. The next units: the critic's `reply` and `doing` in `critic.jsonl`.
 5. Git: `git log --oneline main..<run branch>` and `git diff --stat main...<run branch>`.
-   Records are never in git: `governor snapshot` lists them (`kind: record`, with `at` and `## Recorded`
-   naming the branch), `governor fold` shows what is still unfolded, and `governor check` must exit 0.
-6. The frontier before and after (`git show main:STATE.md` vs the branch), compared
-   **by node status**, not by prose.
+   The memory, on either store: `ouroboros mem orient` (frontier, tail, recent records),
+   `ouroboros mem fold` (what is still unfolded), `ouroboros mem show <id>`, and
+   `ouroboros mem check`, which must exit 0. In a files repo the records are in git
+   under `.ouroboros/graph/records/`; in a governor repo they are in the Flywheel
+   repository, never in git, and each one's `## Recorded` names its branch.
+6. The frontier before and after (`STATE.md` on `main` vs the branch;
+   `.ouroboros/graph/STATE.md` in a files repo), compared **by node status**, not by prose.
 
 ## Is it moving, or going in circles?
 

@@ -37,6 +37,20 @@ from .harness import make_harness
 from .harness.base import Result
 from .notify import Notifier, clip
 
+
+def state_md(repo: Path) -> Path | None:
+    """The rendered state: the files memory's when it has one, else a governor repo's."""
+    for p in (repo / ".ouroboros" / "graph" / "STATE.md", repo / "STATE.md"):
+        if p.exists():
+            return p
+    return None
+
+
+def frontier_section(text: str) -> str:
+    """The `## Frontier` section of a STATE.md, without its heading."""
+    m = re.search(r"^## Frontier\s*$([\s\S]*?)(?=^## |\Z)", text or "", re.M)
+    return m.group(1).strip() if m else ""
+
 TERMINAL = ("stopped", "killed")
 ALWAYS = ("started", "interval", "manual")     # never filtered by `report.on`
 REPORTER_MAX_TURNS = 10
@@ -100,7 +114,7 @@ class DigestContext:
     log: str
     needs_human: str
     goal: str
-    plan: str
+    frontier: str
     run: str
     run_dir: Path
     max_chars: int
@@ -241,7 +255,7 @@ def build_reporter_prompt(ctx: DigestContext, template: str | None = None) -> st
         .replace("{log}", ctx.log.strip() or "(empty)")
         .replace("{needs_human}", ctx.needs_human.strip())
         .replace("{goal}", ctx.goal.strip() or "(no charter found)")
-        .replace("{plan}", ctx.plan.strip() or "(no plan file)")
+        .replace("{frontier}", ctx.frontier.strip() or "(no STATE.md yet)")
         .replace("{max_chars}", str(ctx.max_chars))
     )
 
@@ -458,8 +472,8 @@ class Watcher:
                 if int(sent.get(sig) or 0) < int(s.get("escalation") or 0):
                     sent[sig] = int(s.get("escalation") or 0)
                     events.append(Event("looping", f"{run}: loop detected, {sig} x{s.get('streak')}",
-                                        f"escalation {s.get('escalation')}/3 at #{s.get('iteration')}: "
-                                        + {2: "forcing a re-plan", 3: "rotating the actor to its fallback"}.get(int(s.get("escalation") or 0), "named to the actor")
+                                        f"escalation {s.get('escalation')}/2 at #{s.get('iteration')}: "
+                                        + ("rotating the actor to its fallback" if int(s.get("escalation") or 0) >= 2 else "named to the actor")
                                         + "\n" + "; ".join(str(e) for e in (s.get("evidence") or [])[:3]), priority=0))
             elif kind == "revert":
                 # A revert that failed leaves rejected work on the branch. It reaches
@@ -594,7 +608,7 @@ class Watcher:
                                    for d in snap.decisions[since_dec:][-VERDICT_LINES:]),
                 commits=self._commits_since(snap), log="\n".join(snap.log_lines[-LOG_TAIL:]),
                 needs_human=f"NEEDS_HUMAN.md:\n\n{snap.needs_human}" if snap.needs_human else "",
-                goal=self._read(self.repo / self.config.goal)[:6000], plan=self._plan()[:3000],
+                goal=self._read(self.repo / self.config.goal)[:6000], frontier=self._frontier()[:3000],
                 run=self.config.run, run_dir=self.run_dir, max_chars=self.config.report.max_chars,
             )
             try:
@@ -623,9 +637,9 @@ class Watcher:
         except OSError:
             return ""
 
-    def _plan(self) -> str:
-        """The actor's own plan in a handoff repo; graph repos have none."""
-        return self._read(self.repo / ".ouroboros" / "plan.md")
+    def _frontier(self) -> str:
+        path = state_md(self.repo)
+        return frontier_section(self._read(path)) if path else ""
 
     def _git(self, *args: str) -> str:
         try:
