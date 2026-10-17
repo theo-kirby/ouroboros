@@ -63,3 +63,14 @@ def test_session_limit_is_retriable_and_reset_time_parses():
     assert at == datetime(2026, 9, 7, 12, 50, tzinfo=ZoneInfo("Europe/Madrid"))
     assert parse_reset_time("Claude AI usage limit reached|1757100000") == datetime.fromtimestamp(1757100000, tz=timezone.utc)
     assert parse_reset_time("some other error") is None
+
+
+def test_tokens_and_model_come_off_the_result_line():
+    # recorded: cadex mac2 iteration 41, the actor's result line (trimmed)
+    line = {"type": "result", "subtype": "success", "result": "ok", "session_id": "s", "total_cost_usd": 3.98,
+            "usage": {"input_tokens": 128, "cache_creation_input_tokens": 157846, "cache_read_input_tokens": 7203633,
+                      "output_tokens": 63901, "output_tokens_details": {"thinking_tokens": 34640}},
+            "modelUsage": {"claude-haiku-4-5": {"outputTokens": 40}, "claude-opus-5-5": {"inputTokens": 128, "outputTokens": 63901}}}
+    r = ClaudeHarness.parse(json.dumps(line), "", 0, False, None)
+    assert r.tokens == {"input": 128, "output": 63901, "cache_read": 7203633, "cache_write": 157846}
+    assert r.model == "claude-opus-5-5"

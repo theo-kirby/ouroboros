@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timezone
 
 from ouroboros.harness.base import parse_reset_time
-from ouroboros.harness.codex import CodexHarness, rate_limits_reset
+from ouroboros.harness.codex import CodexHarness, model_from_rollout, rate_limits_reset
 from ouroboros.harness.pi import PiHarness
 
 
@@ -36,6 +36,24 @@ def test_codex_usage_limit_with_time():
     assert r.kind == "limit" and "Reconnecting" not in r.error
     at = r.reset_at()
     assert at is not None and (at.hour, at.minute) == (15, 45)
+
+
+def test_codex_tokens_keep_cache_reads_apart():
+    # recorded: cadex nt2 iteration 67, the actor's turn.completed
+    out = jl({"type": "thread.started", "thread_id": "t-3"},
+             {"type": "turn.completed", "usage": {"input_tokens": 1511960, "cached_input_tokens": 1443456,
+                                                  "cache_write_input_tokens": 0, "output_tokens": 7295,
+                                                  "reasoning_output_tokens": 944}})
+    r = CodexHarness.parse(out, "", 0, False, None)
+    assert r.tokens == {"input": 68504, "output": 7295, "cache_read": 1443456}
+
+
+def test_codex_model_comes_off_the_rollout(tmp_path):
+    path = tmp_path / "rollout-x.jsonl"
+    path.write_text(jl({"type": "session_meta", "payload": {"id": "x"}},
+                       {"type": "turn_context", "payload": {"cwd": "/r", "model": "gpt-6.1-sol", "effort": None}}))
+    assert model_from_rollout(path) == "gpt-6.1-sol"
+    assert model_from_rollout(None) is None and model_from_rollout(tmp_path / "none.jsonl") is None
 
 
 def test_codex_usage_limit_with_date():
@@ -94,6 +112,7 @@ def test_pi_success_sums_cost():
     r = PiHarness.parse(out, "", 0, False, None)
     assert r.ok and r.text == "Done. Next: more." and r.session_id == "u-1" and r.turns == 2
     assert abs(r.cost_usd - 0.005) < 1e-9
+    assert r.tokens == {"input": 20, "output": 10}
 
 
 def test_pi_error_exit_zero_is_still_an_error():

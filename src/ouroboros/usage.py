@@ -28,6 +28,26 @@ _SHORT = {"five_hour": "5h", "seven_day": "7d", "daily": "24h", "hourly": "1h"}
 # A window this long or longer is worth stopping a run over: it will not come back
 # this run. Shorter windows heal on their own, and the harness fallback covers them.
 STOP_WINDOW_MINUTES = 1440
+# A window whose reset time moves later by more than this has rolled over: a new
+# window began. Less is jitter in how the harness rounds the time.
+ROLLED_SECONDS = 600
+
+
+TOKEN_KINDS = ("input", "output", "cache_read", "cache_write")
+
+
+def token_counts(**counts) -> dict[str, int] | None:
+    """Token counts in one shape for every harness: input, output, cache_read, cache_write.
+
+    `input` is the fresh input only; a harness that counts its cache reads inside
+    its input total has them taken out before this. None when nothing was counted.
+    """
+    out = {}
+    for kind in TOKEN_KINDS:
+        v = counts.get(kind)
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0:
+            out[kind] = int(v)
+    return out or None
 
 
 def window_name(minutes: int | None) -> str:
@@ -209,11 +229,25 @@ class UsageLedger:
     def __init__(self) -> None:
         self.first: dict[str, UsageSnapshot] = {}
         self.latest: dict[str, UsageSnapshot] = {}
+        # What this run took of each window, as a fraction of one whole window. It
+        # sums the rises between readings and counts a new window from zero after a
+        # reset, so it keeps growing where the level itself drops back to nothing.
+        self.spent: dict[str, dict[str, float]] = {}
 
     def record(self, snapshot: UsageSnapshot | None) -> None:
         if not snapshot:
             return
         self.first.setdefault(snapshot.harness, snapshot)
+        prev = self.latest.get(snapshot.harness)
+        spent = self.spent.setdefault(snapshot.harness, {})
+        for name, w in snapshot.windows.items():
+            was = prev.windows.get(name) if prev else None
+            spent.setdefault(name, 0.0)
+            if was is None:
+                continue   # the first reading is where the run starts from
+            rolled = (w.resets_at is not None and was.resets_at is not None
+                      and w.resets_at - was.resets_at > ROLLED_SECONDS)
+            spent[name] += w.utilization if rolled else max(0.0, w.utilization - was.utilization)
         self.latest[snapshot.harness] = snapshot
 
     def __bool__(self) -> bool:
@@ -287,5 +321,7 @@ class UsageLedger:
             first = self.first.get(harness)
             if first is not None:
                 d["first_windows"] = {n: round(w.utilization, 4) for n, w in first.windows.items()}
+            if harness in self.spent:
+                d["run_spent"] = {n: round(v, 4) for n, v in self.spent[harness].items()}
             out[harness] = d
         return out

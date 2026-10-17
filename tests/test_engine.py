@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -382,3 +383,17 @@ def test_escalation_rotates_the_actor_to_its_fallback(repo):
     eng.run()
     assert board.is_blocked("first"), "the looping harness should have been rotated out"
     assert second.calls, "the fallback should have taken a turn"
+
+
+def test_status_carries_tokens_models_and_the_time_budget(repo):
+    def counted(cwd, prompt):
+        r = works("a")(cwd, prompt)
+        r.tokens, r.model = {"input": 10, "output": 4}, "opus"
+        return r
+    h = FakeHarness([counted, counted])
+    eng = make_engine(repo, h, stop=StopConfig(max_iterations=2, after="8h"))
+    eng.run()
+    status = json.loads((repo / ".ouroboros" / "runs" / "t" / "status.json").read_text())
+    assert status["tokens"] == {"fake": {"input": 20, "output": 8}}
+    assert status["models"] == {"fake": {"opus": ["actor"]}}
+    assert status["time_budget_s"] == 8 * 3600 and status["started_at"] == pytest.approx(eng.budget.started_at)

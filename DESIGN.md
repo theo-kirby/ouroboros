@@ -738,8 +738,19 @@ The delta is measured against the charter at the merge base.
   as a ring (actor → critic → scribe, the running stage lit, how long it has run
   from `stage_since` in status.json, and each stage's median time); the key
   figures (iteration, elapsed, criteria met, commits kept and reverted, last
-  verdict); usage, one row of 20 cells per rationing window that ramp from green
-  to red, with the rise this run and the reset time; the criteria (the gap claims,
+  verdict); the time budget (`stop.after` or `stop.until`, the sooner) as one
+  row of 20 cells that ramp from green to red, ticking in the browser; usage per
+  harness: the models it ran and for which roles, one row of cells per rationing
+  window and the tokens. A window's row is this run's own share of one whole
+  window, not the account's level (other use of the account fills that too): the
+  ledger sums the rises between readings and counts a new window from zero once
+  its reset time moves on, so a long run can pass 100%. Tokens are fresh input,
+  cache read, cache write and output, summed per harness from each call's result
+  (Claude's result line, Codex's `turn.completed`, Pi's messages; the model from
+  Claude's `modelUsage`, Codex's rollout `turn_context`, else the configured
+  one). Then a highlighted "Right now" block: the stage, and the critic's plain
+  `doing` for the iteration being worked on (its `did` and the next `doing` once
+  it has judged); the criteria (the gap claims,
   or the charter's boxes) and the open problems (the frontier), each the first
   three rows with the rest behind a "show N more" toggle; and the timeline:
   one column per iteration (stacked by stage time, the verdict under it, a fold
@@ -748,7 +759,9 @@ The delta is measured against the charter at the merge base.
   belongs to the iteration whose scribe step is the first at or after its time.
 - **The memory graph, drawn by Governor.** `view/graph.html` holds Governor's
   report embed (its hub renderer: the root in the centre, claims around it by
-  status, records on the rim) and the memory as Governor's `ReportGraph`, which
+  status, records on the rim; the only layout with a light palette, and only for
+  root, state and record nodes, so a legacy `plan` claim or an unknown kind is
+  drawn as a state claim) and the memory as Governor's `ReportGraph`, which
   `view.report_graph` builds from the snapshot either store gives (the same
   mapping as Governor's `toViewer`). The page frames it. The embed is vendored in
   `src/ouroboros/vendor/` (`scripts/vendor-governor-report.sh` refreshes it from a
@@ -776,10 +789,10 @@ external resources, fits a phone (no sideways page scroll; wide tables scroll in
 place) and works without JavaScript. With it, a small script polls `live.json`
 every 10 s while the tab is visible and swaps the page in place when its version
 changes, keeping open sections open, and ticks the clocks (stage timer, "updated
-N s ago", window resets). Past two minutes in a live state the page says it is
+N s ago", the time budget, window resets). Past two minutes in a live state the page says it is
 stale, which means the loop process is gone. A repo can replace the template with
 `.ouroboros/view/template.html`. Slots: `{{header}}`, `{{summary}}`, `{{loop}}`,
-`{{figures}}`, `{{usage}}`, `{{criteria}}`, `{{frontier}}`, `{{story}}`,
+`{{figures}}`, `{{time_budget}}`, `{{usage}}`, `{{now}}`, `{{criteria}}`, `{{frontier}}`, `{{story}}`,
 `{{progress}}`, `{{graph}}` (with `{{graph_version}}`), `{{logo}}`, `{{favicon}}`, plus the older `{{facts}}`,
 `{{stages}}`, `{{decisions}}`, `{{timeline}}` and the plain values `{{title}}`,
 `{{run}}`, `{{goal}}`, `{{mission}}`, `{{state}}`, `{{iteration}}`,

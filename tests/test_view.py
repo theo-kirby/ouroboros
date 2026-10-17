@@ -93,12 +93,71 @@ def test_render_writes_the_page_and_live_json(run_dir, repo, graph):
     assert not list((run_dir / "view").glob(".*tmp"))
 
 
-def test_usage_is_a_row_of_cells_per_window(run_dir, repo):
+def test_usage_bars_are_the_runs_own_share_of_each_window(run_dir, repo):
     view.render(run_dir, repo, goal_text=GOAL)
     html = page(run_dir)
-    assert html.count('<div class="gauge">') == 2
-    assert 'aria-valuenow="62"' in html and html.count('<i class="on"') == 12 + 4   # 62% and 20% of 20 cells
-    assert "+35 this run" in html and 'data-at="1800004000"' in html and "weekly window" in html
+    # no run_spent (an older status): the rise since the first reading, 62 - 27 = 35%;
+    # the weekly window has no first reading, so it has no row
+    assert html.count('<div class="gauge">') == 1
+    assert 'aria-valuenow="35"' in html and 'data-at="1800004000"' in html and "5-hour window" in html
+    assert 'aria-valuenow="62"' not in html, "the account's own level is not drawn"
+    status = json.loads((run_dir / "status.json").read_text())
+    status["usage"]["claude"]["run_spent"] = {"five_hour": 1.3, "seven_day": 0.05}
+    status["tokens"] = {"claude": {"input": 1200, "output": 640_000, "cache_read": 52_000_000}}
+    status["models"] = {"claude": {"claude-opus-5-5": ["actor", "critic"], "claude-sonnet-5": ["scribe"]}}
+    (run_dir / "status.json").write_text(json.dumps(status))
+    view.render(run_dir, repo, goal_text=GOAL)
+    html = page(run_dir)
+    assert 'aria-valuenow="130"' in html and "130<small>%</small>" in html and 'aria-valuenow="5"' in html
+    assert html.count('<i class="on"') == 20 + 1, "past a whole window every cell is lit"
+    assert "<code>claude-opus-5-5</code> <span class=\"quiet\">actor, critic</span>" in html
+    assert "52.6 M" in html and "640 k out" in html and 'class="t-cache_read"' in html
+
+
+def test_the_time_budget_is_a_row_of_cells(run_dir, repo):
+    status = json.loads((run_dir / "status.json").read_text())
+    view.render(run_dir, repo, goal_text=GOAL)
+    assert "no time limit set" in page(run_dir)
+    status.update(time_budget_s=4 * 3600, started_at=1_799_996_275.0)
+    (run_dir / "status.json").write_text(json.dumps(status))
+    view.render(run_dir, repo, goal_text=GOAL)
+    html = page(run_dir)
+    assert '<div class="gauge clock" data-start="1799996275" data-budget="14400">' in html
+    assert 'aria-label="time budget used"' in html and "1 h 02</span> elapsed" in html and "2 h 57</span> left" in html
+
+
+def test_right_now_says_what_the_stage_is_working_on(run_dir, repo):
+    view.render(run_dir, repo, goal_text=GOAL)   # the critic on 7; the last verdict is 6's, with no `doing`
+    html = page(run_dir)
+    assert '<section class="now"' in html and "The critic is checking the work · iteration 7" in html
+    with (run_dir / "critic.jsonl").open("a") as f:
+        f.write(json.dumps({"iteration": 7, "verdict": "continue", "did": "Made the **build** green.",
+                            "doing": "Writing <the> tests."}) + "\n")
+    status = json.loads((run_dir / "status.json").read_text())
+    status["state"] = "scribe"
+    (run_dir / "status.json").write_text(json.dumps(status))
+    view.render(run_dir, repo, goal_text=GOAL)
+    html = page(run_dir)
+    assert "The scribe is writing it down" in html and "Made the <strong>build</strong> green." in html
+    assert "Next: Writing &lt;the&gt; tests." in html
+    status.update(state="work", iteration=8)
+    (run_dir / "status.json").write_text(json.dumps(status))
+    view.render(run_dir, repo, goal_text=GOAL)
+    assert '<p class="now-t">Writing &lt;the&gt; tests.</p>' in page(run_dir)
+
+
+def test_a_legacy_plan_node_is_drawn_as_a_claim(graph):
+    """Governor's embed has a light palette only in its hub layout, which any `plan` node turns off."""
+    nodes = dict(graph.nodes)
+    nodes["p1"] = {"id": "p1", "kind": "plan", "title": "Old plan", "parents": [graph.root], "status": "open"}
+    nodes["o1"] = {"id": "o1", "kind": "mystery", "title": "?", "parents": [graph.root]}
+    data = view.report_graph(view.Graph({"root": graph.root, "nodes": nodes, "edges": graph.edges}))
+    kinds = {t["name"] for n in data["nodes"] for t in n["tags"] if t["id"].startswith("graph:")}
+    assert kinds == {"root", "state", "record"}
+
+
+def test_the_findings_span_the_column():
+    assert "76ch" not in (Path(view.__file__).parent / view.TEMPLATE).read_text()
 
 
 def test_the_timeline_has_a_column_and_a_row_per_iteration(run_dir, repo, graph):

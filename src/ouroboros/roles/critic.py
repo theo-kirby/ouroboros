@@ -262,11 +262,13 @@ class AgentCritic:
         self.name = name or f"critic:{harness.name}"
         self.last_cost: float = 0.0
         self.last_usage = None
+        self.last_results: list[Result] = []   # every call of the last judge, for the run's token count
 
     def judge(self, s: Signals) -> Verdict:
         prompt = build_critic_prompt(goal_text=self.goal_text, s=s)
         self.last_cost = 0.0
         self.last_usage = None
+        self.last_results = []
         for attempt in range(self.retries + 1):
             try:
                 result: Result = self.harness.run(
@@ -278,6 +280,7 @@ class AgentCritic:
             except Exception as exc:
                 self.log(f"critic attempt {attempt}: harness raised {exc!r}")
                 continue
+            self.last_results.append(result)
             self.last_cost += result.cost_usd or 0.0
             self.last_usage = result.usage or self.last_usage
             if not result.ok and not result.text.strip():

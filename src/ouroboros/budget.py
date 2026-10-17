@@ -21,6 +21,9 @@ class BudgetClock:
         # rather than a subscription -- is reporting money anyone is actually billed.
         self.billed: dict[str, float] = {}
         self.usage = UsageLedger()
+        # Per harness: the tokens this run used, and each model with the roles it ran.
+        self.tokens: dict[str, dict[str, int]] = {}
+        self.models: dict[str, dict[str, list[str]]] = {}
         self.iterations = 0
         self.done_streak = 0
         self.stuck_streak = 0
@@ -44,6 +47,31 @@ class BudgetClock:
             self.stuck_streak += 1
         elif stuck is False:
             self.stuck_streak = 0
+
+    def count(self, result, role: str, harness: str | None = None) -> None:
+        """Add one harness call's tokens and model to the run's totals. Never raises."""
+        try:
+            harness = (result.extra or {}).get("harness") or harness
+            if not harness:
+                return
+            for kind, n in (result.tokens or {}).items():
+                into = self.tokens.setdefault(harness, {})
+                into[kind] = into.get(kind, 0) + int(n)
+            if result.model:
+                roles = self.models.setdefault(harness, {}).setdefault(str(result.model), [])
+                if role not in roles:
+                    roles.append(role)
+        except Exception:   # a meter must not stop the loop
+            pass
+
+    @property
+    def time_budget(self) -> float | None:
+        """Seconds the run may take from its start, from `stop.after` or `stop.until`; the sooner wins."""
+        s = self.stop
+        out = [s.after_seconds] if s.after_seconds is not None else []
+        if s.until_dt is not None:
+            out.append(s.until_dt.timestamp() - self.started_at)
+        return max(0.0, min(out)) if out else None
 
     @property
     def money(self) -> dict[str, float]:

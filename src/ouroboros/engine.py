@@ -222,6 +222,8 @@ class Engine:
         critic_cost = float(getattr(self.critic, "last_cost", 0.0) or 0.0)
         self.budget.add(cost=critic_cost, usage=getattr(self.critic, "last_usage", None),
                         harness=_harness_of(self.critic))
+        for res in getattr(self.critic, "last_results", None) or []:
+            self.budget.count(res, "critic", _harness_of(self.critic))
         self.recorder.decision(iteration=n, verdict=verdict.verdict, reason=verdict.reason, reply=verdict.reply,
                                did=verdict.did, doing=verdict.doing, fix_first=verdict.fix_first, source=verdict.source)
         self.recorder.step(iteration=n, step="critique", verdict=verdict.verdict, source=verdict.source,
@@ -336,6 +338,7 @@ class Engine:
             with role_env("scribe"), self._heartbeat():
                 res = self.scribe.run(prompt, n)
             self.budget.add(cost=res.cost_usd, usage=res.usage, harness=res.extra.get("harness"))
+            self.budget.count(res, "scribe", _harness_of(self.scribe))
         recorded = False
         try:
             recorded = self.memory.verify_recorded(before)
@@ -527,6 +530,7 @@ class Engine:
             except Exception as exc:
                 result = Result(exit_code=-1, error=f"harness raised {exc!r}")
             self.budget.usage.record(result.usage)
+            self.budget.count(result, "actor", self.harness.name)
             self.recorder.step(iteration=n, step="actor", attempt=attempt, exit=result.exit_code, timed_out=result.timed_out, error=(result.error or None) and result.error[:200], session=result.session_id, turns=result.turns)
             if result.ok or result.timed_out:
                 self.recorder.clear_needs_human()
@@ -599,6 +603,13 @@ class Engine:
         if self.stage is None or self.stage[0] != state:
             self.stage = (state, time.time())
         fields["stage_since"] = self.stage[1]
+        fields["started_at"] = self.budget.started_at
+        if self.budget.time_budget is not None:
+            fields["time_budget_s"] = int(self.budget.time_budget)
+        if self.budget.tokens:
+            fields["tokens"] = self.budget.tokens
+        if self.budget.models:
+            fields["models"] = self.budget.models
         if self.budget.usage:
             fields["usage"] = self.budget.usage.to_dict()
             fields["usage_lines"] = self.budget.usage.lines()

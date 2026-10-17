@@ -7,7 +7,7 @@ import shutil
 from pathlib import Path
 
 from . import backend_headless as backend
-from ..usage import from_claude_stream
+from ..usage import from_claude_stream, token_counts
 from .base import Result
 
 
@@ -59,7 +59,9 @@ class ClaudeHarness:
         cmd = self.build_cmd(resume=resume, model=model, system_append=system_append,
                              tools=tools, json_schema=json_schema, max_turns=max_turns)
         proc = backend.run(cmd, cwd=cwd, timeout=timeout, stdin_text=prompt, log_path=log_path)
-        return self.parse(proc.stdout, proc.stderr, proc.exit_code, proc.timed_out, log_path)
+        result = self.parse(proc.stdout, proc.stderr, proc.exit_code, proc.timed_out, log_path)
+        result.model = result.model or model
+        return result
 
     @staticmethod
     def parse(stdout: str, stderr: str, exit_code: int, timed_out: bool, raw_path: Path | None) -> Result:
@@ -92,6 +94,8 @@ class ClaudeHarness:
                 timed_out=timed_out,
                 error=(stderr.strip() or text or "claude reported is_error") if (is_error or exit_code != 0) else None,
                 usage=from_claude_stream(stdout),
+                tokens=_tokens(data.get("usage")),
+                model=_model(data.get("modelUsage")),
                 extra={"subtype": data.get("subtype")},
             )
         return Result(
@@ -102,3 +106,22 @@ class ClaudeHarness:
             usage=from_claude_stream(stdout),
             error=(stderr.strip() or "no JSON output") if (exit_code != 0 or timed_out or not stdout.strip()) else None,
         )
+
+
+def _tokens(usage) -> dict[str, int] | None:
+    """The result line's `usage`. Claude counts cache reads apart from `input_tokens`."""
+    if not isinstance(usage, dict):
+        return None
+    return token_counts(input=usage.get("input_tokens"), output=usage.get("output_tokens"),
+                        cache_read=usage.get("cache_read_input_tokens"),
+                        cache_write=usage.get("cache_creation_input_tokens"))
+
+
+def _model(model_usage) -> str | None:
+    """The model that wrote the most, from the result line's `modelUsage` (a helper model can appear too)."""
+    if not isinstance(model_usage, dict) or not model_usage:
+        return None
+    def out(item):
+        v = item[1].get("outputTokens") if isinstance(item[1], dict) else None
+        return v if isinstance(v, (int, float)) else 0
+    return str(max(model_usage.items(), key=out)[0])

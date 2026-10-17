@@ -93,6 +93,23 @@ dt{font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;color:var(--mu
 .gv small{font-size:.7em;color:var(--mute)}
 .gv.wide{grid-column:2/-1;text-align:left}
 .gs{grid-column:2/-1;font-size:.74rem;color:var(--mute);margin-top:-4px}
+.agent{margin:0 0 10px}
+.who{margin:4px 0 2px;font:.86rem var(--sans)}
+.who code{font-size:.8rem}.who .quiet{font-size:.76rem}
+.agent .gl{font-weight:400;color:var(--mute)}
+.tbar{display:flex;height:8px;background:var(--faint);overflow:hidden;border-radius:1px}
+.tbar span{display:block;height:100%}
+.t-input{background:var(--actor)}.t-cache_read{background:var(--rule)}.t-cache_write{background:var(--critic)}.t-output{background:var(--ok)}
+.tok .legend{gap:2px 10px;font-size:.72rem}.tok .legend i{width:8px;height:8px}
+
+/* right now: the one highlighted block */
+.now{margin:22px 0 0;padding:12px 16px 12px 14px;background:var(--acc-bg);border-left:3px solid var(--acc)}
+.now p{margin:0}
+.now-k{font:600 .7rem var(--sans);letter-spacing:.12em;text-transform:uppercase;color:var(--acc);display:flex;align-items:center;gap:8px}
+.now-k .live{width:8px;height:8px;border-radius:50%;background:var(--acc);animation:blink 1.6s ease-in-out infinite}
+.now-t{font-size:1.2rem;line-height:1.45;margin-top:4px!important}
+.now-s{font:.86rem/1.45 var(--sans);color:var(--mute);margin-top:4px!important}
+@keyframes blink{50%{opacity:.25}}
 
 /* sections: numbered, ruled, not boxed */
 main{counter-reset:sec}
@@ -137,7 +154,6 @@ letter-spacing:.06em;text-transform:uppercase;line-height:1.6;white-space:nowrap
 .story>h2:first-child{margin-bottom:12px}
 .story section>h2,.story>h3,.story section>h3{font-size:1.22rem;font-weight:600;margin:1.4em 0 .35em}
 .story section:first-of-type>h2:first-child,.story section:first-of-type>h3:first-child{margin-top:.2em}
-.story p,.story li{max-width:76ch}
 .story figure{margin:0 0 14px}
 .story img,.story video{max-width:100%;height:auto}
 .story svg{width:100%;height:auto;max-height:520px;color:var(--acc)}
@@ -187,7 +203,7 @@ iframe.graph{display:block;width:100%;height:min(560px,75vh);border:1px solid va
 .legend .g-record{background:hsl(212 16% 55%);border-radius:50%;transform:scale(.7)}
 footer{margin-top:40px;padding-top:8px;border-top:1px solid var(--rule);color:var(--mute);font:.76rem var(--sans)}
 @media (max-width:640px){body{font-size:16px}.logo{width:44px;height:44px}.kick{font-size:.82rem}iframe.graph{height:380px}.figs{grid-template-columns:repeat(3,minmax(0,1fr))}.its td.what,.its td.next{min-width:0}.lede p{font-size:1.05rem}.its .next,.its .rec{display:none}
-.gauge{grid-template-columns:1fr auto}.cells{grid-column:1/-1;order:3}.gs{grid-column:1/-1;order:4}.fig dd{font-size:1.5rem}}
+.gauge{grid-template-columns:1fr auto}.cells,.tbar{grid-column:1/-1;order:3}.gs{grid-column:1/-1;order:4;margin-top:2px}.fig dd{font-size:1.5rem}}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.ring .mover{display:none}}
 </style>
 </head>
@@ -199,8 +215,9 @@ footer{margin-top:40px;padding-top:8px;border-top:1px solid var(--rule);color:va
 <figure class="loopfig">{{loop}}
 <figcaption><b>Fig. 1. The loop.</b> In each iteration, the <b>actor</b> makes one change, the <b>critic</b> keeps or reverts it,
 and the <b>scribe</b> writes down what happened. The highlighted stage is the one running now.</figcaption></figure>
-<div class="side">{{figures}}<h3 class="lab">Usage</h3>{{usage}}</div>
+<div class="side">{{figures}}<h3 class="lab">Time budget</h3>{{time_budget}}<h3 class="lab">Usage this run</h3>{{usage}}</div>
 </div>
+<section class="now" aria-live="polite" aria-label="Right now">{{now}}</section>
 <div class="two">
 <section class="sec" aria-labelledby="h-criteria"><h2 id="h-criteria">Progress toward done</h2>{{criteria}}</section>
 <section class="sec" aria-labelledby="h-frontier"><h2 id="h-frontier">Open problems</h2>{{frontier}}</section>
@@ -224,6 +241,12 @@ and the <b>scribe</b> writes down what happened. The highlighted stage is the on
     var h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
     return (h ? h + ":" + (m < 10 ? "0" : "") : "") + m + ":" + (x < 10 ? "0" : "") + x;
   }
+  function span(s) {   // as view.py's _span: '45 s', '4 min', '1 h 05'
+    if (s < 60) return s + " s";
+    if (s < 3600) return Math.floor(s / 60) + " min";
+    var m = Math.floor(s % 3600 / 60);
+    return Math.floor(s / 3600) + " h " + (m < 10 ? "0" : "") + m;
+  }
   function tick() {
     var now = Date.now() / 1000;
     var el = document.getElementById("ago");
@@ -237,6 +260,20 @@ and the <b>scribe</b> writes down what happened. The highlighted stage is the on
     var st = document.getElementById("stage-for");
     var since = st && +st.getAttribute("data-since");
     if (since) st.textContent = "for " + clock(Math.max(0, Math.round(now - since)));
+    document.querySelectorAll(".clock[data-start]").forEach(function (g) {
+      var used = Math.max(0, Math.round(now - +g.getAttribute("data-start")));
+      var budget = +g.getAttribute("data-budget") || 0;
+      var put = function (sel, text) { var x = g.querySelector(sel); if (x) x.textContent = text; };
+      put(".el", span(used));
+      if (!budget) return;
+      put(".left", span(Math.max(0, budget - used)));
+      put(".pc", Math.min(100, Math.round(100 * used / budget)));
+      var cells = g.querySelectorAll(".cells i"), lit = Math.round(Math.min(1, used / budget) * cells.length);
+      cells.forEach(function (c, k) {
+        c.className = k < lit ? "on" : "";
+        c.style.setProperty("--h", k < lit ? Math.round(130 - 130 * k / (cells.length - 1)) : "");
+      });
+    });
     document.querySelectorAll(".reset[data-at]").forEach(function (r) {
       var left = Math.round(+r.getAttribute("data-at") - now);
       r.textContent = left > 0 ? "in " + fmt(left) : "now";

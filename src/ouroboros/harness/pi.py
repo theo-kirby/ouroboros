@@ -19,6 +19,7 @@ import uuid
 from pathlib import Path
 
 from . import backend_headless as backend
+from ..usage import token_counts
 from .base import Result
 
 READONLY_TOOLS = "read,grep,find,ls"
@@ -69,6 +70,7 @@ class PiHarness:
         proc = backend.run(cmd, cwd=cwd, timeout=timeout, stdin_text="", log_path=log_path)
         result = self.parse(proc.stdout, proc.stderr, proc.exit_code, proc.timed_out, log_path)
         result.session_id = result.session_id or session_id
+        result.model = result.model or model
         return result
 
     @staticmethod
@@ -79,6 +81,7 @@ class PiHarness:
         cost = 0.0
         saw_cost = False
         turns = 0
+        counts = {"input": 0, "output": 0}
         for line in stdout.splitlines():
             line = line.strip()
             if not line.startswith("{"):
@@ -98,6 +101,9 @@ class PiHarness:
                 parts = [c.get("text", "") for c in msg.get("content") or [] if isinstance(c, dict) and c.get("type") == "text"]
                 if any(parts):
                     texts.append("".join(parts))
+                for kind in counts:
+                    v = (msg.get("usage") or {}).get(kind)
+                    counts[kind] += v if isinstance(v, (int, float)) else 0
                 total = ((msg.get("usage") or {}).get("cost") or {}).get("total")
                 if isinstance(total, (int, float)):
                     cost += total
@@ -123,6 +129,7 @@ class PiHarness:
             extra["kind"] = "auth"
         return Result(
             text=text, session_id=session_id, cost_usd=cost if saw_cost else None, turns=turns or None,
+            tokens=token_counts(**counts),
             exit_code=exit_code if (exit_code != 0 or not error) else 1,
             raw_path=raw_path, timed_out=timed_out, error=error, extra=extra,
         )

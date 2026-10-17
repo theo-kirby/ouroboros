@@ -217,3 +217,34 @@ def test_short_window_names():
     assert short_name("five_hour") == "5h"
     assert short_name("daily") == "24h"
     assert short_name("weird_window") == "weird_window"
+
+
+def test_the_run_share_of_a_window_survives_its_reset():
+    led = UsageLedger()
+    five = lambda u, at: UsageSnapshot("claude", {"five_hour": Window("five_hour", u, resets_at=at, minutes=300)})
+    led.record(five(0.30, 1_000_000))    # where the run starts: not counted
+    led.record(five(0.50, 1_000_000))    # +20
+    led.record(five(0.45, 1_000_030))    # a drop in the same window is not a negative spend
+    led.record(five(0.10, 1_018_000))    # the window rolled: the new 10% is this run's
+    assert abs(led.spent["claude"]["five_hour"] - 0.30) < 1e-9
+    assert led.to_dict()["claude"]["run_spent"] == {"five_hour": 0.3}
+
+
+def test_the_budget_counts_tokens_and_models_per_harness():
+    from ouroboros.harness.base import Result
+    b = BudgetClock(StopConfig())
+    b.count(Result(tokens={"input": 10, "output": 5}, model="opus", extra={"harness": "claude"}), "actor")
+    b.count(Result(tokens={"input": 1, "cache_read": 100}, model="opus", extra={"harness": "claude"}), "critic")
+    b.count(Result(tokens={"output": 7}, model="gpt"), "actor", "codex")
+    b.count(Result(), "scribe")   # no harness, nothing to count
+    assert b.tokens == {"claude": {"input": 11, "output": 5, "cache_read": 100}, "codex": {"output": 7}}
+    assert b.models == {"claude": {"opus": ["actor", "critic"]}, "codex": {"gpt": ["actor"]}}
+
+
+def test_the_time_budget_is_the_sooner_of_after_and_until():
+    from datetime import datetime
+    t = [1_800_000_000.0]
+    assert BudgetClock(StopConfig(), now=lambda: t[0]).time_budget is None
+    assert BudgetClock(StopConfig(after="8h"), now=lambda: t[0]).time_budget == 8 * 3600
+    until = datetime.fromtimestamp(t[0] + 3600).isoformat()
+    assert BudgetClock(StopConfig(after="8h", until=until), now=lambda: t[0]).time_budget == 3600

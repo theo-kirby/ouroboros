@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 
 from . import backend_headless as backend
-from ..usage import UsageSnapshot, find_codex_rollout, from_codex_rollout
+from ..usage import UsageSnapshot, find_codex_rollout, from_codex_rollout, token_counts
 from .base import Result
 
 _LIMIT = re.compile(
@@ -113,6 +113,7 @@ class CodexHarness:
                 schema_path.unlink(missing_ok=True)
         result = self.parse(proc.stdout, proc.stderr, proc.exit_code, proc.timed_out, log_path)
         result.usage = self.usage_for(result.session_id)
+        result.model = model_from_rollout(find_codex_rollout(self.home, result.session_id or "")) or model
         if result.kind == "limit" and result.reset_at() is None:
             at = self.limit_reset_from_rollouts()
             if at:
@@ -168,8 +169,12 @@ class CodexHarness:
                 extra["kind"] = "auth"
             elif _TRANSIENT.search(blob):
                 extra["kind"] = "transient"
+        # Codex counts its cache reads inside input_tokens; the shared shape keeps them apart.
+        cached = usage.get("cached_input_tokens") or 0
+        tokens = token_counts(input=(usage.get("input_tokens") or 0) - cached, output=usage.get("output_tokens"),
+                              cache_read=cached, cache_write=usage.get("cache_write_input_tokens"))
         return Result(
-            text=text, session_id=session_id, cost_usd=None, turns=turns or None,
+            text=text, session_id=session_id, cost_usd=None, turns=turns or None, tokens=tokens,
             exit_code=exit_code if (exit_code != 0 or not error) else 1,
             raw_path=raw_path, timed_out=timed_out, error=error, extra=extra,
         )
@@ -223,4 +228,24 @@ def rate_limits_reset(limits: dict, *, now: float) -> float | None:
     primary = limits.get("primary") or {}
     if (primary.get("resets_at") or 0) > now:   # the 5-hour window is the best guess when nobody is at 100%
         return float(primary["resets_at"])
+    return None
+
+
+def model_from_rollout(path: Path | None) -> str | None:
+    """The model a Codex thread ran on: the last `turn_context` in its rollout log."""
+    if path is None:
+        return None
+    try:
+        lines = path.read_text(errors="ignore").splitlines()
+    except OSError:
+        return None
+    for line in reversed(lines):
+        if '"turn_context"' not in line:
+            continue
+        try:
+            payload = (json.loads(line) or {}).get("payload") or {}
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict) and payload.get("model"):
+            return str(payload["model"])
     return None

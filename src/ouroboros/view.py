@@ -441,45 +441,159 @@ def _stages(status: dict) -> str:
 USAGE_CELLS = 20
 WINDOW_WORDS = {"five_hour": "5-hour window", "seven_day": "weekly window", "seven_day_opus": "weekly, Opus",
                 "seven_day_sonnet": "weekly, Sonnet", "daily": "daily window", "hourly": "hourly window"}
+TOKEN_WORDS = (("input", "in"), ("cache_read", "cache read"), ("cache_write", "cache write"), ("output", "out"))
+
+
+def _cells(fraction: float, label: str) -> str:
+    """A row of USAGE_CELLS cells, lit from the left in green to red; past 1.0 every cell is lit."""
+    lit = round(max(0.0, min(fraction, 1.0)) * USAGE_CELLS)
+    cells = "".join(
+        f'<i class="on" style="--h:{round(130 - 130 * k / (USAGE_CELLS - 1))}"></i>' if k < lit else "<i></i>"
+        for k in range(USAGE_CELLS))
+    return (f'<span class="cells" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{round(100 * fraction)}"'
+            f' aria-label="{_e(label)}">{cells}</span>')
+
+
+def _count(n: int) -> str:
+    """12345678 -> '12.3 M'."""
+    for size, unit in ((1e9, "B"), (1e6, "M"), (1e3, "k")):
+        if n >= size:
+            return f"{n / size:.1f}".rstrip("0").rstrip(".") + f" {unit}"
+    return str(n)
+
+
+def _tokens(tokens: dict) -> str:
+    """The run's tokens on one harness: the total, and a thin bar of what kind they were."""
+    counts = [(k, w, _int(tokens.get(k), 0) or 0) for k, w in TOKEN_WORDS]
+    total = sum(n for _, _, n in counts)
+    if not total:
+        return ""
+    bar = "".join(f'<span class="t-{k}" style="width:{100 * n / total:.2f}%" title="{_e(w)}: {n:,}"></span>'
+                  for k, w, n in counts if n)
+    words = "".join(f'<span><i class="t-{k}"></i>{_e(_count(n))} {_e(w)}</span>' for k, w, n in counts if n)
+    return (f'<div class="gauge tok"><span class="gl">Tokens</span>'
+            f'<span class="tbar" role="img" aria-label="{total:,} tokens">{bar}</span>'
+            f'<span class="gv num">{_e(_count(total))}</span><span class="gs legend">{words}</span></div>')
+
+
+def _models(models: dict) -> str:
+    """'claude-opus-5-5 (actor, critic) · claude-sonnet-5 (scribe)'."""
+    out = []
+    for name, roles in models.items():
+        roles = [str(r) for r in roles] if isinstance(roles, list) else []
+        out.append(f'<code>{_e(name)}</code>' + (f' <span class="quiet">{_e(", ".join(roles))}</span>' if roles else ""))
+    return " · ".join(out)
 
 
 def _usage(status: dict) -> str:
-    """Each rationing window as a row of cells that ramp from green to red, Grafana style."""
-    rows = []
+    """Per harness: its models, what this run took of each rationing window, and its tokens.
+
+    A bar is the run's own share of one whole window (the account's level is not shown:
+    other use of the account fills it too). The share sums the rises between readings and
+    starts again from zero when a window resets, so it can pass 100% on a long run.
+    """
     usage = status.get("usage") if isinstance(status.get("usage"), dict) else {}
-    for harness, d in sorted(usage.items()):
-        if not isinstance(d, dict):
-            continue
+    tokens = status.get("tokens") if isinstance(status.get("tokens"), dict) else {}
+    models = status.get("models") if isinstance(status.get("models"), dict) else {}
+    money = status.get("money") if isinstance(status.get("money"), dict) else {}
+    blocks = []
+    for harness in sorted(set(usage) | set(tokens) | set(models) | {h for h, a in money.items() if _float(a)}):
+        d = usage.get(harness) if isinstance(usage.get(harness), dict) else {}
+        rows = []
         first = d.get("first_windows") or {}
+        spent = d.get("run_spent") or {}
         wins = [(n, w) for n, w in (d.get("windows") or {}).items() if isinstance(w, dict)]
         for name, w in sorted(wins, key=lambda kv: -(_int(kv[1].get("minutes"), 0) or 0)):
-            u = _float(w.get("utilization"))
-            if u is None:
+            u, was = _float(w.get("utilization")), _float(first.get(name))
+            took = _float(spent.get(name))
+            if took is None:   # a status from before run_spent: the rise since the first reading
+                took = max(0.0, u - was) if u is not None and was is not None else None
+            if took is None:
                 continue
-            u = max(0.0, min(u, 1.0))
-            lit = round(u * USAGE_CELLS)
-            cells = "".join(
-                f'<i class="on" style="--h:{round(130 - 130 * k / (USAGE_CELLS - 1))}"></i>' if k < lit else "<i></i>"
-                for k in range(USAGE_CELLS))
-            was = _float(first.get(name))
-            rose = f"+{round(100 * (u - was))} this run" if was is not None and u - was >= 0.005 else ""
             reset = _float(w.get("resets_at"))
-            sub = " · ".join(x for x in (
-                rose, f'resets <span class="reset" data-at="{reset:.0f}"></span>' if reset else "") if x)
-            rows.append(f'<div class="gauge"><span class="gl">{_e(harness)} <small>{_e(WINDOW_WORDS.get(name, name.replace("_", " ")))}</small></span>'
-                        f'<span class="cells" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{round(100 * u)}"'
-                        f' aria-label="{_e(harness)} {_e(name)} used">{cells}</span>'
-                        f'<span class="gv num">{round(100 * u)}<small>%</small></span>'
-                        + (f'<span class="gs">{sub}</span>' if sub else "") + "</div>")
-    money = status.get("money") if isinstance(status.get("money"), dict) else {}
-    for harness, amount in sorted(money.items()):
-        if harness not in usage and _float(amount):
-            rows.append(f'<div class="gauge"><span class="gl">{_e(harness)} <small>API, billed per call</small></span>'
-                        f'<span class="gv num wide">${_float(amount):.2f}</span></div>')
-    if not rows:
+            word = WINDOW_WORDS.get(name, name.replace("_", " "))
+            rows.append(f'<div class="gauge"><span class="gl">{_e(word)}</span>'
+                        + _cells(took, f"{harness} {word}: used this run")
+                        + f'<span class="gv num">{round(100 * took)}<small>%</small></span>'
+                        + (f'<span class="gs">resets <span class="reset" data-at="{reset:.0f}"></span></span>' if reset else "")
+                        + "</div>")
+        if harness not in usage and _float(money.get(harness)):
+            rows.append(f'<div class="gauge"><span class="gl">API <small>billed per call</small></span>'
+                        f'<span class="gv num wide">${_float(money[harness]):.2f}</span></div>')
+        if isinstance(tokens.get(harness), dict):
+            rows.append(_tokens(tokens[harness]))
+        if not rows:
+            continue
+        m = models.get(harness) if isinstance(models.get(harness), dict) else {}
+        blocks.append(f'<div class="agent"><p class="who"><strong>{_e(harness)}</strong>'
+                      + (f" {_models(m)}" if m else "") + "</p>" + "".join(rows) + "</div>")
+    if not blocks:
         text = status.get("usage_compact")
         return f'<p class="quiet">{_e(text)}</p>' if text else '<p class="quiet">No usage reading yet.</p>'
-    return "".join(rows)
+    return "".join(blocks)
+
+
+def _time_budget(status: dict) -> str:
+    """How much of the run's time budget has gone, as the same row of cells. The page's script keeps it ticking."""
+    elapsed = _float(status.get("elapsed_s"))
+    budget = _float(status.get("time_budget_s"))
+    if elapsed is None:
+        return ""
+    state = str(status.get("state") or "")
+    start = _float(status.get("started_at"))
+    live = state in LIVE_STATES and start is not None
+    tick = f' data-start="{start:.0f}"' if live else ""
+    if not budget:
+        return (f'<div class="gauge clock"{tick}><span class="gl">Elapsed <small>no time limit set</small></span>'
+                f'<span class="gv num wide"><span class="el">{_e(_span(elapsed))}</span></span></div>')
+    f = elapsed / budget
+    left = max(0.0, budget - elapsed)
+    return (f'<div class="gauge clock"{tick} data-budget="{budget:.0f}"><span class="gl">Elapsed <small>of {_e(_span(budget))}</small></span>'
+            + _cells(f, "time budget used")
+            + f'<span class="gv num"><span class="pc">{round(100 * min(f, 1.0))}</span><small>%</small></span>'
+            f'<span class="gs"><span class="el">{_e(_span(elapsed))}</span> elapsed · <span class="left">{_e(_span(left))}</span> left</span></div>')
+
+
+NOW_WORDS = {"work": "The actor is doing the work", "critique": "The critic is checking the work",
+             "scribe": "The scribe is writing it down", "idle": "Between iterations", "refreshed": "Between iterations",
+             "starting": "Starting up", "backoff": "Waiting", "stopped": "Stopped", "killed": "Stopped"}
+
+
+def _now(status: dict, decisions: list[dict], goal_text: str) -> str:
+    """What the run is doing now, in one plain sentence: the critic's `doing` for this iteration, framed by the stage.
+
+    The critic writes `doing` (the unit the next iteration starts) and `did` (what one just
+    finished) for a person watching, so they are the sentence. While the actor or the
+    critic works on iteration n, the last verdict is n-1's and its `doing` is the work;
+    once the critic has judged n, its `did` is what the scribe writes down.
+    """
+    state = str(status.get("state") or "")
+    n = _int(status.get("iteration"), 0) or 0
+    last = decisions[-1] if decisions else {}
+    judged = _int(last.get("iteration")) == n
+    doing, did = str(last.get("doing") or ""), str(last.get("did") or "")
+    main, sub = "", ""
+    if state in ("work", "critique") and not judged:
+        main = doing or ("Reading the charter and the memory, to make a first change." if n <= 1 else "")
+    elif state == "backoff":
+        main = f"For {_duration(status.get('seconds'))}: {status.get('why') or 'a harness asked the run to wait'}."
+    elif state in ("stopped", "killed"):
+        main = str(status.get("stop_reason") or "The run was stopped.")
+        sub = f"Last: {did}" if did else ""
+    elif state == "starting":
+        main = "Reading the charter and the memory, to make a first change."
+    else:   # the scribe, or between iterations, after the verdict on n
+        main = did or doing
+        sub = f"Next: {doing}" if did and doing else ""
+    if not main:
+        main = charter.mission(goal_text or "").strip() or "–"
+    live = state in LIVE_STATES and state not in ("idle", "refreshed")
+    kicker = NOW_WORDS.get(state, state or "Unknown")
+    if state in dict(STAGES) and n:
+        kicker += f" · iteration {n}"
+    return (f'<p class="now-k">{"<i class=\"live\"></i>" if live else ""}Right now · {_e(kicker)}</p>'
+            f'<p class="now-t">{_md(_clip(main, 400))}</p>'
+            + (f'<p class="now-s">{_md(_clip(sub, 300))}</p>' if sub else ""))
 
 
 def _criteria_count(graph: Graph | None, goal_text: str) -> tuple[int, int]:
@@ -722,7 +836,7 @@ def _progress(its: list[dict], status: dict) -> str:
 GRAPH_PAGE = "graph.html"
 GRAPH_MAX_NODES, GRAPH_MAX_EDGES, GRAPH_MAX_BYTES = 5000, 20000, 1_000_000
 _HEAD = re.compile(r"^sha256:[a-f0-9]{64}$")
-_GRAPH_KINDS = ("root", "state", "record", "plan")
+_GRAPH_KINDS = ("root", "state", "record")
 _GRAPH_STATUSES = ("open", "working", "broken", "blocked", "superseded")
 
 
@@ -746,7 +860,10 @@ def report_graph(graph: Graph, keep: set[str] | None = None) -> dict | None:
     for nid, n in graph.nodes.items():
         if nid not in ids:
             continue
-        kind = n.get("kind") if n.get("kind") in _GRAPH_KINDS else "other"
+        # Governor's embed draws its hub (the layout with a light palette) only for a graph of
+        # root, state and record nodes. A legacy plan claim, or a kind it does not know, is
+        # drawn as a state claim, so one old node cannot turn the whole figure dark.
+        kind = "root" if nid == graph.root else n.get("kind") if n.get("kind") in _GRAPH_KINDS else "state"
         parents = [p for p in (n.get("parents") or []) if p in ids]
         tags = [{"id": f"graph:{kind}", "name": kind}]
         if n.get("status") in _GRAPH_STATUSES:
@@ -954,6 +1071,8 @@ def render(run_dir: Path, repo: Path, *, goal_text: str, graph=None, now: float 
             "figures": part(_figures, status, steps, graph, goal_text or ""),
             "loop": part(_loop, status, its),
             "usage": part(_usage, status),
+            "time_budget": part(_time_budget, status),
+            "now": part(_now, status, decisions, goal_text or ""),
             "progress": part(_progress, its, status),
             "graph": part(_graph, graph, graph_version, graph_omitted),
             "graph_version": _e(graph_version or ""),

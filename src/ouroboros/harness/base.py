@@ -46,6 +46,8 @@ class Result:
     timed_out: bool = False
     error: str | None = None
     usage: UsageSnapshot | None = None   # subscription windows, where the harness reports them
+    tokens: dict[str, int] | None = None   # input, output, cache_read, cache_write: what this call used
+    model: str | None = None              # the model that answered, where the harness says
     extra: dict = field(default_factory=dict)
 
     @property
