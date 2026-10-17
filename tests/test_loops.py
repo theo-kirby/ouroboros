@@ -125,7 +125,7 @@ def test_the_reply_names_the_loop_and_grows_with_the_step():
 # -- what the critic is told ------------------------------------------------
 
 def test_the_rules_critic_returns_looping_when_a_signal_has_fired():
-    s = Signals("all good", changed=True, recorded=True, no_change_streak=0, error_streak=0,
+    s = Signals("all good", changed=True, no_change_streak=0, error_streak=0,
                 loop_fired="8 iterations in a row changed only bookkeeping")
     v = RulesCritic().judge(s)
     assert v.verdict == "looping"
@@ -134,7 +134,7 @@ def test_the_rules_critic_returns_looping_when_a_signal_has_fired():
 
 def test_nothing_changing_still_reads_as_stuck_not_looping():
     """`stuck` is no diff at all; `looping` is diffs that move nothing. Keep them apart."""
-    s = Signals("", changed=False, recorded=True, no_change_streak=5, error_streak=0,
+    s = Signals("", changed=False, no_change_streak=5, error_streak=0,
                 loop_fired="30 iterations in a row left the frontier unchanged")
     assert RulesCritic().judge(s).verdict == "stuck"
 
@@ -143,7 +143,7 @@ def test_the_counters_reach_the_critics_signal_block():
     d = detector(product_after=2)
     for _ in range(3):
         d.observe_iteration(files=[".ouroboros/handoff/a.md"], frontier=None, subject="Record")
-    s = Signals("x", changed=True, recorded=True, no_change_streak=0, error_streak=0,
+    s = Signals("x", changed=True, no_change_streak=0, error_streak=0,
                 loop=d.describe(), loop_fired=d.report().describe())
     described = s.describe()
     assert "changing only bookkeeping: 3" in described

@@ -21,7 +21,7 @@ def test_config_roundtrip(tmp_path):
     assert back.branch == "ouroboros/x"
     assert back.role("actor").timeout_seconds == 2700
     assert back.role("critic").timeout_seconds == 600 and back.critic == "agent"
-    assert back.active_roles == ["actor", "critic"]
+    assert back.active_roles == ["actor", "critic", "scribe"]
     assert back.role("actor").chain == [("claude", None), ("codex", None)]   # codex carries the actor while claude is limited
 
 
@@ -32,7 +32,7 @@ def test_old_config_keys_are_ignored_not_fatal(tmp_path):
                  "  maintainer: {timeout: 20m}\n  planner: {timeout: 20m}\nmaintainer: true\nplanner: true\n"
                  "plan:\n  every: 5\nloop:\n  repeat_bet_after: 3\n")
     cfg = Config.load(p)
-    assert cfg.active_roles == ["actor", "critic"]
+    assert cfg.active_roles == ["actor", "critic", "scribe"]
     assert not hasattr(cfg, "planner") and not hasattr(cfg, "plan")
 
 
@@ -41,3 +41,9 @@ def test_graph_cadence_is_read_from_the_graph_key(tmp_path):
     p.write_text("run: x\nmemory: governor\ngraph:\n  reconcile_every: 7\n  pressure: 2\n")
     cfg = Config.load(p)
     assert cfg.graph.reconcile_every == 7 and cfg.graph.pressure == 2 and cfg.graph.budget_units == 1
+
+
+def test_a_rules_role_calls_no_model():
+    assert Config(scribe="rules").active_roles == ["actor", "critic"]
+    assert Config(critic="rules", scribe="rules").active_roles == ["actor"]
+    assert [h for h, _ in Config().role("scribe").chain] == ["claude", "codex"]

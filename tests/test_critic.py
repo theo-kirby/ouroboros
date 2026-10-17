@@ -39,7 +39,7 @@ report_done
 
 
 def sig(text="ok", **kw) -> Signals:
-    base = dict(text=text, changed=True, recorded=True, no_change_streak=0, error_streak=0, iteration=3,
+    base = dict(text=text, changed=True, no_change_streak=0, error_streak=0, iteration=3,
                 diff_stat=" a.py | 2 +-", diff="+a")
     base.update(kw)
     return Signals(**base)
@@ -79,9 +79,10 @@ def test_prompt_contains_everything():
     assert "(no diff)" in build_critic_prompt(goal_text="# g", s=sig(diff=""))
 
 
-def test_a_housekeeping_iteration_is_named_in_the_signals():
-    s = sig("reconciled", recorded=False, housekeeping=True)
-    assert "housekeeping iteration" in s.describe()
+def test_a_missing_report_and_a_failing_memory_check_are_named_in_the_signals():
+    assert "no `## What` report" in sig("did stuff").describe()
+    assert "no `## What` report" not in sig("x\n\n## What\n\nit").describe()
+    assert "the memory check fails" in sig("x", check="VIOLATION G3 r-0002").describe()
 
 
 # -- the agent call -----------------------------------------------------------
@@ -110,11 +111,11 @@ def test_harness_exception_falls_back(tmp_path):
     assert v.verdict == "done_rejected" and v.source == "rules"
 
 
-def test_rules_do_not_demand_a_record_from_housekeeping(tmp_path):
+def test_the_rules_ask_for_the_report_and_nothing_more(tmp_path):
     from ouroboros.roles.critic import RulesCritic
-    assert "did not record" in RulesCritic().judge(sig("x", recorded=False)).reply
-    v = RulesCritic().judge(sig("x", recorded=False, housekeeping=True))
-    assert v.verdict == "continue" and v.reply == "" and v.reason == "housekeeping done"
+    assert "without its report" in RulesCritic().judge(sig("x")).reply
+    v = RulesCritic().judge(sig("x\n\n## What\n\nit"))
+    assert v.verdict == "continue" and v.reply == "" and v.reason == "ok"
 
 
 # -- in the loop --------------------------------------------------------------
@@ -161,14 +162,15 @@ def test_reject_without_revert_keeps_the_commit_and_gives_no_ok_tag(repo: Path):
     assert not any(s.get("step") == "revert" for s in eng.recorder.read_jsonl(eng.recorder.iterations))
 
 
-def test_fix_first_reaches_the_actor_before_its_unit(repo: Path):
-    actor = FakeHarness([works(), works()])
+def test_fix_first_reaches_the_scribe_not_the_actor(repo: Path):
+    from fake_harness import scribes
+    actor, scribe = FakeHarness([works(), works()]), FakeHarness([], default=scribes())
     critic_h = FakeHarness([critique("continue", "then do B", fix_first="record rec-7 cites a slug that does not exist"),
                             critique("continue")])
-    eng = make_engine(repo, actor, max_iterations=2, critic=AgentCritic(critic_h, goal_text=GOAL, cwd=repo))
+    eng = make_engine(repo, actor, max_iterations=2, critic=AgentCritic(critic_h, goal_text=GOAL, cwd=repo), scribe=scribe)
     eng.run()
-    assert "Fix these first, before the unit:\nrecord rec-7 cites a slug" in actor.prompts[1]
-    assert actor.prompts[1].index("rec-7") < actor.prompts[1].index("then do B")
+    assert "record rec-7 cites a slug" in scribe.prompts[0]      # the scribe runs right after, and fixes it
+    assert "rec-7" not in actor.prompts[1] and "then do B" in actor.prompts[1]
     d = eng.recorder.read_decisions()[0]
     assert d["fix_first"].startswith("record rec-7") and d["source"] == "critic:fake" and "overseer" not in d
 

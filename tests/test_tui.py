@@ -71,7 +71,7 @@ def test_derive_iterations_and_stage_durations():
     assert its[0].changed and its[0].recorded and its[0].verdict == "continue" and its[0].cost == 2.0
     assert its[1].reverted and its[1].housekeeping and its[1].error == "timeout" and its[1].actor_seconds == 660.0
     assert stages["critic"].count == 2 and stages["critic"].last == 8.0 and stages["critic"].avg == 19.0
-    assert set(stages) == {"actor", "commit", "critic"} and stages["commit"].count == 2
+    assert set(stages) == {"actor", "commit", "critic", "scribe"} and stages["commit"].count == 2
 
 
 def test_an_old_run_with_an_overseer_step_still_reads():

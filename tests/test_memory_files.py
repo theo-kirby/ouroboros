@@ -144,13 +144,31 @@ def test_start_records_the_directive_and_gaps_reach_the_frontier_through_a_fold(
 
 
 def test_the_prompts_name_only_ouroboros_mem(repo):
-    for kind in ("files",):
-        mem = make_memory(kind, repo)
-        mem.start(run="x", goal_text=GOAL, run_dir=repo / "r", branch="b")
-        text = mem.orient_prompt() + mem.record_prompt() + mem.reconcile_prompt()
-        assert "ouroboros mem record" in text and "ouroboros mem fold --apply" in text
+    from ouroboros.roles.scribe import build_scribe_prompt
+    mem = make_memory("files", repo)
+    mem.start(run="x", goal_text=GOAL, run_dir=repo / "r", branch="b")
+    actor = mem.orient_prompt()
+    assert "ouroboros mem orient" in actor and "ouroboros mem show" in actor
+    assert "ouroboros mem record" not in actor and "ouroboros mem fold" not in actor
+    scribe = build_scribe_prompt(iteration=2, goal_text=GOAL, where=mem.store.where, report="## What\n\nx", verdict="continue — ok",
+                                 fix_first="", diff_stat="", commit="abc", fold=mem.fold_prompt(), view_dir="v",
+                                 story_path="v/story.html", assets_dir="v/assets")
+    assert "ouroboros mem record" in scribe and "ouroboros mem fold --apply" in scribe and "v/story.html" in scribe
+    for text in (actor, scribe):
         assert "governor record" not in text and "governor fold" not in text
-        assert "{" + "orient}" not in text and "{where}" not in text
+        assert "{where}" not in text and "{" + "orient}" not in text and "{fold}" not in text
+
+
+def test_each_role_gets_only_its_verbs(repo, monkeypatch, capsys):
+    monkeypatch.setenv(ENV, "files")
+    monkeypatch.setenv("OUROBOROS_ROLE", "actor")
+    assert mem_cli(repo, monkeypatch, "orient") == 0
+    assert mem_cli(repo, monkeypatch, "record", "--title", "t", "--none", "x", stdin=BODY) == 2
+    assert "the actor does not record" in capsys.readouterr().err
+    monkeypatch.setenv("OUROBOROS_ROLE", "critic")
+    assert mem_cli(repo, monkeypatch, "check") == 0 and mem_cli(repo, monkeypatch, "fold") == 2
+    monkeypatch.setenv("OUROBOROS_ROLE", "scribe")
+    assert mem_cli(repo, monkeypatch, "record", "--title", "t", "--none", "x", stdin=BODY) == 0
 
 
 def test_handoff_is_the_old_name_of_files(repo):
@@ -205,55 +223,56 @@ def test_the_cli_follows_the_config_when_no_run_set_it(repo, monkeypatch, capsys
 
 
 def test_an_engine_run_records_and_folds_through_the_cli(repo, monkeypatch):
-    """The whole loop on files memory: a work iteration records, the next housekeeping folds."""
+    """The whole loop on files memory: the actor works and reports, the scribe records and folds."""
+    import io
+    import re
     from test_engine import make_engine
     monkeypatch.setenv(ENV, "files")
     monkeypatch.chdir(repo)
 
-    def work(cwd: Path, prompt: str) -> Result:
-        (cwd / "README.md").write_text("now real\n")
-        import io
-        monkeypatch.setattr("sys.stdin", io.StringIO(BODY))
-        assert cli.main(["mem", "record", "--title", "Write the README", "--impact", "gap-readme-exists: written"]) == 0
-        return Result(text="did it", session_id="s")
-
-    def housekeeping(cwd: Path, prompt: str) -> Result:
-        assert "You run one reconcile pass" in prompt
-        g = FilesStore(cwd).snapshot()
-        tail = [r["id"] for r in g.tail()]
-        claims = []
-        for r in g.tail():
-            for target, label, delta in g.impacts_of(r):
-                name = label[4:] if target is None else label
-                claims.append({("new" if target is None else "slug"): name, "title": name, "parent": "root",
-                               "status": "working" if "written" in delta else "open",
-                               "current": f"- {delta} [rec: {r['id']}]", "cites": [r["id"]]})
-        merged = {}
-        for c in claims:
-            key = c.get("new") or c.get("slug")
-            if key in merged and "new" in merged[key]:
-                merged[key].update(status=c["status"], current=c["current"], cites=merged[key]["cites"] + c["cites"])
-            else:
-                merged[key] = c
-        (cwd / "fold.json").write_text(json.dumps({"claims": list(merged.values()), "folded": tail}))
-        assert cli.main(["mem", "fold", "--apply", "fold.json"]) == 0
-        (cwd / "fold.json").unlink()
-        return Result(text="folded", session_id="s")
-
     def actor(cwd: Path, prompt: str) -> Result:
-        return housekeeping(cwd, prompt) if prompt.startswith("# You run one reconcile pass") else work(cwd, prompt)
+        assert "ouroboros mem orient" in prompt
+        (cwd / "README.md").write_text("now real\n")
+        return Result(text="Wrote it.\n\n" + BODY + "\n## Claims\n\n- gap-readme-exists: written", session_id="s")
+
+    def scribe(cwd: Path, prompt: str) -> Result:
+        report = prompt.split("## The actor's report", 1)[1]
+        claims = re.findall(r"^- (gap-[a-z-]+): (.*)$", report, re.MULTILINE)
+        monkeypatch.setattr("sys.stdin", io.StringIO(BODY))
+        known = FilesStore(cwd).snapshot().nodes
+        flags = [x for slug, delta in claims
+                 for x in (("--impact" if slug in known else "--new"), f"{slug}: {delta}")] or ["--none", "nothing"]
+        assert cli.main(["mem", "record", "--title", "A unit", *flags]) == 0
+        if "A fold is due" in prompt:
+            g = FilesStore(cwd).snapshot()
+            claims_out = {}
+            for r in g.tail():
+                for target, label, delta in g.impacts_of(r):
+                    name = label[4:] if target is None else label
+                    c = claims_out.setdefault(name, {("new" if target is None else "slug"): name, "title": name,
+                                                     "parent": "root", "status": "open", "cites": []})
+                    c.update(current=f"- {delta} [rec: {r['id']}]", cites=c["cites"] + [r["id"]])
+                    if "written" in delta:
+                        c["status"] = "working"
+            for c in claims_out.values():
+                if "slug" in c:
+                    c.pop("parent"), c.pop("title")
+            (cwd / "fold.json").write_text(json.dumps({"claims": list(claims_out.values()),
+                                                       "folded": [r["id"] for r in g.tail()]}))
+            assert cli.main(["mem", "fold", "--apply", "fold.json"]) == 0
+            (cwd / "fold.json").unlink()
+        return Result(text="recorded", session_id="s")
 
     (repo / ".ouroboros" / "goal.md").write_text(GOAL)
     git(repo, "commit", "-qam", "goal")
-    h = FakeHarness([], default=actor)
-    eng = make_engine(repo, h, max_iterations=3)
-    eng.memory = FilesMemory(repo, reconcile_every=0, pressure=1)
+    eng = make_engine(repo, FakeHarness([], default=actor), max_iterations=2, scribe=FakeHarness([], default=scribe))
+    eng.memory = FilesMemory(repo, reconcile_every=0, pressure=10**6)
     eng.run()
-    # 1: housekeeping (the directive's gaps), 2: work, 3: housekeeping (the work record is the tail)
-    assert [p.startswith("# You run one reconcile pass") for p in h.prompts] == [True, False, True]
-    assert "ouroboros mem record" in h.prompts[1]
+    # 1: the directive's gaps make a fold due, so the scribe records #1 and folds (claims appear,
+    #    the impact on a claim that did not exist yet stays in the tail); 2: records again
     state = (repo / ".ouroboros/graph/STATE.md").read_text()
-    assert "[working] **gap-readme-exists**" in state
-    assert eng.memory.store.check()[0]
+    assert "gap-readme-exists" in state
+    assert eng.memory.store.check()[0], eng.memory.store.check()[1]
     tracked = git(repo, "ls-files", ".ouroboros/graph")
-    assert "records/r-0002.md" in tracked and "claims/gap-readme-exists.md" in tracked, "the memory is committed with the code"
+    assert "records/r-0003.md" in tracked and "claims/gap-readme-exists.md" in tracked, "the memory is committed with the code"
+    assert (repo / ".ouroboros/runs/t/view/index.html").exists(), "the run keeps its page"

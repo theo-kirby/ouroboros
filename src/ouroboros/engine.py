@@ -1,14 +1,18 @@
-"""The loop. One iteration = actor call -> verify record -> commit -> critic -> budget.
+"""The loop. One iteration = actor -> commit -> critic -> revert or keep -> scribe -> commit.
 
-Two roles, and only two: the actor, which writes, and the critic, which reads the
-change and the memory and writes the next prompt. Housekeeping is the actor's
-iteration when the memory says it is due; the next unit is the critic's reply.
+Three roles. The actor works and reports. The critic reads the change and writes
+the next prompt. The scribe writes the record (the verdict included), folds the
+memory when a fold is due, and keeps the run's view; the loop commits what it
+wrote. The next unit is the critic's reply.
 """
 
 from __future__ import annotations
 
+import os
+import threading
 import time
 import hashlib
+from contextlib import contextmanager
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,12 +26,29 @@ from .gitguard import GitError, GitGuard
 from .harness.backend_headless import kill_active
 from .harness.base import Harness, Result
 from .memory.base import MemoryAdapter
+from .memcli import ROLE_ENV
 from .recorder import Recorder
 from .roles.actor import build_actor_prompt
 from .loops import LoopDetector, loop_reply
 from .roles.critic import HISTORY_WINDOW, Critic, RulesCritic, Signals, Verdict
+from .roles.scribe import Scribe, build_scribe_prompt, summary_of
+from . import view
 
 Sleeper = Callable[[float], None]
+
+
+@contextmanager
+def role_env(role: str):
+    """Tell the harness call which role it is, so `ouroboros mem` gives it only its own verbs."""
+    old = os.environ.get(ROLE_ENV)
+    os.environ[ROLE_ENV] = role
+    try:
+        yield
+    finally:
+        if old is None:
+            os.environ.pop(ROLE_ENV, None)
+        else:
+            os.environ[ROLE_ENV] = old
 
 MAX_RESET_WAIT = 6 * 3600.0  # never trust a parsed reset time further out than this
 
@@ -58,8 +79,7 @@ class IterationOutcome:
     verdict: Verdict
     commit: str | None
     changed: bool
-    recorded: bool
-    housekeeping: bool = False
+    recorded: bool   # the scribe's record (or the loop's fallback) landed
 
 
 def _harness_of(role) -> str | None:
@@ -92,7 +112,8 @@ class Engine:
     failed_iterations: int = 0
     stuck_iterations: int = 0
     loops: LoopDetector = None   # type: ignore[assignment]  # built in __post_init__
-    last_housekeeping: int = -1      # the iteration the actor last ran the reconcile pass
+    scribe: Scribe | None = None     # None: the loop writes each record itself (the rules scribe)
+    check_problem: str | None = None  # the memory checker's last complaint, for the next scribe and critic
     last_primary_role: str | None = None
     outcomes: list[IterationOutcome] = field(default_factory=list)
 
@@ -141,48 +162,20 @@ class Engine:
         self.iteration += 1
         n = self.iteration
         role = self.config.role("actor")
-        # Housekeeping is an iteration, not a side call: the actor runs the reconcile
-        # pass, the critic judges it like any other change, and it shows in the history.
-        housekeeping = self._housekeeping_prompt()
-        if housekeeping:
-            prompt = housekeeping
-        else:
-            prompt = build_actor_prompt(goal_text=self.goal_text, memory=self.memory, iteration=n, injected=self.injected)
-        before = self.memory.snapshot()
+        prompt = build_actor_prompt(goal_text=self.goal_text, memory=self.memory, iteration=n, injected=self.injected)
         head_before = self.git.head()
-        self._status("work", iteration=n, housekeeping=bool(housekeeping))
+        self._status("work", iteration=n)
 
         self._refresh_limits("actor")
-        result = self._call_actor(prompt, role.timeout_seconds, role.model, housekeeping=bool(housekeeping))
+        result = self._call_actor(prompt, role.timeout_seconds, role.model)
 
-        recorded = self.memory.verify_recorded(before)
         worked = result.ok or result.timed_out  # the actor ran; a timeout still may have landed work
         changed = self.git.has_changes() or self.git.head() != head_before  # the actor may commit on its own
-        if recorded:
-            summary = self.memory.last_summary()
-        elif housekeeping:
-            summary = "housekeeping"
-        else:
-            summary = (result.error or "no record")[:60]
-        commit = self.git.commit(f"ouroboros #{n}: {summary}", allow_empty=False)  # no marker commits; the ok tag marks the iteration
-        self.recorder.step(iteration=n, step="commit", sha=commit[:10], changed=changed, recorded=recorded, cost=result.cost_usd,
-                           housekeeping=True if housekeeping else None)
-        progressed = worked and (changed or recorded)
-        if progressed:
-            self.memory.mark_iteration()
-        if housekeeping and result.ok:
-            self.memory.mark_reconciled()
+        summary = summary_of(result.text) if worked else ""
+        commit = self.git.commit(f"ouroboros #{n}: {summary or (result.error or 'no report')[:60]}", allow_empty=False)
+        self.recorder.step(iteration=n, step="commit", sha=commit[:10], changed=changed, cost=result.cost_usd)
 
-        check_problem = None
-        try:
-            check_problem = self.memory.check_report()
-        except Exception as exc:
-            self.recorder.log(f"memory check raised {exc!r}")
-        if check_problem:
-            self.recorder.step(iteration=n, step="check", problem=check_problem[:300])
-
-        # `recorded` counts as a change: under a store-backed graph a record lands outside git
-        self.no_change_streak = 0 if (changed or recorded) else self.no_change_streak + 1
+        self.no_change_streak = 0 if changed else self.no_change_streak + 1
         if result.error and result.error == self.last_error:
             self.error_streak += 1
         elif result.error:
@@ -192,9 +185,8 @@ class Engine:
         self.last_error = result.error
 
         # What this iteration moved, as opposed to what it touched. The frontier
-        # is sampled here rather than at the end of the iteration, so it reflects
-        # the previous reconcile pass -- a constant lag, and the signal only ever
-        # compares one iteration against the next.
+        # is sampled before the scribe writes, so it reflects the previous fold --
+        # a constant lag, and the signal only ever compares one iteration against the next.
         files = self.git.changed_files(head_before, commit or "HEAD") if changed else []
         try:
             frontier = self.memory.frontier_fingerprint()
@@ -207,19 +199,21 @@ class Engine:
         # The critic runs every iteration, changed or not: an iteration that changed
         # nothing is exactly the one that needs a verdict (stuck) and a redirect.
         self._status("critique", iteration=n)
+        diff_stat = self.git.diff_stat(head_before, commit)
         signals = Signals(
-            result.text, changed, recorded, self.no_change_streak, self.error_streak, result.error,
-            iteration=n, diff_stat=self.git.diff_stat(head_before, commit),
+            result.text, changed, self.no_change_streak, self.error_streak, result.error,
+            iteration=n, diff_stat=diff_stat,
             diff=self._diff(head_before, commit) if changed else "",
             history=self.recorder.read_decisions()[-HISTORY_WINDOW:],
             memory=self._memory_context(),
             loop=self.loops.describe(),
             loop_fired=loop.describe() if loop else "",
-            housekeeping=bool(housekeeping),
+            check=self.check_problem or "",
         )
         self._refresh_limits("critic")
         try:
-            verdict = self.critic.judge(signals)
+            with role_env("critic"), self._heartbeat():
+                verdict = self.critic.judge(signals)
         except Exception as exc:  # a critic bug must not stop the loop
             self.recorder.log(f"critic raised {exc!r}; using rules")
             verdict = RulesCritic().judge(signals)
@@ -241,45 +235,54 @@ class Engine:
             verdict.reply = f"{nudge}\n\n{verdict.reply}".strip()
             idle = policy == "report_done"
 
+        reverted = False
+        accepted = False
         if verdict.rejected and not (self.config.git.revert_on_reject and self.last_ok_tag):
             # Fix forward: the rejected commit stays, gets no ok tag, and the reply says what to fix.
             self.recorder.log(f"[{n}] rejected, kept on the branch ({'revert_on_reject is off' if not self.config.git.revert_on_reject else 'nothing accepted yet to revert to'}): {verdict.reason[:200]}")
             verdict.reply = f"The critic rejected the last iteration. Fix this first:\n{verdict.reply}".strip()
             self.error_streak = 0
         elif verdict.rejected:
+            # Undo this iteration's commits only: the scribe's records of earlier
+            # iterations sit after the last ok tag and must survive a reject.
             try:
-                sha = self.git.revert_to(self.last_ok_tag, patch_out=self.recorder.run_dir / "reverted" / f"{n:04d}.patch")
+                sha = self.git.revert_to(head_before, patch_out=self.recorder.run_dir / "reverted" / f"{n:04d}.patch")
             except GitError as exc:
                 # A revert that cannot undo the reject is the one failure the loop
                 # must not sleep through: rejected work would ride on to the merge.
                 self.recorder.log(f"[{n}] revert FAILED, rejected work is still on the branch: {exc}")
                 self.recorder.needs_human(
-                    f"Iteration {n} was rejected, but reverting to `{self.last_ok_tag}` failed:\n\n    {exc}\n\n"
+                    f"Iteration {n} was rejected, but reverting to `{head_before[:10]}` failed:\n\n    {exc}\n\n"
                     f"The rejected commit is still on `{self.config.run}`. Undo it by hand before merging."
                 )
-                self.recorder.step(iteration=n, step="revert", to=self.last_ok_tag, sha=self.git.head()[:10], error=str(exc)[:200])
+                self.recorder.step(iteration=n, step="revert", to=head_before[:10], sha=self.git.head()[:10], error=str(exc)[:200])
             else:
-                self.recorder.step(iteration=n, step="revert", to=self.last_ok_tag, sha=sha[:10])
+                reverted = True
+                self.recorder.step(iteration=n, step="revert", to=head_before[:10], sha=sha[:10])
             self.error_streak = 0
         elif verdict.verdict in ("continue", "answer", "done_rejected", "done_accepted") and self.config.git.tag_on_accept:
-            tag = f"ouroboros/{self.config.run}/ok-{n:04d}"
-            self.git.tag(tag)
-            self.last_ok_tag = tag
+            accepted = True
 
-        if verdict.fix_first:
-            verdict.reply = f"Fix these first, before the unit:\n{verdict.fix_first}\n\n{verdict.reply}".strip()
         if result.error and verdict.verdict == "continue":
             note = f"The previous iteration ended with an error: {result.error[:500]}. Recover and continue."
             verdict.reply = f"{note}\n\n{verdict.reply}".strip()
-        if check_problem:
-            verdict.reply = f"{verdict.reply}\n\nThe memory checker reports a problem. Fix it first:\n{check_problem}".strip()
         self.injected = verdict.reply or None
+
+        # The scribe writes down what happened -- after the verdict and after any
+        # revert, so it records the verdict too and no revert can undo its record.
+        recorded = self._scribe(n, result, verdict, reverted=reverted, diff_stat=diff_stat, commit=commit if changed else "")
+        if accepted:
+            tag = f"ouroboros/{self.config.run}/ok-{n:04d}"
+            self.git.tag(tag)
+            self.last_ok_tag = tag
+        if worked and changed:
+            self.memory.mark_iteration()
 
         self.budget.add(cost=result.cost_usd, iteration=True, harness=result.extra.get("harness"),
                         done_accepted=(verdict.verdict == "done_accepted") if verdict.verdict.startswith("done") else None,
                         stuck=(verdict.verdict == "stuck"))
         self._status("idle", iteration=n, last_verdict=verdict.verdict)
-        out = IterationOutcome(n, result, verdict, commit, changed, recorded, bool(housekeeping))
+        out = IterationOutcome(n, result, verdict, commit, changed, recorded)
         self.outcomes.append(out)
         if idle and self.budget.should_stop() is None:
             self._sleep(parse_duration(self.config.idle_interval) or 1800.0, "done accepted; report_done policy")
@@ -298,6 +301,75 @@ class Engine:
         if self.failed_iterations and self.budget.should_stop() is None:
             self._sleep(backoff_seconds(self.failed_iterations - 1), f"{self.failed_iterations} failed iteration(s) in a row")
         return out
+
+    def _scribe(self, n: int, result: Result, verdict: Verdict, *, reverted: bool, diff_stat: str, commit: str) -> bool:
+        """Record the iteration, fold when due, check, refresh the view. True when a record landed.
+
+        Every failure here is survived: when the scribe writes no record, the loop
+        writes one itself, so no iteration is ever missing from the memory.
+        """
+        self._status("scribe", iteration=n)
+        verdict_text = (f"{verdict.verdict} — {verdict.reason}\n\n"
+                        + ("The change was **reverted**: record it as a dead end." if reverted
+                           else "The change stays on the branch." if commit else "There was no change."))
+        try:
+            before = self.memory.snapshot()
+            folded_before = self._folded_count()
+            due = self.memory.needs_reconcile()
+            fold = self.memory.fold_prompt() if due else None
+        except Exception as exc:
+            self.recorder.log(f"[{n}] memory unreadable before the scribe: {exc!r}")
+            before, folded_before, due, fold = set(), 0, False, None
+        fix_first = "\n".join(x for x in (verdict.fix_first, self.check_problem) if x)
+        res: Result | None = None
+        if self.scribe is not None:
+            vd = view.view_dir(self.recorder.run_dir)
+            prompt = build_scribe_prompt(
+                iteration=n, goal_text=self.goal_text, where=getattr(getattr(self.memory, "store", None), "where", self.memory.name),
+                report=result.text, verdict=verdict_text, fix_first=fix_first, diff_stat=diff_stat, commit=(commit or "")[:10],
+                fold=fold, view_dir=self._rel(vd), story_path=self._rel(view.story_path(self.recorder.run_dir)),
+                assets_dir=self._rel(view.assets_dir(self.recorder.run_dir)),
+            )
+            self._refresh_limits("scribe")
+            with role_env("scribe"), self._heartbeat():
+                res = self.scribe.run(prompt, n)
+            self.budget.add(cost=res.cost_usd, usage=res.usage, harness=res.extra.get("harness"))
+        recorded = False
+        try:
+            recorded = self.memory.verify_recorded(before)
+            if not recorded:
+                slug = self.memory.fallback_record(iteration=n, report=result.text, verdict=verdict_text)
+                recorded = slug is not None
+                self.recorder.log(f"[{n}] the scribe recorded nothing; the loop wrote {slug or 'no'} record")
+            if due and self._folded_count() > folded_before:
+                self.memory.mark_reconciled()
+        except Exception as exc:
+            self.recorder.log(f"[{n}] scribe bookkeeping raised {exc!r}")
+        self.recorder.step(iteration=n, step="scribe", exit=res.exit_code if res else None,
+                           error=(res.error or None) and res.error[:200] if res else None,
+                           recorded=recorded, fold_due=due or None, cost=res.cost_usd if res else 0.0)
+        try:
+            self.git.commit(f"ouroboros #{n}: record — {self.memory.last_summary()}", allow_empty=False)
+        except Exception as exc:
+            self.recorder.log(f"[{n}] committing the scribe's memory failed: {exc!r}")
+        try:
+            self.check_problem = self.memory.check_report()
+        except Exception as exc:
+            self.recorder.log(f"memory check raised {exc!r}")
+            self.check_problem = None
+        if self.check_problem:
+            self.recorder.step(iteration=n, step="check", problem=self.check_problem[:300])
+        return recorded
+
+    def _folded_count(self) -> int:
+        graph = self.memory.graph() if hasattr(self.memory, "graph") else None
+        return sum(1 for r in graph.records() if r.get("folded")) if graph is not None else 0
+
+    def _rel(self, p: Path) -> str:
+        try:
+            return str(p.relative_to(self.repo))
+        except ValueError:
+            return str(p)
 
     # ------------------------------------------------------------------
     def _reload_goal(self) -> None:
@@ -370,13 +442,14 @@ class Engine:
 
     def _refresh_limits(self, role: str) -> None:
         """Refresh once per actor/agent-critic handoff, never per retry."""
-        if getattr(self.critic, "harness", None) is None:
+        others = [h for h in (getattr(self.critic, "harness", None), getattr(self.scribe, "harness", None)) if h is not None]
+        if not others:
             return
         previous, self.last_primary_role = self.last_primary_role, role
         if previous is None or previous == role:
             return
         try:
-            pools = [self.harness, self.critic.harness]
+            pools = [self.harness, *others]
             boards = {}
             for pool in pools:
                 board = getattr(pool, "board", None)
@@ -433,47 +506,26 @@ class Engine:
         board.block(name, why=f"loop escalation: {why}"[:120])
         self.recorder.log(f"loop: actor harness {name} rotated out ({why})")
 
-    def _housekeeping_prompt(self) -> str | None:
-        """The reconcile pass, for the actor to run as this iteration.
-
-        Only when the memory says a reconcile is due. Never two iterations in a
-        row: a pass that fails to clear the tail must not eat the whole night trying.
-        """
-        if self.last_housekeeping == self.iteration - 1:
-            return None
-        try:
-            if not self.memory.needs_reconcile():
-                return None
-            prompt = self.memory.reconcile_prompt()
-        except Exception as exc:
-            self.recorder.log(f"housekeeping check raised {exc!r}")
-            return None
-        if not prompt:
-            return None
-        self.last_housekeeping = self.iteration
-        self.recorder.log(f"[{self.iteration}] housekeeping: the actor runs the reconcile pass")
-        return prompt
-
-    def _call_actor(self, prompt: str, timeout: float, model: str | None, *, housekeeping: bool = False) -> Result:
+    def _call_actor(self, prompt: str, timeout: float, model: str | None) -> Result:
         """Call the harness. Retry on retriable errors with backoff, forever. One retry on other errors."""
         role = self.config.role("actor")
         n = self.iteration
-        transcript = "housekeeping" if housekeeping else "actor"
+        transcript = "actor"
         resume = self.session_id if (role.resume_for > 1 and 0 < self.session_uses < role.resume_for) else None
         retriable_attempts = 0
         plain_attempts = 0
         while True:
             attempt = retriable_attempts + plain_attempts
             try:
-                result = self.harness.run(
-                    prompt, cwd=self.repo, timeout=timeout, resume=resume, model=model,
-                    log_path=self.recorder.transcript_path(n, transcript, attempt),
-                )
+                with role_env("actor"), self._heartbeat():
+                    result = self.harness.run(
+                        prompt, cwd=self.repo, timeout=timeout, resume=resume, model=model,
+                        log_path=self.recorder.transcript_path(n, transcript, attempt),
+                    )
             except Exception as exc:
                 result = Result(exit_code=-1, error=f"harness raised {exc!r}")
             self.budget.usage.record(result.usage)
-            self.recorder.step(iteration=n, step="actor", attempt=attempt, exit=result.exit_code, timed_out=result.timed_out, error=(result.error or None) and result.error[:200], session=result.session_id, turns=result.turns,
-                               housekeeping=True if housekeeping else None)
+            self.recorder.step(iteration=n, step="actor", attempt=attempt, exit=result.exit_code, timed_out=result.timed_out, error=(result.error or None) and result.error[:200], session=result.session_id, turns=result.turns)
             if result.ok or result.timed_out:
                 self.recorder.clear_needs_human()
                 break
@@ -555,3 +607,27 @@ class Engine:
             fields["limited"] = board.snapshot()
         fields.update(extra)
         self.recorder.status(**fields)
+        self._render_view()
+
+    def _render_view(self) -> None:
+        """The run's page follows every stage change. It never raises; a failed render keeps the last page."""
+        try:
+            graph = self.memory.graph() if hasattr(self.memory, "graph") else None
+        except Exception:
+            graph = None
+        view.render(self.recorder.run_dir, self.repo, goal_text=self.goal_text, graph=graph, alive=True)
+
+    @contextmanager
+    def _heartbeat(self, every: float = 60.0):
+        """Re-render the view while a harness call runs, so a long turn does not read as a dead loop."""
+        stop = threading.Event()
+
+        def beat() -> None:
+            while not stop.wait(every):
+                self._render_view()
+        t = threading.Thread(target=beat, name="view-heartbeat", daemon=True)
+        t.start()
+        try:
+            yield
+        finally:
+            stop.set()

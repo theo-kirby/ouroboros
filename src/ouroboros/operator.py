@@ -37,11 +37,11 @@ does not rewrite it. Keep it true.
 ## The shape of a run
 
 A run is a loop of iterations against a charter. Each iteration an **actor**
-does one unit of work and commits it, and a **critic** reads the change and the
-memory, accepts or rejects it, answers as the sleeping user would, and writes
-the message the next iteration starts from. When the memory says a reconcile
-is due, the actor's next iteration is housekeeping instead of a unit. Those
-two are the only roles. It runs on a branch (`ouroboros/<run>`), under the configured launcher
+does one unit of work, commits it and reports it; a **critic** reads the change
+and the memory, accepts or rejects it, answers as the sleeping user would, and
+writes the message the next iteration starts from; then a **scribe** records the
+unit (a rejected one as a dead end), folds the memory when a fold is due, and
+updates the run's page (`ouroboros view`). Those three are the only roles. It runs on a branch (`ouroboros/<run>`), under the configured launcher
 (a systemd user unit, a tern session or tmux), for as long as the charter's stop
 rules allow.
 
@@ -95,8 +95,8 @@ Wherever it goes, `ouroboros stop` takes down exactly what `run` started, and
 the reporter goes beside it: a tmux window, a tern tab, or a unit of its own.
 
 **4. While it runs**, do not touch the files the loop is working in. An operator charter
-edit applies at the next iteration boundary; the current actor and critic finish
-under their original charter. Save edits atomically and check loop.log for
+edit applies at the next iteration boundary; the current actor, critic and scribe
+finish under their original charter. Save edits atomically and check loop.log for
 "charter reloaded". Config changes still require a restart. To watch:
 
     ouroboros status          # one shot

@@ -220,16 +220,14 @@ def test_prompts_and_verify(gov_repo):
     start(mem, gov_repo)
     orient = mem.orient_prompt()
     assert "## What is true now" in orient and "## Frontier" in orient and "one dispatch" in orient
-    assert "Forbidden" in orient and "`ouroboros mem fold`" in orient and "Flywheel repository" in orient
-    rec = mem.record_prompt()
-    assert f"(`{mem.directive_slug}`)" in rec and "ouroboros mem record" in rec and "governor record" not in rec
+    assert "Forbidden" in orient and "ouroboros mem show" in orient and "Flywheel repository" in orient
+    assert "ouroboros mem record" not in orient and "governor record" not in orient
     before = mem.snapshot()
     assert not mem.verify_recorded(before)
     slug = mint(gov_repo, "Did a unit", mem.directive_slug)
     assert mem.verify_recorded(before)
     assert mem.last_record_slug == slug
     assert mem.last_summary() == "Did a unit"
-    assert f"(`{slug}`)" in mem.record_prompt()
     assert mem.check_report() is None
 
 
@@ -247,9 +245,9 @@ def test_needs_reconcile_pressure_and_cadence(gov_repo):
     assert cad.needs_reconcile()
     cad.mark_reconciled()
     assert not cad.needs_reconcile()
-    prompt = cad.reconcile_prompt()
-    assert "one reconcile pass" in prompt and "ouroboros mem fold --apply" in prompt and "renders STATE.md" in prompt
-    assert "two" in prompt and "{where}" not in prompt and "governor fold" not in prompt
+    prompt = cad.fold_prompt()
+    assert "A fold is due" in prompt and "ouroboros mem fold --apply" in prompt and "renders STATE.md" in prompt
+    assert "two" in prompt and "{tail}" not in prompt and "governor fold" not in prompt
     fold_all(gov_repo)
     assert mem.unreconciled()[0] == 0 and not mem.needs_reconcile()
 
@@ -324,7 +322,7 @@ def test_an_old_plan_claim_is_marked_legacy_in_the_tail_and_left_out_of_the_prom
     mint(gov_repo, "Bet: old", mem.directive_slug, "--impact", f"{plan['slug']}: a horizon moved")
     _, listing = mem.unreconciled()
     assert "(plan: legacy, leave it)" in listing
-    assert "leave them out of your fold's `claims`" in mem.reconcile_prompt()
+    assert "leave them out of your fold's `claims`" in mem.fold_prompt()
     assert "- bets" not in mem.orient_prompt() and "- bets" not in mem.critic_context()
 
 
@@ -338,65 +336,46 @@ class FakeCritic:
         return Verdict("continue", "", "ok", source="fake")
 
 
-def records(cwd: Path, prompt: str) -> Result:
-    parent = re.search(r"newest record \(`(\S+)`\)", prompt).group(1)
+def works(cwd: Path, prompt: str) -> Result:
     (cwd / "work.txt").open("a").write("x\n")
-    mint(cwd, "unit", parent)
-    return Result(text="did a unit", session_id="s", cost_usd=0.1)
+    return Result(text="did a unit\n\n## What\n\nunit", session_id="s", cost_usd=0.1)
 
 
-def folds(cwd: Path, prompt: str) -> Result:
-    """A maintainer that really folds: every tail record, no claims."""
-    fold_all(cwd)
-    gv(cwd, "render", "-o", "STATE.md")
-    return Result(text="folded", cost_usd=0.2)
+def scribe(cwd: Path, prompt: str) -> Result:
+    """A scribe that really folds when one is due, then records the unit."""
+    if "A fold is due" in prompt:
+        fold_all(cwd)
+        gv(cwd, "render", "-o", "STATE.md")
+    newest = max(snap(cwd)["nodes"].values(), key=lambda n: n.get("seq", 0) if n["kind"] == "record" else -1)
+    mint(cwd, "unit", newest["slug"])
+    return Result(text="recorded", cost_usd=0.1)
 
 
-def housekeeps(cwd: Path, prompt: str) -> Result:
-    """An actor that folds when the iteration is housekeeping and records otherwise."""
-    return folds(cwd, prompt) if "You run one reconcile pass" in prompt[:200] else records(cwd, prompt)
-
-
-def test_engine_counts_a_record_and_runs_the_fold_on_pressure(gov_repo):
+def test_the_scribe_records_every_unit_and_folds_on_pressure(gov_repo):
     mem = GovernorMemory(gov_repo, reconcile_every=0, pressure=3)
-    actor = FakeHarness([], default=housekeeps)
-    eng = make_engine(gov_repo, actor, critic=FakeCritic(), max_iterations=4)
+    scribe_h = FakeHarness([], default=scribe)
+    eng = make_engine(gov_repo, FakeHarness([], default=works), critic=FakeCritic(), max_iterations=4, scribe=scribe_h)
     eng.memory = mem
     eng.goal_text = GOAL
     eng.run()
-    assert eng.iteration == 4
-    # directive + #1 + #2 = 3 unfolded: pressure makes #3 housekeeping; #4 leaves one in the tail
-    assert [o.housekeeping for o in eng.outcomes] == [False, False, True, False]
-    assert "ouroboros mem fold --apply" in actor.prompts[2]
-    assert eng.outcomes[0].recorded and eng.outcomes[1].recorded and eng.outcomes[3].recorded
-    assert not any(s.get("step") == "reconcile" for s in eng.recorder.read_jsonl(eng.recorder.iterations))
-    assert mem.unreconciled()[0] == 1
-    log = git(gov_repo, "log", "--oneline")
-    assert "ouroboros #1: unit" in log
+    assert eng.iteration == 4 and all(o.recorded for o in eng.outcomes)
+    # directive + #1 + #2 = 3 unfolded when #3's scribe runs: it folds them, then records #3; #4 adds one more
+    assert ["A fold is due" in p for p in scribe_h.prompts] == [False, False, True, False]
+    assert mem.unreconciled()[0] == 2
+    assert "ouroboros #1: unit" in git(gov_repo, "log", "--oneline")   # the subject is the report's `## What`
     assert git(gov_repo, "status", "--porcelain") == ""
     assert mem.check_report() is None
 
 
-def test_the_actor_runs_the_fold_as_housekeeping(gov_repo):
+def test_a_directive_with_gaps_makes_the_first_scribe_fold(gov_repo):
     mem = GovernorMemory(gov_repo, reconcile_every=99, pressure=99)
-    prompts = []
-
-    def actor(cwd: Path, prompt: str) -> Result:
-        prompts.append(prompt)
-        if "You run one reconcile pass" in prompt[:200]:
-            return folds(cwd, prompt)
-        return records(cwd, prompt)
-
-    eng = make_engine(gov_repo, FakeHarness([], default=actor), critic=FakeCritic(), max_iterations=3)
+    scribe_h = FakeHarness([], default=scribe)
+    eng = make_engine(gov_repo, FakeHarness([], default=works), critic=FakeCritic(), max_iterations=3, scribe=scribe_h)
     eng.memory = mem
     eng.goal_text = GOAL_WITH_GAPS
     eng.run()
-    # the directive's gap impacts make a fold due at once, so #1 is housekeeping; #2 and #3 work
-    assert ["You run one reconcile pass" in p[:200] for p in prompts] == [True, False, False]
-    assert not mem.needs_reconcile() and mem.since_reconcile == 2
-    assert eng.outcomes[1].recorded and eng.outcomes[2].recorded
-    steps = eng.recorder.read_jsonl(eng.recorder.iterations)
-    assert [s.get("housekeeping") for s in steps if s.get("step") == "commit"] == [True, None, None]
+    assert ["A fold is due" in p for p in scribe_h.prompts] == [True, False, False]
+    assert not mem.needs_reconcile() and mem.since_reconcile == 3   # #1 was recorded after the fold
     assert git(gov_repo, "status", "--porcelain") == ""
 
 

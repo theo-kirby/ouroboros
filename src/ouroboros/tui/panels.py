@@ -327,7 +327,8 @@ def draw_loop(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
     empty = sum(1 for i in its if not i.changed)
     reverts = sum(1 for i in its if i.reverted)
     housekeeping = sum(1 for i in its if i.housekeeping)
-    p.text(y + 2, x, f"{productive} productive · {empty} empty · {reverts} reverted · {housekeeping} housekeeping",
+    p.text(y + 2, x, f"{productive} productive · {empty} empty · {reverts} reverted"
+           + (f" · {housekeeping} housekeeping" if housekeeping else ""),
            t.attr(PAIR_DIM), width=w)
     if inner.h < 4:
         return

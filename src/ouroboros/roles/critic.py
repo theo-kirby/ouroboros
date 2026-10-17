@@ -1,11 +1,11 @@
 """The critic: the one read-only call after every actor turn. Rules stand behind it.
 
-It is the reviewer and the sleeping user in one. They used to be two roles, and
+It is the reviewer and the sleeping user in one. Those used to be two roles, and
 each was half blind: the critic graded the diff without seeing the plan, the
 overseer steered from the plan without seeing the diff. Both are judgment jobs
 over the same evidence, so they are one call now, and the rule that keeps that
-judgment honest is that the critic never writes to the repo. The actor does the
-housekeeping the critic asks for.
+judgment honest is that the critic never writes to the repo. The scribe, which
+runs after it, fixes the memory problems the critic names.
 """
 
 from __future__ import annotations
@@ -34,9 +34,9 @@ DIFF_LIMIT = 24000
 
 # `did` and `doing` are for the person watching, not for the loop: the monitor shows
 # one sentence for the unit that just finished and one for the unit now running, so a
-# glance answers "where is it" without reading a transcript. `fix_first` is the
-# housekeeping the actor must do before its next unit: the critic names it, the
-# actor does it, because the one that judges never writes.
+# glance answers "where is it" without reading a transcript. `fix_first` is what
+# the memory needs fixed: the critic names it, the scribe fixes it right after,
+# because the one that judges never writes.
 VERDICT_SCHEMA = {
     "type": "object",
     "properties": {
@@ -52,7 +52,7 @@ VERDICT_SCHEMA = {
 
 RULES_REPLY = (
     "Decide for yourself. Pick the option that is most reversible. "
-    "Write your assumption in the record. Continue."
+    "Write your assumption in your report. Continue."
 )
 DONE_REPLY = (
     "Do not stop. The whole goal is never done from your side. Check the done criteria "
@@ -62,7 +62,7 @@ DONE_REPLY = (
 STUCK_REPLY = (
     "The last iterations changed nothing. Apply the exhaustion policy from the goal: "
     "pick a rung of the horizon ladder that still has items, or propose three new "
-    "directions in the record, pick one, and do one unit of it now."
+    "directions in your report, pick one, and do one unit of it now."
 )
 LOOPING_REPLY = (
     "The last iterations changed files but moved nothing. Writing about the work is "
@@ -71,13 +71,15 @@ LOOPING_REPLY = (
     "what you plan to do."
 )
 REJECT_REPLY = (
-    "The same error happened three times. That path is dead. Record it as a dead end "
-    "(`ouroboros mem record`) and take a different approach."
+    "The same error happened three times. That path is dead. The scribe records it as a dead end. "
+    "Take a different approach."
 )
-NO_RECORD_REPLY = (
-    "The previous iteration did not record its unit. Record it FIRST "
-    "(`ouroboros mem record`), from the git log and the diff, then continue with one unit."
+NO_REPORT_REPLY = (
+    "The previous iteration ended without its report. End every iteration with the "
+    "report: `## What`, `## Why`, `## Method`, `## Result`, `## Claims`. The scribe records "
+    "the unit from it."
 )
+_REPORT = re.compile(r"^## What\s*$", re.MULTILINE)
 
 _QUESTION = re.compile(
     r"(\?\s*$)|\b(should i|do you want|would you like|let me know|which (one|option|approach)|"
@@ -95,7 +97,6 @@ _DONE = re.compile(
 class Signals:
     text: str
     changed: bool
-    recorded: bool
     no_change_streak: int
     error_streak: int
     error: str | None = None
@@ -103,21 +104,21 @@ class Signals:
     diff_stat: str = ""
     diff: str = ""       # the change itself, truncated to DIFF_LIMIT in the prompt
     history: list[dict] = field(default_factory=list)
-    memory: str = ""     # what the memory adapter says is true now: frontier, plan
+    memory: str = ""     # what the memory says is true now: the frontier and the tail
     loop: str = ""       # the loop detector's three counters (loops.py)
     loop_fired: str = ""  # the signal that has crossed its threshold, if any
-    housekeeping: bool = False  # this iteration was the actor folding memory, not a unit of work
+    check: str = ""      # the memory checker's complaint after the last scribe, if any
 
     def describe(self) -> str:
         lines = [
             f"- files changed this iteration: {'yes' if self.changed else 'no'}",
-            f"- unit recorded: {'yes' if self.recorded else 'NO'}",
             f"- iterations in a row with no changes: {self.no_change_streak}",
             f"- identical errors in a row: {self.error_streak}",
         ]
-        if self.housekeeping:
-            lines.append("- this was a housekeeping iteration: the actor folded the memory instead of "
-                         "doing a unit; no record node is expected from it")
+        if not _REPORT.search(self.text or "") and self.changed:
+            lines.append("- the actor's message has no `## What` report")
+        if self.check:
+            lines.append(f"- the memory check fails (the scribe fixes it next): {self.check[:300]}")
         if self.loop:
             lines.append(self.loop)
         if self.loop_fired:
@@ -139,7 +140,7 @@ class Verdict:
     source: str = "rules"
     did: str = ""        # one sentence: the unit that just finished
     doing: str = ""      # one sentence: the unit the next iteration is starting
-    fix_first: str = ""  # housekeeping the actor must do before its next unit
+    fix_first: str = ""  # what the scribe must fix in the memory before it records
 
     @property
     def rejected(self) -> bool:
@@ -169,9 +170,9 @@ class RulesCritic:
             return Verdict("done_rejected", DONE_REPLY, "actor claimed done; rules never accept")
         if _QUESTION.search(tail):
             return Verdict("answer", RULES_REPLY, "actor ended with a question")
-        if not s.recorded and not s.housekeeping:
-            return Verdict("continue", NO_RECORD_REPLY, "no record written")
-        return Verdict("continue", "", "housekeeping done" if s.housekeeping else "ok")
+        if s.changed and not _REPORT.search(s.text or ""):
+            return Verdict("continue", NO_REPORT_REPLY, "no report")
+        return Verdict("continue", "", "ok")
 
 
 def load_template() -> str:

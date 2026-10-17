@@ -26,9 +26,15 @@ def kill_active() -> int:
     return n
 
 
+# The loop's own variables (the run's memory store, the calling role) must reach
+# the harness in either backend; a tmux window does not inherit this process's env.
+CARRY = ("OUROBOROS_MEMORY", "OUROBOROS_ROLE")
+
+
 def run(cmd: list[str], *, cwd: Path, timeout: float, stdin_text: str | None = None,
         log_path: Path | None = None, env: dict[str, str] | None = None) -> "ProcResult":
     """Run through the configured backend."""
+    env = {**{k: os.environ[k] for k in CARRY if k in os.environ}, **(env or {})} or None
     if BACKEND == "tmux":
         from .backend_tmux import run_in_tmux
         return run_in_tmux(cmd, cwd=cwd, timeout=timeout, stdin_text=stdin_text, log_path=log_path, env=env)

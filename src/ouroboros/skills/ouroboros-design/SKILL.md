@@ -65,7 +65,7 @@ the user to correct it. Never accept a vague answer; ask for the concrete versio
 7. **Quality bar.** What the critic grades against: gates, commit shape, record
    node rules, doc-with-code rules.
 8. **Run shape.** Duration (`stop.after`), harness chain and fallbacks for the
-   actor and the critic (the only two roles), memory (`auto` picks governor when
+   actor, the critic and the scribe (the only three roles), memory (`auto` picks governor when
    the repo has a `.flywheel/` governor graph, else `files`: the same records and
    claims as markdown under `.ouroboros/graph/`).
 
@@ -74,7 +74,7 @@ the user to correct it. Never accept a vague answer; ask for the concrete versio
 - `.ouroboros/goal.md` with exactly these sections, in this order:
   `# Goal: <name>`, `## Mission`, `## Done criteria`, `## Horizon ladder`,
   `## Constraints`, `## Question policy`, `## Exhaustion policy`, `## Quality bar`,
-  and `## Reconcile` (how the reconcile pass folds records into state). Done criteria are `- [ ]` checkboxes.
+  and `## Reconcile` (how the scribe's fold turns records into state). Done criteria are `- [ ]` checkboxes.
   Ladder rungs are `- **short-term:** ...`, `- **medium-term:** ...`, `- **long-term:** ...` lines.
 - `.ouroboros/config.yml` (run `ouroboros init` first if missing). Example:
 
@@ -86,7 +86,7 @@ roles:
   actor:  { harness: claude, timeout: 90m, fallback: [{ harness: codex }] }
   critic: { harness: codex, timeout: 10m, fallback: [{ harness: claude }] }
 stop: { after: 10h, max_usage: 0.8 }   # 0.8 = stop at 80% of a subscription's weekly window
-graph: { reconcile_every: 5, pressure: 3, budget_units: 1 }   # when housekeeping is due
+graph: { reconcile_every: 5, pressure: 3, budget_units: 1 }   # when the scribe folds
 ```
 
 - Read both files back to the user in full. Then say: `ouroboros run` starts it,

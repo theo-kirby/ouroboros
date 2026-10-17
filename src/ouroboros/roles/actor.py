@@ -30,5 +30,4 @@ def build_actor_prompt(
         .replace("{goal}", goal_text.strip() or "(no goal.md yet — run `ouroboros init`)")
         .replace("{orient}", memory.orient_prompt())
         .replace("{injected}", injected or "(none)")
-        .replace("{record}", memory.record_prompt())
     )

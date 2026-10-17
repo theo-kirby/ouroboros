@@ -24,9 +24,9 @@ LOG_LINES = 40
 # `oversee` is what runs before the overseer and the critic were one role wrote;
 # it lands on the critic's row so an old run still reads. The `reconcile` and `plan`
 # steps of the retired maintainer and planner belong to no stage.
-STAGES = ("actor", "commit", "critic")
-STATE_TO_STAGE = {"work": "actor", "critique": "critic", "oversee": "critic"}
-STEP_TO_STAGE = {"actor": "actor", "critique": "critic", "oversee": "critic"}
+STAGES = ("actor", "commit", "critic", "scribe")
+STATE_TO_STAGE = {"work": "actor", "critique": "critic", "oversee": "critic", "scribe": "scribe"}
+STEP_TO_STAGE = {"actor": "actor", "critique": "critic", "oversee": "critic", "scribe": "scribe"}
 
 
 # ---------------------------------------------------------------- transcript events
@@ -189,13 +189,13 @@ class Iteration:
     recorded: bool = False
     verdict: str = ""
     reverted: bool = False
-    housekeeping: bool = False
+    housekeeping: bool = False   # an older run's actor-run reconcile pass
     actor_seconds: float = 0.0
     cost: float = 0.0
     error: str | None = None
 
 
-ROLE_ORDER = ("actor", "critic")
+ROLE_ORDER = ("actor", "critic", "scribe")
 
 
 @dataclass
@@ -487,7 +487,7 @@ def derive_iterations(steps: list[dict]) -> tuple[list[Iteration], dict[str, Sta
             it.error = s.get("error") or None
         elif step == "commit":
             it.changed = bool(s.get("changed"))
-            it.recorded = bool(s.get("recorded"))
+            it.recorded = it.recorded or bool(s.get("recorded"))
             it.cost = float(s.get("cost") or 0)
             it.housekeeping = bool(s.get("housekeeping"))
             stages["commit"].count += 1
@@ -496,6 +496,8 @@ def derive_iterations(steps: list[dict]) -> tuple[list[Iteration], dict[str, Sta
             it.verdict = s.get("verdict") or it.verdict or ""
         elif step == "revert":
             it.reverted = True
+        elif step == "scribe":
+            it.recorded = bool(s.get("recorded"))
     return [iters[k] for k in sorted(iters)], stages
 
 

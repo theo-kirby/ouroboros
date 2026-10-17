@@ -24,10 +24,10 @@ either without recording why there.
   Python string. Placeholders are `{name}`.
 - **One memory surface.** Agents reach memory only through `ouroboros mem`. A new
   verb or rule goes into both stores in the same commit, with a test on each.
-- **Two roles, one writer.** The loop has an actor and a critic, nothing else.
-  Only the reconcile pass (an actor housekeeping iteration) writes the state
-  graph; a work iteration records only; the critic writes nothing. Keep the
-  forbidden-verb lists in the prompts in step with that.
+- **Three roles, one writer.** The loop has an actor, a critic and a scribe,
+  nothing else. Only the scribe writes the memory, and only its fold writes state;
+  the actor and the critic only read it. `memcli.VERBS_OF` enforces that per role:
+  keep the prompts in step with it.
 - **The charter is read-only to agents.** Nothing in this repo may write
   `.ouroboros/goal.md` of a target repo.
 - **No empty commits, no history rewrites** in target repos. Reverts are

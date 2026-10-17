@@ -12,7 +12,7 @@ Behavior = Callable[[Path, str], Result]
 
 
 def _record(cwd: Path, did: str) -> None:
-    """What `ouroboros mem record` does for the actor: one record, no state change."""
+    """What `ouroboros mem record` does: one record, no state change."""
     store = FilesStore(cwd)
     records = store.snapshot().records()
     slug, message = store.record(title=did, body=f"## What\n\n{did}\n\n## Why\n\n-\n\n## Method\n\n-\n\n## Result\n\nmore\n",
@@ -20,32 +20,44 @@ def _record(cwd: Path, did: str) -> None:
     assert slug, message
 
 
+def report(did: str) -> str:
+    """The actor's final message: the report the scribe records from."""
+    return f"I {did}.\n\n## What\n\n{did}\n\n## Why\n\n-\n\n## Method\n\n-\n\n## Result\n\nmore\n\n## Claims\n\n- none: a test unit\n"
+
+
 def works(did: str = "did a unit") -> Behavior:
     def b(cwd: Path, prompt: str) -> Result:
         (cwd / "work.txt").open("a").write(did + "\n")
-        _record(cwd, did)
-        return Result(text=f"I {did}. Next: more.", session_id="s1", cost_usd=0.5, turns=3)
+        return Result(text=report(did), session_id="s1", cost_usd=0.5, turns=3)
     return b
 
 
 def records_only(did: str = "recorded the unit") -> Behavior:
-    """Writes a record and nothing else: a diff that is all bookkeeping."""
+    """Writes memory and nothing else: a diff that is all bookkeeping."""
     def b(cwd: Path, prompt: str) -> Result:
         _record(cwd, did)
-        return Result(text=f"I {did}. Next: more.", session_id="s1", cost_usd=0.5, turns=3)
+        return Result(text=report(did), session_id="s1", cost_usd=0.5, turns=3)
+    return b
+
+
+def scribes(did: str | None = None) -> Behavior:
+    """A scribe that records the iteration (titled from `did`, or the prompt's iteration)."""
+    def b(cwd: Path, prompt: str) -> Result:
+        import re
+        n = re.search(r"In iteration (\d+)", prompt)
+        _record(cwd, did or f"iteration {n.group(1) if n else '?'}")
+        return Result(text="recorded", cost_usd=0.1)
     return b
 
 
 def asks_question() -> Behavior:
     def b(cwd: Path, prompt: str) -> Result:
-        _record(cwd, "paused to ask")
         return Result(text="I could use A or B. Which one do you want?", session_id="s1", cost_usd=0.2)
     return b
 
 
 def claims_done() -> Behavior:
     def b(cwd: Path, prompt: str) -> Result:
-        _record(cwd, "finished everything")
         return Result(text="All tasks are complete. Nothing left to do.", session_id="s1", cost_usd=0.2)
     return b
 
@@ -62,10 +74,10 @@ def times_out() -> Behavior:
     return lambda cwd, prompt: Result(text="partial", timed_out=True)
 
 
-def no_record() -> Behavior:
+def no_report() -> Behavior:
     def b(cwd: Path, prompt: str) -> Result:
         (cwd / "work.txt").open("a").write("forgot to record\n")
-        return Result(text="did stuff, forgot the record", session_id="s1")
+        return Result(text="did stuff", session_id="s1")
     return b
 
 
@@ -102,3 +114,10 @@ def verdict(v: str, reply: str = "", reason: str = "r") -> Behavior:
 
 def garbage() -> Behavior:
     return lambda cwd, prompt: Result(text="I think you should continue, probably?")
+
+
+def critique(v: str, reply: str = "", fix_first: str = "", reason: str = "r") -> Behavior:
+    """A critic agent's JSON verdict."""
+    import json
+    return lambda cwd, prompt: Result(text=json.dumps({"verdict": v, "reply": reply, "reason": reason,
+                                                       "did": "d", "doing": "c", "fix_first": fix_first}), cost_usd=0.02)

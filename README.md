@@ -41,14 +41,27 @@ next step from it, but no agent can edit the charter.
 
 ## The loop
 
-- **Actor:** picks one task, does the work, tests it, and records the result.
-  When the memory says a reconcile is due, its next iteration is housekeeping.
+- **Actor:** picks one task, does the work, tests it, and reports it.
 - **Critic:** one read-only call after every actor turn. It reviews the change
   against the quality bar, answers the actor's questions as you would, refuses
   claims of completion that do not hold up, names loops, and writes the message
   the next iteration starts from. Rejected changes are reverted by default.
+- **Scribe:** after the verdict, it records the unit in the memory (a rejected
+  one as a dead end), folds the memory when a fold is due, and keeps the run's
+  page up to date.
 
-There are no other roles. The critic's reply names the next unit.
+There are no other roles. The critic's reply names the next unit. Each role may
+run only its own `ouroboros mem` verbs: the actor reads, the critic reads and
+checks, the scribe writes.
+
+## The run's page
+
+Every run keeps a live page at `.ouroboros/runs/<run>/view/index.html`. Ouroboros
+fills in the facts itself (the stage, the iteration, the criteria, the frontier,
+the critic's decisions, the timeline of records); the scribe writes the story
+(results, tables, figures). `ouroboros view` serves it; `ouroboros view --host
+0.0.0.0` lets a phone open it, for example over Tailscale. A repo can bring its
+own template at `.ouroboros/view/template.html`.
 
 If an agent hits a usage limit, Ouroboros switches to a configured fallback
 or waits for access to return. By default the actor falls back from Claude to
@@ -58,6 +71,7 @@ Codex. Set roles and limits in `.ouroboros/config.yml`:
 roles:
   actor: { harness: claude, timeout: 90m, fallback: [{ harness: codex }] }
   critic: { harness: codex, timeout: 10m, fallback: [{ harness: claude }] }
+  scribe: { harness: claude, model: sonnet, timeout: 20m, fallback: [{ harness: codex }] }
 stop: { after: 8h, max_usage: 0.8 }
 ```
 

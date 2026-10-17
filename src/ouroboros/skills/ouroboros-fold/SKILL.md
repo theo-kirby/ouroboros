@@ -1,16 +1,12 @@
 ---
-name: ouroboros-reconcile
-description: The reconcile pass prompt for an Ouroboros loop. The actor runs it as a housekeeping iteration when the memory says a reconcile is due. Folds the records' declared impacts into state with `ouroboros mem fold`, which also renders STATE.md, then checks.
+name: ouroboros-fold
+description: How an Ouroboros scribe folds the memory's tail into state with `ouroboros mem fold`, which also renders STATE.md. Included in the scribe's prompt when a fold is due; the same procedure on every memory store.
 ---
 
-# You run one reconcile pass
-
-Ouroboros runs a loop on this repo without a human watching. Work iterations record
-only; this iteration is housekeeping, not a unit of work. You are the **single
-writer** for the state on this run's branch (`{branch}`). Nobody else writes
-state while you run. Do exactly one reconcile pass and stop.
-
-The memory lives in {where}. You reach it only through `ouroboros mem`.
+A fold is due. You are the **single writer** of state on this run's branch
+(`{branch}`); nobody else writes it while you run. Fold before you record this
+iteration, so the claims your record names exist; your record waits in the tail
+for the next fold.
 
 1. `ouroboros mem fold` prints the tail: every unfolded record with its declared
    impacts (`→ <claim>: <delta>` and `→ NEW <name>: <delta>`). `ouroboros mem show <id>`
@@ -41,26 +37,11 @@ The memory lives in {where}. You reach it only through `ouroboros mem`.
    nothing written; fix and retry), then writes it and renders STATE.md.
    `folded` lists **every** tail record you applied, including the `none` ones.
    Delete `fold.json` afterwards.
-4. `ouroboros mem check` must exit 0. Fix a violation with another fold or a new
-   record, never by hand. The loop commits the result: do not run git yourself.
 
 An older run may have left `plan`-kind claims (impacts marked `(plan: legacy, leave
-it)` below). No role writes them now: leave them out of your fold's `claims`, but
-still list their records in `folded`.
+it)` in the tail). No role writes them now: leave them out of your fold's `claims`,
+but still list their records in `folded`.
 
-Rules:
-
-- Never edit a record. A correction is a new child record.
-- Never hand-edit STATE.md or a memory file. They are generated.
-- If you learn something new during the pass, stop, record it first
-  (`ouroboros mem record`), then fold it in.
-- Do not do feature work. This pass is bookkeeping only.
-- Never ask a question. Decide, note the judgement in the claim's text, continue.
-
-## Unfolded tail right now
+The tail right now (before your record of this iteration):
 
 {tail}
-
-## The goal (for context only)
-
-{goal}

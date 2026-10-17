@@ -10,8 +10,6 @@ class MemoryAdapter(Protocol):
     def orient_prompt(self) -> str:
         """Text placed before the work instructions: what is true now."""
 
-    def record_prompt(self) -> str:
-        """Text that tells the agent exactly how to record this unit."""
 
     def snapshot(self) -> Any:
         """Opaque marker taken before the call."""
@@ -21,7 +19,9 @@ class MemoryAdapter(Protocol):
 
     def needs_reconcile(self) -> bool: ...
 
-    def reconcile_prompt(self) -> str | None: ...
+    def fold_prompt(self) -> str: ...
+
+    def fallback_record(self, *, iteration: int, report: str, verdict: str) -> str | None: ...
 
     def last_summary(self) -> str:
         """One line for the commit message."""
@@ -69,7 +69,10 @@ class BaseMemory:
     def needs_reconcile(self) -> bool:
         return False
 
-    def reconcile_prompt(self) -> str | None:
+    def fold_prompt(self) -> str:
+        return ""
+
+    def fallback_record(self, *, iteration: int, report: str, verdict: str) -> str | None:
         return None
 
     def critic_context(self) -> str:

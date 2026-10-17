@@ -350,12 +350,7 @@ def write_run(run_dir: Path, spec: dict, rng, v: Voice) -> None:
             logged.append((clock, f"harness: claude -> codex ({MODELS['codex']})"))
 
         clock += rng.uniform(1.0, 4.0)
-        # Every sixth iteration is the actor's housekeeping turn: the reconcile pass,
-        # run as an iteration, so it shows in the history like any other.
-        housekeeping = n % 6 == 0 and not slow
-        events.append((clock, {"iteration": n, "step": "commit", "sha": sha(rng),
-                               "changed": not slow, "recorded": not slow and not reverted and not housekeeping,
-                               "cost": cost, **({"housekeeping": True} if housekeeping else {})}))
+        events.append((clock, {"iteration": n, "step": "commit", "sha": sha(rng), "changed": not slow, "cost": cost}))
         # One critic call per iteration: it grades the diff and writes the next prompt.
         clock += rng.uniform(22.0, 95.0)
         ov = "reject" if reverted else ("stuck" if n % 97 == 0 else ("answer" if n % 41 == 0 else "continue"))
@@ -374,6 +369,10 @@ def write_run(run_dir: Path, spec: dict, rng, v: Voice) -> None:
             events.append((clock, {"iteration": n, "step": "revert",
                                    "to": f"ouroboros/{spec['run']}/ok-{n - 1:04d}", "sha": sha(rng)}))
             (run_dir / "reverted" / f"{n:04d}.patch").write_text("diff --git a/x b/x\n" + v.blurb(400))
+        # The scribe records every unit after the verdict, and folds every sixth iteration.
+        clock += rng.uniform(15.0, 60.0)
+        events.append((clock, {"iteration": n, "step": "scribe", "exit": 0, "recorded": True,
+                               **({"fold_due": True} if n % 6 == 0 else {}), "cost": 0.0}))
         logged.append((clock, f"[{n}] commit {sha(rng)}  changed={not slow}  recorded={not slow and not reverted}"))
 
     # A scenario that names its wall clock has the timeline scaled onto it, shape kept.

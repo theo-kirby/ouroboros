@@ -8,19 +8,22 @@ from ouroboros.engine import Engine
 from ouroboros.gitguard import GitGuard
 from ouroboros.memory.files import FilesMemory
 from ouroboros.recorder import Recorder
+from ouroboros.roles.scribe import Scribe
+from ouroboros.roles.critic import AgentCritic
+from ouroboros.harness.base import Result
 
 from conftest import git
-from fake_harness import (FakeHarness, asks_question, claims_done, crashes, no_record, nothing,
+from fake_harness import (FakeHarness, asks_question, claims_done, crashes, no_report, nothing,
                           raises, rate_limited, records_only, times_out, works)
 
 
 def make_engine(repo: Path, harness: FakeHarness, *, max_iterations=5, resume_for=1, sleeps=None,
-                critic=None, goal_text=None, stop=None):
+                critic=None, goal_text=None, stop=None, scribe=None):
     cfg = Config(run="t", stop=stop or StopConfig(max_iterations=max_iterations))
     cfg.roles["actor"].resume_for = resume_for
     git_ = GitGuard(repo, cfg.branch)
     git_.start()
-    mem = FilesMemory(repo, reconcile_every=0, pressure=10**6)   # no housekeeping unless a test asks
+    mem = FilesMemory(repo, reconcile_every=0, pressure=10**6)   # no fold unless a test asks
     rec = Recorder(repo / ".ouroboros" / "runs" / "t", echo=lambda *_: None)
     sleeps = sleeps if sleeps is not None else []
 
@@ -30,6 +33,8 @@ def make_engine(repo: Path, harness: FakeHarness, *, max_iterations=5, resume_fo
             raise KeyboardInterrupt("too many backoffs in a test")
 
     kw = {"critic": critic} if critic is not None else {}
+    if scribe is not None:   # a FakeHarness: the scribe role on it; None: the loop records each iteration itself
+        kw["scribe"] = Scribe(scribe, cwd=repo)
     eng = Engine(config=cfg, repo=repo, harness=harness, memory=mem, git=git_, recorder=rec,
                  budget=BudgetClock(cfg.stop), sleeper=fake_sleep,
                  goal_text=goal_text if goal_text is not None else (repo / ".ouroboros" / "goal.md").read_text(), **kw)
@@ -96,13 +101,14 @@ def test_timeout_is_not_fatal(repo):
     assert eng.iteration == 2
 
 
-def test_missing_record_is_noticed(repo):
-    h = FakeHarness([no_record(), works()])
+def test_a_missing_report_is_named_and_the_iteration_is_still_recorded(repo):
+    h = FakeHarness([no_report(), works()])
     eng = make_engine(repo, h, max_iterations=2)
     eng.run()
-    assert eng.outcomes[0].recorded is False
-    assert eng.outcomes[0].changed is True
-    assert "did not record its unit" in h.prompts[1]
+    assert eng.outcomes[0].recorded is True and eng.outcomes[0].changed is True
+    assert "ended without its report" in h.prompts[1]
+    titles = [r["title"] for r in eng.memory.graph().records()]
+    assert "Iteration 1 (unrecorded by the scribe)" in titles   # no scribe here: the loop wrote it
 
 
 def test_driver_exception_is_survived(repo):
@@ -130,8 +136,8 @@ def test_same_error_three_times_reverts_to_last_ok(repo):
     assert verdicts[3] == "reject"
     # failed iterations make no commits, so there was nothing to revert and no patch to save
     assert not (repo / ".ouroboros" / "runs" / "t" / "reverted" / "0004.patch").exists()
-    # the tree matches the last accepted tag
-    assert git(repo, "diff", "ouroboros/t/ok-0001", "HEAD", "--stat") == ""
+    # the work matches the last accepted tag; only the memory grew (each iteration is recorded)
+    assert git(repo, "diff", "ouroboros/t/ok-0001", "HEAD", "--stat", "--", ".", ":!.ouroboros") == ""
 
 
 def test_resume_for_reuses_session(repo):
@@ -214,35 +220,67 @@ def test_failed_iteration_makes_no_empty_commit(repo):
     eng = make_engine(repo, FakeHarness([crashes("x"), crashes("x")]), max_iterations=1)
     eng.run()
     subjects = git(repo, "log", "--format=%s").splitlines()
-    assert not [s for s in subjects if s.startswith("ouroboros #")]   # only the run-start commit of the memory
+    # no work commit: only the memory's (the run start, and the record of the failed iteration)
+    assert not [s for s in subjects if s.startswith("ouroboros #") and "record —" not in s]
 
 
-def test_the_actor_does_housekeeping(repo: Path, monkeypatch):
-    """A due reconcile becomes the actor's next iteration."""
-    actor = FakeHarness([], default=works())
-    eng = make_engine(repo, actor, max_iterations=3)
+def folds_and_records(cwd: Path, prompt: str) -> Result:
+    """A scribe that records the iteration and, when its prompt says a fold is due, folds the whole tail."""
+    from ouroboros.memory.files import FilesStore
+    from fake_harness import scribes
+    scribes()(cwd, prompt)
+    if "No fold is due" not in prompt:
+        store = FilesStore(cwd)
+        assert store.fold({"claims": [], "folded": [r["id"] for r in store.snapshot().tail()]})[0]
+    return Result(text="recorded and folded", cost_usd=0.1)
+
+
+def test_a_due_fold_goes_to_the_scribe_and_the_actor_always_works(repo: Path, monkeypatch):
+    actor, scribe = FakeHarness([], default=works()), FakeHarness([], default=folds_and_records)
+    eng = make_engine(repo, actor, max_iterations=3, scribe=scribe)
     due = {"n": 1}
     monkeypatch.setattr(eng.memory, "needs_reconcile", lambda: due["n"] > 0)
-    monkeypatch.setattr(eng.memory, "reconcile_prompt", lambda: "You are the maintainer for one reconcile pass")
     done = []
     monkeypatch.setattr(eng.memory, "mark_reconciled", lambda: (done.append(True), due.update(n=0)))
     eng.run()
-    assert actor.prompts[0].startswith("You are the maintainer")           # iteration 1 was housekeeping
-    assert "You are one iteration" in actor.prompts[1]                      # then back to work
+    assert all("You are one iteration" in p for p in actor.prompts)          # no housekeeping turns any more
+    assert "A fold is due" in scribe.prompts[0] and "No fold is due" in scribe.prompts[1]
     assert done == [True]
-    assert eng.outcomes[0].housekeeping and not eng.outcomes[1].housekeeping
-    steps = eng.recorder.read_jsonl(eng.recorder.iterations)
-    assert [s.get("housekeeping") for s in steps if s.get("step") == "commit"] == [True, None, None]
-    assert eng.outcomes[0].verdict.verdict == "continue" and "handoff" not in eng.outcomes[0].verdict.reply
+    assert all(o.recorded for o in eng.outcomes)
+    assert [s.get("fold_due") for s in eng.recorder.read_jsonl(eng.recorder.iterations) if s.get("step") == "scribe"] == [True, None, None]
 
 
-def test_housekeeping_never_runs_two_iterations_in_a_row(repo: Path, monkeypatch):
-    actor = FakeHarness([], default=works())
-    eng = make_engine(repo, actor, max_iterations=4)
-    monkeypatch.setattr(eng.memory, "needs_reconcile", lambda: True)       # never satisfied
-    monkeypatch.setattr(eng.memory, "reconcile_prompt", lambda: "You are the maintainer for one reconcile pass")
+def test_the_scribe_runs_after_the_critic_and_records_a_reverted_unit(repo: Path):
+    from fake_harness import critique
+    actor = FakeHarness([works("good"), works("bad")])
+    scribe = FakeHarness([], default=folds_and_records)
+    critic_h = FakeHarness([critique("continue"), critique("reject", "undo it")])
+    eng = make_engine(repo, actor, max_iterations=2, scribe=scribe,
+                      critic=AgentCritic(critic_h, goal_text="# g", cwd=repo))
     eng.run()
-    assert [p.startswith("You are the maintainer") for p in actor.prompts] == [True, False, True, False]
+    assert "continue —" in scribe.prompts[0] and "stays on the branch" in scribe.prompts[0]
+    assert "reject —" in scribe.prompts[1] and "**reverted**" in scribe.prompts[1]
+    # the revert undid the bad unit, not the record of the good one
+    assert "bad" not in (repo / "work.txt").read_text()
+    titles = [r["title"] for r in eng.memory.graph().records()]
+    assert titles[-2:] == ["iteration 1", "iteration 2"]
+    steps = [s["step"] for s in eng.recorder.read_jsonl(eng.recorder.iterations) if s.get("iteration") == 2]
+    assert steps.index("revert") < steps.index("scribe")
+
+
+def test_each_role_runs_with_its_name_in_the_environment(repo: Path):
+    import os
+    seen = {}
+
+    def note(role):
+        def b(cwd, prompt):
+            seen[role] = os.environ.get("OUROBOROS_ROLE")
+            return works()(cwd, prompt) if role == "actor" else Result(text="ok")
+        return b
+    eng = make_engine(repo, FakeHarness([], default=note("actor")), max_iterations=1,
+                      scribe=FakeHarness([], default=note("scribe")))
+    eng.run()
+    assert seen == {"actor": "actor", "scribe": "scribe"} and "OUROBOROS_ROLE" not in os.environ
 
 
 def test_unchanged_iterations_do_not_schedule_bookkeeping(repo, monkeypatch):

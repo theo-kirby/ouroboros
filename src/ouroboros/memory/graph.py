@@ -267,7 +267,7 @@ def directive_body(*, goal_text: str, branch: str, previous: str | None, gaps: l
         if previous else ""
     )
     dropped_text = (
-        "\n\nCriteria this version drops (the reconcile pass marks their gaps superseded):\n"
+        "\n\nCriteria this version drops (the next fold marks their gaps superseded):\n"
         + "\n".join(f"- {n}: {c}" for n, c in dropped)
     ) if dropped else ""
     # fenced, so the charter's own headings do not read as the record's sections
@@ -278,7 +278,7 @@ def directive_body(*, goal_text: str, branch: str, previous: str | None, gaps: l
         f"{text}\n\n**Done criteria as gaps** (one open state claim each; work closes them through "
         f"declared impacts):\n\n{gap_lines}{dropped_text}\n\n"
         f"## Method\n\nOuroboros iterations on branch `{branch}`: orient, one dispatched unit, record, commit; "
-        "a reconcile pass folds the tail on pressure.\n\n"
+        "the scribe records each unit and folds the tail on pressure.\n\n"
         "## Result\n\nDirective recorded. Work follows as child records.\n"
     )
 
@@ -428,17 +428,16 @@ class GraphMemory(BaseMemory):
         count, _ = self.unreconciled()
         return count >= self.pressure
 
-    def reconcile_prompt(self) -> str | None:
+    def fold_prompt(self) -> str:
+        """The fold procedure, for the scribe's prompt when a fold is due."""
         _, tail = self.unreconciled()
         return (
-            skill("ouroboros-reconcile")
-            .replace("{where}", self.store.where)
+            skill("ouroboros-fold")
             .replace("{branch}", self.branch or "(run branch)")
             .replace("{tail}", f"```\n{tail.strip()[-4000:]}\n```")
-            .replace("{goal}", (self.goal_text or "").strip()[:4000] or "(none)")
         )
 
-    # -- the work iteration ------------------------------------------------
+    # -- the actor's view ----------------------------------------------------
     def orient_prompt(self) -> str:
         count, _ = self.unreconciled()
         return (
@@ -471,8 +470,15 @@ class GraphMemory(BaseMemory):
         out = head + sep + arch + sep2 + after
         return out if len(out) <= limit * 2 else out[: limit * 2] + "\n\n(… truncated; run `ouroboros mem orient`)"
 
-    def record_prompt(self) -> str:
-        return skill("ouroboros-record").replace("{parent}", self.last_record_slug or self.directive_slug or "root")
+    def fallback_record(self, *, iteration: int, report: str, verdict: str) -> str | None:
+        """The record the engine writes when the scribe wrote none: an iteration is never lost."""
+        text = (report or "").strip() or "(the actor wrote no report)"
+        body = (f"## What\n\nIteration {iteration}, recorded by the loop: the scribe did not record it.\n\n"
+                f"## Why\n\n(see the actor's report below)\n\n## Method\n\n(not recorded)\n\n"
+                f"## Result\n\nCritic: {verdict}\n\nThe actor's report, verbatim:\n\n~~~~\n{text[:6000]}\n~~~~\n")
+        return self.new_record(title=f"Iteration {iteration} (unrecorded by the scribe)", body=body,
+                               parent=self.last_record_slug or self.directive_slug,
+                               none_reason="the scribe did not record this iteration; its impacts are unknown")
 
     def snapshot(self) -> set[str]:
         return set(self.record_ids())

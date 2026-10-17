@@ -33,6 +33,8 @@ from . import notify, operator
 from .recorder import Recorder
 from . import watch as watcher
 from .roles.critic import AgentCritic, RulesCritic
+from .roles.scribe import Scribe
+from . import view as runview
 
 GOAL_TEMPLATE = """# Goal: {name}
 
@@ -152,6 +154,8 @@ def load_config(args: argparse.Namespace, repo: Path) -> Config:
         cfg.git.allow_dirty = True
     if getattr(args, "critic", None):
         cfg.critic = args.critic
+    if getattr(args, "scribe", None):
+        cfg.scribe = args.scribe
     if getattr(args, "memory", None):
         cfg.memory = args.memory
     if getattr(args, "launcher", None):
@@ -212,7 +216,7 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         return 2
     print(f"ready: run {cfg.run!r} on branch {cfg.branch}, memory {cfg.memory}")
     print("  roles: " + ", ".join(f"{n}={cfg.role(n).harness}:{cfg.role(n).model or 'default'}" for n in cfg.active_roles)
-          + ("" if cfg.critic == "agent" else "  (critic: rules only)"))
+          + "".join(f"  ({r}: rules only)" for r in ("critic", "scribe") if getattr(cfg, r) != "agent"))
     stop = [f"{k}={v}" for k, v in cfg.stop.model_dump().items() if v is not None]
     print("  stops at: " + (", ".join(stop) or "nothing — it will run until you stop it"))
     return 0
@@ -311,9 +315,14 @@ def cmd_run(args: argparse.Namespace) -> int:
         )
     else:
         critic = RulesCritic()
+    scribe = None
+    if cfg.scribe == "agent":
+        srole = cfg.role("scribe")
+        scribe = Scribe(pools["scribe"], cwd=repo, timeout=srole.timeout_seconds, model=srole.model,
+                        transcript_path=lambda n, a: recorder.transcript_path(n, "scribe", a), log=recorder.log)
 
     engine = Engine(
-        config=cfg, repo=repo, harness=pools["actor"], memory=memory, critic=critic,
+        config=cfg, repo=repo, harness=pools["actor"], memory=memory, critic=critic, scribe=scribe,
         git=git, recorder=recorder, budget=BudgetClock(cfg.stop), goal_text=goal_text, goal_path=goal_path,
     )
     # a re-run of the same run name continues where the last one stopped
@@ -631,7 +640,7 @@ def cmd_status(args: argparse.Namespace) -> int:
 # flatter the run: cost covers every role, and a revert counts only if git agrees.
 # `oversee`, `reconcile` and `plan` are steps older runs wrote for the overseer,
 # maintainer and planner, roles the loop no longer has; their cost still counts.
-ROLE_OF_STEP = {"commit": "actor", "critique": "critic", "oversee": "overseer",
+ROLE_OF_STEP = {"commit": "actor", "critique": "critic", "scribe": "scribe", "oversee": "overseer",
                 "reconcile": "maintainer", "plan": "planner"}
 
 
@@ -752,6 +761,22 @@ def cmd_report(args: argparse.Namespace) -> int:
     out.write_text(text)
     print(text)
     print(f"(written to {out})")
+    return 0
+
+
+def cmd_view(args: argparse.Namespace) -> int:
+    """Serve the run's live page (written by the loop) to a browser: desktop, or a phone over a tailnet."""
+    repo = repo_root()
+    cfg = load_config(args, repo)
+    rd = run_dir_for(repo, cfg.run)
+    goal_path = repo / cfg.goal
+    graph = None
+    try:
+        graph = make_memory(cfg.memory, repo).graph()
+    except Exception:
+        pass   # no memory yet: the page shows the run without it
+    runview.render(rd, repo, goal_text=goal_path.read_text() if goal_path.exists() else "", graph=graph)
+    runview.serve(rd, host=args.host, port=args.port)
     return 0
 
 
@@ -900,6 +925,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--model")
     r.add_argument("--allow-dirty", action="store_true")
     r.add_argument("--critic", choices=["agent", "rules"], help="rules: the deterministic critic, no model call")
+    r.add_argument("--scribe", choices=["agent", "rules"], help="rules: the loop writes each record itself, no model call")
     r.add_argument("--memory", choices=["auto", "governor", "files"])
     r.add_argument("--foreground", action="store_true", help="run here: the same as --launcher foreground")
     r.add_argument("--launcher", choices=launch.LAUNCHERS,
@@ -952,6 +978,11 @@ def build_parser() -> argparse.ArgumentParser:
     sk.add_argument("--user", action="store_true", help="install to ~/.claude, ~/.codex, ~/.pi/agent, ~/.agents skill dirs")
     sk.add_argument("--target")
     sk.set_defaults(fn=cmd_skills)
+
+    v = sub.add_parser("view", parents=[common], help="serve the run's live page (--host 0.0.0.0 for a phone)")
+    v.add_argument("--host", default="127.0.0.1", help="the address to listen on; 0.0.0.0 reaches other devices")
+    v.add_argument("--port", type=int, default=8765)
+    v.set_defaults(fn=cmd_view)
 
     memcli.add_parser(sub)
     sub.choices["mem"].set_defaults(fn=cmd_mem)

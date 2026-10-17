@@ -3,6 +3,10 @@
 Every verb does the same thing on either store, so a prompt never says which
 store it is talking to. Exit codes follow governor: 0 done, 1 `check` found a
 violation, 2 nothing was written (the message says why).
+
+Each role of the loop gets its own verbs, and this is where that is enforced:
+the engine sets `OUROBOROS_ROLE` for every harness call, and a verb outside the
+role's set is refused. A human at a shell (no role set) may use every verb.
 """
 
 from __future__ import annotations
@@ -13,6 +17,7 @@ import sys
 from pathlib import Path
 
 from .memory import store_for_cli
+import os
 from .memory.graph import Graph, parse_pair, tail_listing
 
 FOLD_SHAPE = (
@@ -20,6 +25,18 @@ FOLD_SHAPE = (
     '"negative": "- …", "cites": ["<record-id>"]}, {"new": "<name>", "parent": "root", "title": "<Title>", '
     '"status": "open", "current": "- …", "cites": ["<record-id>"]}], "folded": ["<every tail record id>"]}'
 )
+
+
+ROLE_ENV = "OUROBOROS_ROLE"
+VERBS_OF = {
+    "actor": {"orient", "show"},                                     # reads; the scribe records its unit
+    "scribe": {"orient", "show", "record", "fold", "check", "render"},
+    "critic": {"orient", "show", "check"},                           # read-only, like the rest of its tools
+}
+
+
+def allowed(verb: str, role: str | None) -> bool:
+    return not role or verb in VERBS_OF.get(role, set())
 
 
 def add_parser(sub) -> None:
@@ -42,6 +59,11 @@ def add_parser(sub) -> None:
 
 
 def run(args: argparse.Namespace, repo: Path, configured: str) -> int:
+    role = os.environ.get(ROLE_ENV)
+    if not allowed(args.verb, role):
+        verbs = ", ".join(sorted(VERBS_OF.get(role, set()))) or "none"
+        print(f"ouroboros mem {args.verb}: the {role} does not {args.verb} (its verbs: {verbs})", file=sys.stderr)
+        return 2
     try:
         store = store_for_cli(repo, configured)
     except ValueError as exc:

@@ -108,8 +108,8 @@ class StopConfig(BaseModel):
 
 
 class GraphConfig(BaseModel):
-    """When housekeeping is due. Both memories are the same model, so this applies to both."""
-    reconcile_every: int = 5   # housekeeping after this many work iterations
+    """When the scribe folds. Both memories are the same model, so this applies to both."""
+    reconcile_every: int = 5   # a fold after this many worked iterations
     pressure: int = 3          # ...or as soon as this many record nodes are unreconciled
     budget_units: int = 1      # dispatch budget per iteration
 
@@ -177,17 +177,20 @@ class Config(BaseModel):
     # systemd only: MemoryMax for the run's unit, which covers every process it
     # starts (e.g. "40G"). Unset: no cap beyond the user slice's.
     memory_max: str | None = None
-    # Two roles, and only two: the actor, which writes, and the critic that judges it
-    # and writes the next prompt. Housekeeping is an actor iteration; the next unit is
-    # the critic's reply. `rules` is the critic with no model behind it -- the same
-    # deterministic fallback that runs when the agent call fails.
+    # Three roles: the actor works and reports; the critic judges it and writes the
+    # next prompt; the scribe records the unit, folds the memory, and keeps the view.
+    # `rules` is a role with no model behind it -- the same deterministic fallback
+    # that runs when the agent call fails (for the scribe: the loop writes the record).
     critic: str = "agent"  # agent | rules
+    scribe: str = "agent"  # agent | rules
     idle_interval: str = "30m"  # sleep between iterations after done_accepted under report_done
     roles: dict[str, RoleConfig] = Field(
         default_factory=lambda: {
             # Codex carries the actor while Claude is limited (cadex nt2: 54 of 68 turns).
             "actor": RoleConfig(fallback=[FallbackConfig(harness="codex")]),
             "critic": RoleConfig(timeout="10m"),
+            # Book-keeping, not judgment: a lighter model does it well, and Codex covers a limit.
+            "scribe": RoleConfig(timeout="20m", fallback=[FallbackConfig(harness="codex")]),
             "reporter": RoleConfig(timeout="10m"),   # the digest writer; not in the pipeline
         }
     )
@@ -212,8 +215,8 @@ class Config(BaseModel):
 
     @property
     def active_roles(self) -> list[str]:
-        """The roles the loop calls, in pipeline order."""
-        return ["actor", "critic"]
+        """The roles the loop calls a model for, in pipeline order (a `rules` role calls none)."""
+        return ["actor"] + [r for r in ("critic", "scribe") if getattr(self, r) == "agent"]
 
     @classmethod
     def load(cls, path: Path) -> "Config":
