@@ -734,6 +734,46 @@ which in `runs/<run>/tmux`, so `stop` kills the window and never the operator's
 session. With `backend: tmux`, each harness call also opens its own window in
 that session while it runs.
 
+**The web dashboard** (`ouroboros web`, optionally `--run-name NAME` and
+`--port 8765`) serves a read-only page on `127.0.0.1`. It polls a local JSON
+endpoint every two seconds using the same snapshot reader as the TUI. It
+leads with the selected run name and shows state and process liveness, iteration, recorded elapsed time, kept changes,
+harness usage, the critic's current/last descriptions, the latest agent message,
+attention requests, and the last five decisions with expandable reasoning, next steps,
+and required fixes. Critic direction is labeled separately from actual agent activity.
+The activity feed shows the latest 30 non-thinking transcript events, their source
+and transcript age. A critic panel shows reasoning, next steps, required fixes and
+counts of verdicts, errors, reverted changes and recorded iterations. Actor work
+records are read from up to five recorded commits in this run's log (handoff files
+or hypergraph record bodies), not from unrelated files in the current checkout.
+Their sections are expandable and remain open across unchanged polls. Only actor
+and critic appear in the pipeline and stage chart; optional roles are omitted.
+Iteration bars can be selected to read exact timing, verdict and error details.
+The desktop interface fills the browser viewport with a shared grid; panel
+heights and plots resize with the available space, and long text scrolls inside
+panels. Narrow windows (below 950 CSS pixels, including text zoom) reflow into
+an internally scrolling workspace to preserve readable text. Plot geometry
+tracks container dimensions through ResizeObserver. The interface puts the current unit before its metric strip, groups live
+instruments under telemetry, and separates activity from work history with
+in-page navigation. Updating figures use tabular numerals. Chart selections
+have persistent pressed states, full-height bar targets and scrollable outcome
+cells; reverted series use patterns or dashes as well as color. Keyboard focus,
+reduced-motion and forced-color styles are explicit. Gauge elements are reused
+between ticks, and transcript updates preserve the reader's scroll position.
+Live instruments include a stage clock (ring relative to that stage's historical
+average, not completion), a retained-changes gauge, a cumulative kept/reverted
+plot and an interactive recent-outcome strip. A CPU line plot retains up to 90
+process-tree samples in browser memory while the page is open, alongside RSS and
+process counts; CPU can exceed 100% across cores. Stage clocks tick each second
+and show stale after ten seconds without a successful poll. Demo resource values
+are simulated and the page remains labeled as sample data. Two charts show the latest 40
+actor durations and total time by stage (step gaps, including waits). Missing
+runs show an empty state; disconnected clients retain their last view with a
+warning. The server exposes only the page and snapshot, never arbitrary repo
+files, and does not control the loop. It uses Python's standard HTTP server and
+has no frontend dependencies. `--demo` serves a labeled, in-memory sample run
+with populated charts and decisions, without writing run files.
+
 **The status TUI** (`ouroboros status --watch` on a terminal, or `ouroboros top`)
 is a btop-style curses monitor in `tui/`, ported from the author's vllmtop. It
 reads only the run directory and the repo, never the loop process, on a poller
