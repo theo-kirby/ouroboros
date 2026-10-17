@@ -1,15 +1,75 @@
-# Ouroboros
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo-dark.svg">
+    <img src="docs/logo.svg" alt="Ouroboros logo: a serpent that eats its tail" width="120">
+  </picture>
+</p>
 
-Run Claude Code, Codex, or Pi on a repo indefinitely. You set the goal; agents
-make changes and check the work. Ouroboros keeps a record.
+<h1 align="center">Ouroboros</h1>
 
-![Ouroboros loop: orient, work, prove, verify, judge, and adapt](docs/ouroboros.png)
+<p align="center"><b>Leave the agent alone. Trust what it did.</b></p>
+
+<p align="center">
+  <a href="https://borris.dev"><img alt="Site: borris.dev" src="https://img.shields.io/badge/site-borris.dev-111111"></a>
+  <img alt="Python 3.12+" src="https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white">
+  <a href="https://docs.astral.sh/uv/"><img alt="Built with uv" src="https://img.shields.io/badge/built%20with-uv-DE5FE9"></a>
+  <img alt="Harnesses: Claude Code, Codex, Pi" src="https://img.shields.io/badge/harnesses-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20Pi-6B4FBB">
+  <img alt="Tests: pytest" src="https://img.shields.io/badge/tests-pytest-0A9EDC?logo=pytest&logoColor=white">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-green"></a>
+</p>
+
+<p align="center">Claude Code · Codex · Pi · open source · all state is files in your repo</p>
+
+---
+
+It is easy to keep an agent running. It is hard to trust what it did while you
+were away. With no supervision, an agent drifts from the goal. It says "done"
+before it is done. It keeps busy but ships nothing. And in the morning you get
+200 commits and no explanation.
+
+Ouroboros gives a long run discipline. You write a charter. One agent makes one
+change, a second agent checks that change against the charter, and a third
+writes down what happened and why. Each change is checked, each step is
+recorded, and each iteration must move the work forward. You come back to a
+branch that you can read, and a report that tells you what to merge.
+
+![The Ouroboros loop: orient, work, prove, verify, judge, and adapt](docs/ouroboros.png)
+
+## The five rules
+
+These rules win over every other rule in a run.
+
+1. **Follow the charter.** The critic grades every change against your goal,
+   your constraints and your quality bar. A change that fails is reverted. No
+   agent can edit the charter.
+2. **Prove every claim.** The critic refuses a claim that the diff and the tests
+   do not support, and a claim of "done" most of all.
+3. **Report as it goes.** Every iteration writes a record of what changed and
+   why. The run page stays current, a digest goes to your phone, and
+   `ouroboros report` gives the full account.
+4. **Do work, not motion.** One bounded unit per iteration, done to the end. No
+   change, no commit. Two counters catch a loop that is busy but ships nothing.
+5. **Never block, never stop early.** The critic answers the actor's questions
+   from your question policy. A usage limit switches to a fallback harness.
+   Only a stop condition that you set ends a run.
+
+| The problem of an unattended agent | What Ouroboros does |
+|---|---|
+| It drifts from the goal. | The critic picks each next step from the charter and reverts a change that goes outside it. |
+| It says "done" too early. | The critic refuses a claim of completion that the diff and the tests do not support. |
+| Nobody can tell what it did. | Each step is a record with its reason, and each claim in state cites a record. |
+| It asks a question, or hits a limit, and stops. | The critic answers as you would, and the role falls back to another harness. |
+| It keeps busy but ships nothing. | Watched, not solved: two counters name the loop and change the model. |
+
+To run for a long time is the easy part. To run well for a long time is the
+problem.
 
 ## Install
 
-You need Python 3.12+, `uv`, and at least one agent CLI installed and logged
-in: `claude`, `codex`, or `pi`. To outlive the terminal, a run needs one of
-tmux, tern, or a systemd user session (`launcher:` in the config).
+You need Python 3.12+, [`uv`](https://docs.astral.sh/uv/), and at least one
+agent CLI that is logged in: `claude`, `codex` or `pi`. To outlive the terminal,
+a run needs one of tmux, tern, or a systemd user session (`launcher:` in the
+config).
 
 ```bash
 git clone https://github.com/theo-kirby/ouroboros.git
@@ -20,53 +80,87 @@ ouroboros skills install --user
 
 ## Run
 
-From the repo you want the agents to work on:
+In the repo you want worked on:
 
 ```bash
-ouroboros init                 # create the config and goal template
-ouroboros design               # work through your goal with an agent
-ouroboros run --for 8h         # under config `launcher:`: a systemd unit, a tern session, or tmux
-ouroboros top                 # watch progress
-ouroboros stop                # stop early if needed
-ouroboros report              # write a run report
-ouroboros watch               # push alerts and a 4-hourly digest to your phone (run starts it for you)
+ouroboros init            # config and charter template
+ouroboros design          # write the charter with an agent
+ouroboros run --for 8h    # start the loop
+ouroboros top             # watch it
+ouroboros stop            # stop early if you must
+ouroboros report          # read what happened
+ouroboros watch           # alerts and a digest to your phone (run starts it for you)
 ```
 
-Start with a clean working tree and a completed goal. Run `ouroboros` with
-no arguments for an interactive menu.
+Start with a clean working tree. Read the report and the run branch before you
+merge. Run `ouroboros` with no arguments for an interactive menu.
 
-Your goal lives in `.ouroboros/goal.md`, called the **charter**. It defines
-what to build, the constraints, and what counts as done. The critic picks each
-next step from it, but no agent can edit the charter.
+## Three roles, and no others
 
-## The loop
+| Role | What it does | Memory verbs |
+|---|---|---|
+| **Actor** | Picks one unit of work from the critic's message. Does it to the end, tests it, and reports it. | `orient` `show` |
+| **Critic** | One read-only call after every actor turn. Grades the change against your quality bar, answers questions as you would, refuses false "done", names loops, and writes the next prompt. A rejected change is reverted. | `orient` `show` `check` |
+| **Scribe** | Records the unit in memory (a rejected one as a dead end), folds the memory when a fold is due, and keeps the run's page up to date. | `record` `fold` `render` |
 
-- **Actor:** picks one task, does the work, tests it, and reports it.
-- **Critic:** one read-only call after every actor turn. It reviews the change
-  against the quality bar, answers the actor's questions as you would, refuses
-  claims of completion that do not hold up, names loops, and writes the message
-  the next iteration starts from. Rejected changes are reverted by default.
-- **Scribe:** after the verdict, it records the unit in the memory (a rejected
-  one as a dead end), folds the memory when a fold is due, and keeps the run's
-  page up to date.
+The actor reads, the critic reads and checks, the scribe writes. No agent can
+edit the charter.
 
-There are no other roles. The critic's reply names the next unit. Each role may
-run only its own `ouroboros mem` verbs: the actor reads, the critic reads and
-checks, the scribe writes.
+## The charter
+
+The charter is the contract for the run. It lives in `.ouroboros/goal.md`.
+`ouroboros design` writes it with you, in an interview. The critic picks each
+next step from it, and grades each change against it. While you are away, the
+charter speaks for you.
+
+```markdown
+# Goal: <name>
+## Mission            one paragraph: what and why, priorities in order
+## Done criteria      - [ ] claims about the world, not tasks
+## Horizon ladder     short-term, medium-term, long-term
+## Constraints        never do X; always keep Y green
+## Question policy    how to decide for me: "prefer the reversible option"
+## Quality bar        what the critic grades against
+```
+
+"Done" is a verdict, not a stop condition. When the done criteria are met, the
+run continues up the horizon ladder.
+
+## Motion is not progress
+
+A loop that keeps working can ship nothing: records about records, audits of
+audits, plans that restate the last plan. All of these write files, so a diff
+looks like progress. One real run did 201 iterations, changed 22,437 lines,
+wrote 128 records, and moved the frontier by 1 node.
+
+An agent that you ask "are you looping?" always finds a reason why this time is
+different. So Ouroboros counts two things that an agent cannot argue with:
+
+| Counter | Counts iterations that | Fires at |
+|---|---|---|
+| `no_product` | changed only memory files, not the product | 8 |
+| `no_frontier` | left the frontier unchanged | 30 |
+
+Step 1: name the loop in the next prompt. Step 2: change the model. There is no
+step 3. A loop is a thing to break out of, not a thing to die of.
 
 ## The run's page
 
 Every run keeps a live page at `.ouroboros/runs/<run>/view/index.html`, written
-for someone who does not know the code. Ouroboros fills in the facts itself (the
-loop and its current stage, the key figures, usage, the criteria, the open
-problems, a timeline of every iteration, and the memory graph drawn by
-Governor's renderer); the scribe writes a plain-language
-summary and the findings (results, tables, figures). `ouroboros view` serves it; `ouroboros view --host
-0.0.0.0` lets a phone open it, for example over Tailscale. A repo can bring its
-own template at `.ouroboros/view/template.html`.
+for someone who does not know the code. Ouroboros fills in the facts: the loop
+and its current stage, the key figures, usage, the criteria, the open problems,
+a timeline of every iteration, and the memory graph. The scribe writes a
+plain-language summary and the findings. `ouroboros view` serves it;
+`ouroboros view --host 0.0.0.0` lets a phone open it, for example over
+Tailscale. A repo can bring its own template at `.ouroboros/view/template.html`.
 
-If an agent hits a usage limit, Ouroboros switches to a configured fallback
-or waits for access to return. By default the actor falls back from Claude to
+See [borris.dev](https://borris.dev) for a page in this style, made from a real
+run.
+
+## Configuration and usage
+
+If an agent hits a usage limit, Ouroboros switches to a configured fallback or
+waits for access to return. By default the actor falls back from Claude to
 Codex. Set roles and limits in `.ouroboros/config.yml`:
 
 ```yaml
@@ -77,53 +171,61 @@ roles:
 stop: { after: 8h, max_usage: 0.8 }
 ```
 
-Dollars are the wrong meter for a subscription, which charges a flat fee and then
-rations by window. So a run meters whatever its harnesses actually report: windows
-for Claude Code and Codex, dollars for a harness on an API key. `max_usage` is a
-fraction of a subscription's **weekly** window, because a five-hour window refills
-on its own and the fallback covers the wait. `ouroboros status` and the report show
-where each window sits and how far the run moved it.
+Efficient work includes efficient spend. A subscription charges a flat fee and
+then rations by window, so a run meters windows, not dollars: windows for Claude
+Code and Codex, dollars only for a harness on an API key. `max_usage` is a
+fraction of a subscription's **weekly** window, because a five-hour window
+refills on its own and the fallback covers the wait. `ouroboros status` and the
+report show where each window sits and how far the run moved it.
+
+A subscription's `total_cost_usd` is priced from token counts at API list rates.
+It is not your bill.
+
+After you switch a Claude or Codex login, or get usage back, run
+`ouroboros refresh` in the project. It checks the configured providers again
+with small no-tool probes and wakes a waiting run. Active calls finish first.
+A configuration change still needs a restart.
 
 ## On your phone
 
-`ouroboros watch` is a reporter outside the loop: it reads the run directory,
-never the loop, and pushes to [Pushover](https://pushover.net). Put your user key
-and an application token in `.env`, `.ouroboros/.env`, or `~/.ouroboros/.env`:
+`ouroboros watch` is a reporter outside the loop. It reads the run directory,
+never the loop, and pushes to [Pushover](https://pushover.net). Put your user
+key and an application token in `.env`, `.ouroboros/.env`, or
+`~/.ouroboros/.env`:
 
 ```
 PO_USER=...     # your user key
 PO_TOKEN=...    # an application token from pushover.net/apps/build
 ```
 
-`ouroboros run` then starts the reporter beside the loop. It pushes fixed-text
-alerts the moment they show in the files -- the run stopped, a harness ran out of
-usage, `NEEDS_HUMAN.md` appeared, the critic called it stuck, the process died --
-and a model-written digest every four hours and when the run ends: what landed,
-what is next, what is broken, the numbers. Tune it under `report:` in the config.
-`ouroboros watch --test` checks the phone; `--once` sends a digest now.
+`ouroboros run` then starts the reporter next to the loop. It pushes fixed-text
+alerts as soon as they show in the files: the run stopped, a harness ran out of
+usage, `NEEDS_HUMAN.md` appeared, the critic called it stuck, the process died.
+It also sends a model-written digest every four hours and when the run ends:
+what landed, what is next, what is broken, the numbers. Tune it under `report:`
+in the config. `ouroboros watch --test` checks the phone; `--once` sends a
+digest now.
 
-## Memory and review
+## Memory
 
-Every run keeps the [governor](https://github.com/theo-kirby/governor) model:
-append-only records, each declaring what it changes, and state claims that cite
-them, written only by a fold. A repo with a governor graph (`.flywheel/db.sqlite`
-at the checkout, `governor` on `PATH`) keeps it there. Any other repo keeps the
-same records and claims as markdown files under `.ouroboros/graph/`, committed with
-the code, shaped so they can seed a Flywheel graph later. `memory: auto` picks
-governor when it is there and `files` otherwise; `--memory governor|files` forces
-one (`handoff` is the old name of `files`).
+Memory is how a run explains itself, to the next iteration and to you. Records
+are append-only. Each one says what it changes. State is a set of claims that
+cite records, and only a fold writes state. The next actor reads the state and
+the records that are not folded yet.
 
-Agents see one command either way: `ouroboros mem orient | show | record | fold |
-check | render`. You can run it too. Keep `.flywheel/` and
-`.governor/` gitignored (a governor run adds them to `.gitignore` if they are not).
+Every run keeps this [governor](https://github.com/theo-kirby/governor) model.
+A repo with a governor graph (`.flywheel/db.sqlite` at the checkout, `governor`
+on `PATH`) keeps it there. Any other repo keeps the same records and claims as
+markdown files under `.ouroboros/graph/`, committed with the code, in a shape
+that can seed a Flywheel graph later. `memory: auto` picks governor when it is
+there and `files` if not; `--memory governor|files` forces one.
 
-Review the report and run branch before merging. Use a merge commit for
-graph-memory runs: their records reference commit IDs, which squash and rebase change.
+Agents see one command for both: `ouroboros mem orient | show | record | fold |
+check | render`. You can run it too. Keep `.flywheel/` and `.governor/`
+gitignored (a governor run adds them to `.gitignore` if they are not there).
 
-A run reports what it spent as the windows it burned, never as dollars: a
-subscription's `total_cost_usd` is priced from token counts at API list rates
-and is not your bill. Dollars appear only for a harness on an API key, which
-has no windows and a real invoice.
+Use a merge commit for graph-memory runs: their records reference commit IDs,
+and a squash or a rebase changes them.
 
 ## Development
 
@@ -131,11 +233,6 @@ has no windows and a real invoice.
 uv run pytest -q
 ```
 
-Role prompts live in `src/ouroboros/skills/`. See [DESIGN.md](DESIGN.md) for
-the design, decisions, and lessons from real runs.
-
-After switching a Claude/Codex login or restoring usage credits, run
-`ouroboros refresh` (also `ouroboros --refresh`) in the project.
-It rechecks the configured providers with small no-tool probes and wakes a
-waiting run. Active calls finish first. Configuration changes still require
-a restart.
+Role prompts are skills in `src/ouroboros/skills/`. [AGENTS.md](AGENTS.md) is
+the contract for changes to this repo. [DESIGN.md](DESIGN.md) holds the design,
+the decisions, and the lessons from real runs.
