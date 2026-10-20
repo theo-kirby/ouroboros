@@ -277,3 +277,18 @@ def test_an_engine_run_records_and_folds_through_the_cli(repo, monkeypatch):
     tracked = git(repo, "ls-files", ".ouroboros/graph")
     assert "records/r-0003.md" in tracked and "claims/gap-readme-exists.md" in tracked, "the memory is committed with the code"
     assert (repo / ".ouroboros/runs/t/view/index.html").exists(), "the run keeps its page"
+
+
+def test_criterion_identity_survives_evidenced_fold_and_renaming(store):
+    from ouroboros.criteria import rows
+    key="gap-build-passes-clean-clone"
+    rid,_=store.record(title="Directive",body=BODY,parent="root",impacts=[],news=[(key,"open")],none=None)
+    ok,msg=store.fold({"claims":[{"new":key,"title":"Renamed", "status":"working",
+        "current":"passes", "cites":[rid]}],"folded":[rid]})
+    assert ok,msg
+    assert rows(store.snapshot(),GOAL)[0]['met']
+    rid2,_=store.record(title="Review",body=BODY,parent=rid,impacts=[(key,"still passes")],news=[],none=None)
+    ok,msg=store.fold({"claims":[{"slug":key,"title":"Different title", "status":"working",
+        "current":"new prose", "cites":[rid2]}],"folded":[rid2]})
+    assert ok,msg
+    assert rows(store.snapshot(),GOAL)[0]['met']

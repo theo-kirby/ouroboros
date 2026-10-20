@@ -345,7 +345,7 @@ def _claims_graph(repo, n):
 
 
 def test_long_lists_show_three_then_a_toggle(run_dir, repo):
-    view.render(run_dir, repo, goal_text=GOAL, graph=_claims_graph(repo, 5))
+    view.render(run_dir, repo, goal_text="## Done criteria\n" + "".join(f"- [ ] Criterion {i}\n" for i in range(5)), graph=_claims_graph(repo, 5))
     html = page(run_dir)
     crit = html[html.index('id="h-criteria"'):html.index('id="h-frontier"')]
     assert crit.count('<li class="row') == 5

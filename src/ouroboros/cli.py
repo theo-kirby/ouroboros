@@ -696,7 +696,7 @@ def cmd_archive(args: argparse.Namespace) -> int:
         facts = history.gather(repo, cfg, rd, machine=args.machine)
         written.append(history.write_digest(repo, facts))
         print(f"{name}: {facts.iterations} iterations, {facts.commits} commits, "
-              f"{facts.ticked} of {facts.criteria_total} criteria ticked, "
+              f"{facts.ticked} of {facts.criteria_total} criteria completed, "
               + (f"merged {facts.merged[:8]}" if facts.merged else "not merged"))
     for path in written:
         print(f"wrote {path.relative_to(repo)}")

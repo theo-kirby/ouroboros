@@ -31,6 +31,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import goal as charter
+from . import criteria as progress
 from .config import Config
 from .gitguard import GitError, GitGuard
 from .loops import is_product_change
@@ -85,9 +86,11 @@ class RunFacts:
     landed: list[str] = field(default_factory=list)
     commits: int = 0
     diffstat: str = ""
+    criteria_source: str = "charter checkboxes (legacy)"
+    criteria_unknown: int = 0
     criteria_total: int = 0
-    criteria_closed: int = 0        # ticked at the branch tip, including boxes the charter opened with
-    criteria_ticked: int | None = None   # ticked *by this run*; None when there is no merge base to compare
+    criteria_closed: int = 0        # verified met, including preexisting successes
+    criteria_ticked: int | None = None   # newly met in this run; None when its baseline is unknown
     merged: str = ""          # the merge commit's sha, or "" when the branch is unmerged
     usage_lines: list[str] = field(default_factory=list)
     money: dict[str, float] = field(default_factory=dict)
@@ -147,7 +150,12 @@ def gather(repo: Path, cfg: Config, run_dir: Path, *, machine: str | None = None
         facts.longest_loop = max(facts.longest_loop, int(s.get("streak") or 0))
 
     _add_git(repo, facts)
-    _add_criteria(repo, cfg, facts)
+    if not progress.add_facts(run_dir, facts):
+        _add_criteria(repo, cfg, facts)
+        if facts.memory in ("governor", "files", "handoff", "auto"):
+            facts.criteria_unknown = facts.criteria_total - facts.criteria_closed
+            facts.criteria_ticked = None
+            facts.criteria_source = "memory completion unavailable; legacy charter checkboxes only"
     facts.failed_reverts = unverified_reverts(repo, facts.branch, reverts)
     return facts
 
@@ -293,6 +301,8 @@ def front_matter(facts: RunFacts) -> list[str]:
         f"criteria_ticked: {facts.ticked}",
         f"criteria_closed: {facts.criteria_closed}",
         f"criteria_total: {facts.criteria_total}",
+        f"criteria_unknown: {facts.criteria_unknown}",
+        f"criteria_source: {facts.criteria_source}",
         f"merged: {facts.merged or 'no'}",
         f"branch: {facts.branch}",
         f"memory: {facts.memory}",
@@ -318,7 +328,7 @@ def digest(facts: RunFacts, notes: str = "") -> str:
         "|---|---|",
         f"| iterations | {facts.iterations} (changed {facts.changed}, recorded {facts.recorded}) |",
         f"| commits | {facts.commits}{(' — ' + facts.diffstat) if facts.diffstat else ''} |",
-        f"| criteria | **this run ticked {facts.ticked}**; {facts.criteria_closed} of {facts.criteria_total} checked at the tip |",
+        f"| criteria | **this run completed {facts.ticked}**; {facts.criteria_closed} of {facts.criteria_total} verified met; {facts.criteria_unknown} unknown ({facts.criteria_source}) |",
         f"| reverts | {facts.reverts}"
         + (f", **{len(facts.failed_reverts)} did not take**" if facts.failed_reverts else "")
         + " |",
@@ -412,7 +422,7 @@ def write_index(repo: Path) -> Path:
         "Every Ouroboros run against this repo. Generated from"
         " `.ouroboros/history/*.md` by `ouroboros archive`; do not hand-edit.",
         "",
-        "| run | started | machine | iters | commits | ticked | hours | merged |",
+        "| run | started | machine | iters | commits | completed | hours | merged |",
         "|---|---|---|---|---|---|---|---|",
     ]
     for fm in rows:

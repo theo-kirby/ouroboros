@@ -21,7 +21,7 @@ cat .ouroboros/RUNS.md
 Then the last run's digest, `.ouroboros/history/<run>.md`, **notes first**. The
 notes are what a human concluded and are the only part not derivable from logs.
 
-Look at the `ticked` column across runs. It is what each run closed on the
+Look at the `completed` column across runs. It is what each run closed on the
 charter. If the last two or three runs ticked nothing while writing hundreds of
 commits, say so before anything else and treat the charter as the thing to fix:
 a criterion nobody can tick will not become tickable by running longer.
@@ -123,3 +123,5 @@ Do not edit files the loop is working in. A charter edit applies at the next run
 start, not this one — say so if the user asks for one. If something is wrong
 enough to fix now, the honest options are `ouroboros stop`, fix, and start again
 under the same run name.
+
+Completion reports use run-local memory criterion states, not edits to the human-owned charter. An unknown count (`?`) means the historical mapping/baseline is unavailable; do not interpret it as zero progress. Consult the reported source, unknown count and actual reviewed evidence.

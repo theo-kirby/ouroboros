@@ -39,10 +39,10 @@ digest before you read this one's logs**, starting with the notes below the
 marker: those are what a human concluded, and they are the only part that is not
 derivable from the logs you are about to read.
 
-Two columns in the index carry most of the signal. `ticked` is what a run closed
+Two columns in the index carry most of the signal. `completed` is what a run closed
 on the charter -- not what is checked at its tip, which includes everything the
 charter opened with. `commits` beside it says how much the run wrote. A run with
-a large `commits` and a `ticked` of 0 is the pattern to name out loud, and if
+a large `commits` and a `completed` of 0 is the pattern to name out loud, and if
 several runs in a row read that way, say so: that is a charter problem, and no
 amount of loop detection fixes it.
 
@@ -132,3 +132,5 @@ A run that is over must leave something the next operator can read.
 
 Do not write into the digest what the generated part already says. A number that
 appears twice will disagree with itself eventually.
+
+Completion reports use run-local memory criterion states, not edits to the human-owned charter. An unknown count (`?`) means the historical mapping/baseline is unavailable; do not interpret it as zero progress. Consult the reported source, unknown count and actual reviewed evidence.

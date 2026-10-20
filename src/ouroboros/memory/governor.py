@@ -14,6 +14,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from ..criteria import tag_fold
+
 from .graph import Graph, GraphMemory
 
 
@@ -157,6 +159,7 @@ class GovernorStore:
         return result["slug"], f"{result['slug']}  (record)  committed to the Flywheel repository"
 
     def fold(self, plan: dict) -> tuple[bool, str]:
+        plan = tag_fold(plan, self.snapshot())
         if (plan.get("view") or "state") != "state":
             return False, "- a fold writes state; there is no other view"
         fd, path = tempfile.mkstemp(prefix="fold-", suffix=".json")

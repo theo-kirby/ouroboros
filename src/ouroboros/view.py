@@ -36,6 +36,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from . import goal as charter
+from . import criteria as progress
 from .memory.graph import FRONTIER_STATUSES, Graph, first_line, one_line, section
 
 VIEW = "view"
@@ -597,14 +598,8 @@ def _now(status: dict, decisions: list[dict], goal_text: str) -> str:
 
 
 def _criteria_count(graph: Graph | None, goal_text: str) -> tuple[int, int]:
-    if graph is not None and graph.ok:
-        gaps = [n for n in graph.claims("state") if str(n.get("slug") or n.get("id") or "").startswith("gap-")
-                and n.get("status") != "superseded"]
-        if gaps:
-            return sum(1 for n in gaps if n.get("status") == "working"), len(gaps)
-    every = charter.done_criteria(goal_text or "", include_checked=True)
-    open_ = set(charter.done_criteria(goal_text or ""))
-    return sum(1 for c in every if c not in open_), len(every)
+    rows = progress.rows(graph, goal_text)
+    return sum(r['met'] for r in rows), len(rows)
 
 
 ROWS_SHOWN = 3
@@ -621,34 +616,12 @@ def _rows(rows: list[str], key: str) -> str:
 
 
 def _criteria(graph: Graph | None, goal_text: str) -> str:
-    gaps = []
-    if graph is not None and graph.ok:
-        gaps = [n for n in graph.claims("state")
-                if str(n.get("slug") or n.get("id") or "").startswith("gap-")]
-    rows = []
-    if gaps:
-        live = [n for n in gaps if n.get("status") != "superseded"]
-        for n in gaps:
-            st = str(n.get("status") or "–")
-            now = first_line(section(n.get("content", ""), "Current"), 240)
-            cites = len(graph.cites(n))
-            rows.append(
-                f'<li class="row{" gone" if st == "superseded" else ""}">{_chip("met" if st == "working" else st, STATUS_CLASS.get(st, ""))}'
-                f'<div class="what"><strong>{_md(n.get("title") or graph.label(n["id"]))}</strong>'
-                f'{f"<span class=\"sub\">{_md(now)}</span>" if now else ""}</div>'
-                f'<span class="num count" title="records cited">{cites} rec</span></li>')
-        total = len(live)
-        met = sum(1 for n in live if n.get("status") == "working")
-        source = "from the memory's gap claims"
-    else:
-        every = charter.done_criteria(goal_text or "", include_checked=True)
-        open_ = set(charter.done_criteria(goal_text or ""))
-        for c in every:
-            done = c not in open_
-            rows.append(f'<li class="row">{_chip("ticked" if done else "open", "ok" if done else "warn")}'
-                        f'<div class="what">{_md(c)}</div></li>')
-        total, met = len(every), sum(1 for c in every if c not in open_)
-        source = "from the charter (no gap claims in memory yet)"
+    values = progress.rows(graph, goal_text)
+    rows = [f'<li class="row">{_chip("ticked" if r["status"] == "checked" else "met" if r["met"] else r["status"], "ok" if r["met"] else "warn")}'
+            f'<div class="what"><strong>{_md(r["title"])}</strong>'
+            f'<span class="sub">{_md(first_line(progress.MARKER.sub("", section(r["current"], "Current")), 240))}</span></div></li>' for r in values]
+    total, met = len(values), sum(r['met'] for r in values)
+    source = "run criteria matched to memory identity; unknown means no reliable claim mapping"
     if not rows:
         return '<p class="quiet">The charter declares no done criteria.</p>'
     pct = round(100 * met / total) if total else 0
@@ -1032,6 +1005,7 @@ def render(run_dir: Path, repo: Path, *, goal_text: str, graph=None, now: float 
         now = time.time() if now is None else now
         vdir = view_dir(run_dir)
         assets_dir(run_dir).mkdir(parents=True, exist_ok=True)
+        progress.save(run_dir, goal_text or "", graph)
         status = _read_json(run_dir / "status.json")
         decisions_path = run_dir / "critic.jsonl"
         if not decisions_path.exists():

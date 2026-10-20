@@ -397,3 +397,24 @@ def test_the_mem_cli_drives_governor_with_the_same_verbs(gov_repo, monkeypatch, 
     claim = next(n for n in snap(gov_repo)["nodes"].values() if n["title"] == "Gap A")
     assert cli.main(["mem", "show", claim["slug"]]) == 0 and "## Current" in capsys.readouterr().out
     assert cli.main(["mem", "check"]) == 0
+
+
+def test_criterion_identity_survives_governor_generated_slug(gov_repo):
+    from ouroboros.criteria import rows
+    from ouroboros.memory.governor import GovernorStore
+    store=GovernorStore(gov_repo)
+    key="gap-build-passes-clean-clone"
+    rid,msg=store.record(title="Criterion directive",body=BODY,parent="root",impacts=[],news=[(key,"open")],none=None)
+    assert rid,msg
+    ok,msg=store.fold({"claims":[{"new":key,"parent":"root","title":"Renamed build criterion",
+        "status":"working","current":"passes","cites":[rid]}],"folded":[rid]})
+    assert ok,msg
+    claim=next(c for c in store.snapshot().claims() if c['title']=="Renamed build criterion")
+    assert not claim['slug'].startswith('gap-')
+    assert rows(store.snapshot(),GOAL_WITH_GAPS)[0]['met']
+    review,msg=store.record(title="Review",body=BODY,parent=rid,impacts=[(claim['slug'],"still true")],news=[],none=None)
+    assert review,msg
+    ok,msg=store.fold({"claims":[{"slug":claim['slug'],"status":"working",
+        "current":"replacement prose","cites":[review]}],"folded":[review]})
+    assert ok,msg
+    assert rows(store.snapshot(),GOAL_WITH_GAPS)[0]['met']

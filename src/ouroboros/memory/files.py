@@ -35,6 +35,8 @@ from pathlib import Path
 
 import yaml
 
+from ..criteria import tag_fold
+
 from .graph import KEBAB, STATUSES, Graph, GraphMemory, orient_text, render_state
 
 RECORD_KEYS = ("id", "kind", "title", "parents", "at", "node_id", "digest")
@@ -352,6 +354,7 @@ class FilesStore:
 
     def fold(self, plan: dict) -> tuple[bool, str]:
         g = self.snapshot()
+        plan = tag_fold(plan, g)
         problems = self.validate_fold(g, plan)
         if problems:
             return False, "\n".join(f"- {p}" for p in problems)

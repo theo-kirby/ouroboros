@@ -86,21 +86,24 @@ def criteria(repo: Path, *boxes: str) -> None:
         + "".join(f"- {b}\n" for b in boxes))
 
 
-def test_what_the_run_ticked_is_not_what_the_charter_opened_with(repo):
-    """nt3's tip says 9 of 13 closed. nt3 closed none of them: they were shipped before it."""
+def test_charter_boxes_alone_cannot_measure_graph_run_progress(repo):
+    """Human ticks are preserved, but cannot establish what graph work completed."""
     criteria(repo, "[x] the walk runs end to end", "[ ] the box is proven", "[ ] a biped trains")
     git(repo, "commit", "-qam", "charter")
     branch_with(repo, "ot4", [("work", "cli/main.py")])
-    d = run_dir(repo, "ot4", steps=[])
+    d = run_dir(repo, "ot4", steps=[], status={"memory": "governor"})
 
     facts = history.gather(repo, Config(run="ot4"), d)
     assert (facts.criteria_closed, facts.criteria_total) == (1, 3)
-    assert facts.criteria_ticked == 0, "the run closed nothing, however full the charter looks"
-    assert "this run ticked 0" in history.digest(facts)
+    assert facts.criteria_ticked is None
+    assert facts.criteria_unknown == 2
+    assert "this run completed ?" in history.digest(facts)
 
     criteria(repo, "[x] the walk runs end to end", "[x] the box is proven", "[ ] a biped trains")
     GitGuard(repo, "ouroboros/ot4").commit("prove the box")
-    assert history.gather(repo, Config(run="ot4"), d).criteria_ticked == 1
+    updated = history.gather(repo, Config(run="ot4"), d)
+    assert updated.criteria_ticked is None
+    assert (updated.criteria_closed, updated.criteria_unknown) == (2, 1)
 
 
 def test_an_unmeasurable_tick_count_reads_as_unknown_rather_than_zero(repo):
@@ -110,7 +113,7 @@ def test_an_unmeasurable_tick_count_reads_as_unknown_rather_than_zero(repo):
     d = run_dir(repo, "orphan", steps=[])
     facts = history.gather(repo, Config(run="orphan"), d)
     assert facts.criteria_ticked is None and facts.ticked == "?"
-    assert "this run ticked ?" in history.digest(facts)
+    assert "this run completed ?" in history.digest(facts)
 
 
 def test_a_merged_branch_reports_the_merge_commit_and_what_it_brought(repo):

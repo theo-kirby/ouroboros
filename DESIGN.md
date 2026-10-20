@@ -1328,3 +1328,29 @@ Fresh successful readings replace stale account meters; cooldowns clear only
 when the probe succeeds and configured reserves permit it. Failed probes keep
 existing cooldowns. Refresh does not edit credentials, change the charter,
 reload configuration or restart the run. A stopped run must be started normally.
+
+
+### Evidence-backed criterion reporting (2026-10-20)
+
+The human-owned charter stays read-only. Checking its boxes is not the agents'
+completion mechanism: the scribe folds a criterion claim to `working` when it is
+true and evidenced. Both stores retain a machine-readable `ouroboros-criterion`
+comment in the claim's Current section, preserving the original gap key through
+renames and whole-text folds. Governor-generated random slugs are not criterion
+identities. Unrelated/ambiguous claims and working claims with no record citations
+cannot establish completion; unmapped criteria are explicitly unknown.
+
+The live view matches only the current charter's criteria, not all historical gap
+claims in a shared graph. Its read-only accounting writes a run-local
+`criteria.json` snapshot, retaining initial met identities and current statuses.
+The archive uses this snapshot for total verified met and newly met during the
+run; it never reads another run's current graph to rewrite history. Preexisting
+success is not credited again. Missing or malformed snapshots on legacy graph
+runs produce unknown progress rather than a false zero. Explicit human-checked
+criteria remain visible; they do not require the loop to edit the charter.
+
+The archive keeps the existing `criteria_ticked` front-matter key for consumers,
+but labels the human-facing metric completed and includes source/unknown counts.
+Legacy reports can be regenerated with `ouroboros archive`; unknown is retained
+when historical memory evidence cannot be mapped reliably. This changes reporting,
+not critic verdicts, stop policy or scientific evidence requirements.
