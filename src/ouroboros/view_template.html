@@ -55,14 +55,11 @@ h1{font-size:clamp(1.8rem,4.2vw,2.7rem);line-height:1.12;font-weight:600;letter-
 .ring{width:100%;max-width:470px;height:auto;display:block;margin:0 auto}
 figcaption,.cap{font:.82rem/1.45 var(--sans);color:var(--mute);margin-top:6px;text-align:left}
 figcaption b{color:var(--ink);font-weight:600}
-.ring .track{fill:none;stroke:var(--faint);stroke-width:1}
-.ring .arc{fill:none;stroke:var(--rule);stroke-width:2.5}
-.ring .arc.on{stroke:var(--acc);stroke-width:3.5}
-.ring .tipm{fill:var(--mute)}
+.ring .track,.ring .orb{fill:none;stroke:var(--mute);stroke-width:2;stroke-linecap:round;stroke-dasharray:0 7;opacity:.6}
 .ring .dot{fill:var(--paper);stroke:var(--mute);stroke-width:2}
 .ring .node.on .dot{fill:var(--acc);stroke:var(--acc)}
-.ring .halo{fill:var(--acc);opacity:.18;transform-box:fill-box;transform-origin:center;animation:pulse 2.2s ease-out infinite}
-.ring .mover{fill:var(--acc)}
+.ring .oarc{fill:none;stroke:var(--acc);stroke-width:2.5;stroke-linecap:round}
+.ring .tipon,.ring .trav{fill:var(--acc)}
 .ring .nl{font:600 19px var(--serif);fill:var(--ink)}
 .ring .node:not(.on) .nl{fill:var(--mute)}
 .ring .ns{font:12.5px var(--sans);fill:var(--mute)}
@@ -70,7 +67,6 @@ figcaption b{color:var(--ink);font-weight:600}
 .ring .cn{font:600 50px var(--serif);fill:var(--ink)}
 .ring .cs{font:600 12px var(--sans);letter-spacing:.12em;text-transform:uppercase;fill:var(--acc)}
 .ring .ct{font:14px var(--mono);fill:var(--mute)}
-@keyframes pulse{0%{transform:scale(.7);opacity:.35}100%{transform:scale(1.6);opacity:0}}
 
 .figs{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));margin:0 0 18px;border-top:1px solid var(--rule)}
 .fig{padding:8px 12px 10px 0;border-bottom:1px solid var(--rule)}
@@ -204,7 +200,7 @@ iframe.graph{display:block;width:100%;height:min(560px,75vh);border:1px solid va
 footer{margin-top:40px;padding-top:8px;border-top:1px solid var(--rule);color:var(--mute);font:.76rem var(--sans)}
 @media (max-width:640px){body{font-size:16px}.logo{width:44px;height:44px}.kick{font-size:.82rem}iframe.graph{height:380px}.figs{grid-template-columns:repeat(3,minmax(0,1fr))}.its td.what,.its td.next{min-width:0}.lede p{font-size:1.05rem}.its .next,.its .rec{display:none}
 .gauge{grid-template-columns:1fr auto}.cells,.tbar{grid-column:1/-1;order:3}.gs{grid-column:1/-1;order:4;margin-top:2px}.fig dd{font-size:1.5rem}}
-@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.ring .mover{display:none}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
 <body>
@@ -214,7 +210,7 @@ footer{margin-top:40px;padding-top:8px;border-top:1px solid var(--rule);color:va
 <div class="hero">
 <figure class="loopfig">{{loop}}
 <figcaption><b>Fig. 1. The loop.</b> In each iteration, the <b>actor</b> makes one change, the <b>critic</b> keeps or reverts it,
-and the <b>scribe</b> writes down what happened. The highlighted stage is the one running now.</figcaption></figure>
+and the <b>scribe</b> writes down what happened. The arrow spins round the stage running now; when it is done, it moves on along the dotted ring to the next one.</figcaption></figure>
 <div class="side">{{figures}}<h3 class="lab">Time budget</h3>{{time_budget}}<h3 class="lab">Usage this run</h3>{{usage}}</div>
 </div>
 <section class="now" aria-live="polite" aria-label="Right now">{{now}}</section>
@@ -285,6 +281,113 @@ and the <b>scribe</b> writes down what happened. The highlighted stage is the on
     var want = f.getAttribute("data-src") + (document.documentElement.getAttribute("data-theme") === "dark" ? "&theme=dark" : "");
     if (f.getAttribute("src") !== want) f.setAttribute("src", want);
   }
+  // The loop's one arrow. It spins round the running stage's dotted circle; when the stage
+  // changes it runs on round that circle to where it meets the ring, along the ring, and
+  // onto the next stage's circle, where it spins. Each change of circle is rounded over CUT. It lives here, not in the page, so it carries on across swaps.
+  var KEYS = ["work", "critique", "scribe"], SPIN = 1.8, NS = "http://www.w3.org/2000/svg";
+  var still = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var A = {mode: "none", key: null, th: 0}, drawn = null, body = null, tip = null, last = null;
+  function rad(d) { return d * Math.PI / 180; }
+  function geo(ring, key) {
+    var g = ring.querySelector('.node[data-key="' + key + '"]');
+    return g && {x: +g.getAttribute("data-x"), y: +g.getAttribute("data-y"), a: rad(+g.getAttribute("data-a"))};
+  }
+  function on(n, ro, th) { return {x: n.x + ro * Math.cos(th), y: n.y + ro * Math.sin(th)}; }
+  function arcs(n, ro, t0, t1) {   // clockwise round a node from t0 to t1, in pieces of at most half a turn
+    var d = "", t = t0;
+    while (t1 - t > 1e-6) { t = Math.min(t1, t + Math.PI); var p = on(n, ro, t); d += " A" + ro + "," + ro + " 0 0 1 " + p.x.toFixed(2) + "," + p.y.toFixed(2); }
+    return d;
+  }
+  function want(state) {
+    if (KEYS.indexOf(state) >= 0) return {key: state, mode: "spin"};
+    if (state === "idle" || state === "refreshed") return {key: "work", mode: "park"};
+    return {key: null, mode: "none"};
+  }
+  function goto(state) {
+    var ring = document.querySelector("svg.ring");
+    if (!ring || still) return;
+    var w = want(state), ro = +ring.getAttribute("data-orbit"), len = +ring.getAttribute("data-arrow");
+    if (A.mode === "travel") { A.key = A.dest; A.th = A.destTh; A.mode = A.after; }   // a new stage mid-run: land first
+    var g = w.key && geo(ring, w.key);
+    if (!g) { A = {mode: "none", key: null, th: 0}; return; }
+    if (A.mode === "none" || !A.key || A.key === w.key) {
+      if (A.key !== w.key || A.mode === "none") A.th = g.a;
+      A.key = w.key; A.mode = w.mode; return;
+    }
+    var from = geo(ring, A.key), i = KEYS.indexOf(A.key), j = KEYS.indexOf(w.key);
+    var c = {x: +ring.getAttribute("data-cx"), y: +ring.getAttribute("data-cy")}, R = +ring.getAttribute("data-r");
+    var n = (j - i + 3) % 3 || 3, dl = 2 * Math.asin(ro / (2 * R)), CUT = 6;
+    var ra = Math.atan2(from.y - c.y, from.x - c.x), rb = ra + n * 2 * Math.PI / 3;   // the stages on the ring
+    var px = on(c, R, ra + dl), pe = on(c, R, rb - dl);                             // where the circles cross
+    var fx = Math.atan2(px.y - from.y, px.x - from.x), fe = Math.atan2(pe.y - g.y, pe.x - g.x);
+    var out = fx - CUT / ro;
+    while (out < A.th) out += 2 * Math.PI;
+    var t0 = A.th - len / ro, p0 = on(from, ro, t0), r0 = on(c, R, ra + dl + CUT / R), r1 = on(c, R, rb - dl - CUT / R);
+    var land = fe + CUT / ro, q = on(g, ro, land);
+    function xy(p) { return p.x.toFixed(2) + "," + p.y.toFixed(2); }
+    var d = "M" + xy(p0) + arcs(from, ro, t0, out)
+      + " Q" + xy(px) + " " + xy(r0) + arcs(c, R, ra + dl + CUT / R, rb - dl - CUT / R)
+      + " Q" + xy(pe) + " " + xy(q);
+    var destTh = land;
+    var v = 2 * Math.PI * ro / SPIN;
+    A = {mode: "travel", key: A.key, th: A.th, d: d, len: len, v0: A.mode === "spin" ? v : 0,
+         v1: w.mode === "spin" ? v : 0, t0: null, dest: w.key, destTh: destTh, after: w.mode};
+  }
+  function frame(ts) {
+    requestAnimationFrame(frame);
+    var ring = document.querySelector("svg.ring");
+    if (!ring) return;
+    var dt = last === null ? 0 : Math.min(0.1, (ts - last) / 1000);
+    last = ts;
+    if (drawn !== ring) {   // a fresh page: the script draws the arrow from now on
+      drawn = ring;
+      ring.querySelectorAll(".still").forEach(function (x) { x.parentNode.removeChild(x); });
+      body = document.createElementNS(NS, "path"); body.setAttribute("class", "oarc");
+      tip = document.createElementNS(NS, "path"); tip.setAttribute("class", "trav"); tip.setAttribute("d", "M-4,-4.5 L6,0 L-4,4.5z");
+      ring.appendChild(body); ring.appendChild(tip);
+    }
+    var ro = +ring.getAttribute("data-orbit"), len = +ring.getAttribute("data-arrow"), p, ang;
+    body.style.display = tip.style.display = A.mode === "none" ? "none" : "";
+    if (A.mode === "none") return;
+    if (A.mode === "travel") {
+      if (body.getAttribute("d") !== A.d) {
+        body.setAttribute("d", A.d);
+        A.L = body.getTotalLength();
+        A.T = Math.max(0.9, (A.L - A.len) / 240);
+      }
+      if (A.t0 === null) A.t0 = ts;
+      var x = Math.min(1, (ts - A.t0) / 1000 / A.T);
+      if (x >= 1) { A.key = A.dest; A.th = A.destTh; A.mode = A.after; }
+      else {   // Hermite: leaves at the spin's speed, arrives at the next spin's (or at rest)
+        var D = A.L - A.len, x2 = x * x, x3 = x2 * x;
+        var s = A.len + (x3 - 2 * x2 + x) * A.T * A.v0 + (-2 * x3 + 3 * x2) * D + (x3 - x2) * A.T * A.v1;
+        s = Math.max(A.len, Math.min(A.L, s));
+        p = body.getPointAtLength(s);
+        var q = body.getPointAtLength(Math.min(A.L, s + 0.5)), o = body.getPointAtLength(s - 0.5);
+        ang = Math.atan2(q.y - o.y, q.x - o.x) * 180 / Math.PI;
+        body.style.strokeDasharray = A.len + " " + (A.L + A.len);
+        body.style.strokeDashoffset = -(s - A.len);
+      }
+    }
+    if (A.mode !== "travel") {
+      var n = geo(ring, A.key);
+      if (!n) return;
+      if (A.mode === "spin") A.th += dt * 2 * Math.PI / SPIN;
+      A.th %= 2 * Math.PI;
+      var b0 = on(n, ro, A.th - len / ro);
+      body.setAttribute("d", "M" + b0.x.toFixed(2) + "," + b0.y.toFixed(2) + arcs(n, ro, A.th - len / ro, A.th));
+      body.style.strokeDasharray = body.style.strokeDashoffset = "";
+      p = on(n, ro, A.th);
+      ang = A.th * 180 / Math.PI + 90;
+    }
+    tip.setAttribute("transform", "translate(" + p.x.toFixed(2) + "," + p.y.toFixed(2) + ") rotate(" + ang.toFixed(1) + ")");
+  }
+  function start() {
+    var ring = document.querySelector("svg.ring");
+    if (!ring || still || !window.requestAnimationFrame) return;
+    goto(ring.getAttribute("data-state") || "");
+    requestAnimationFrame(frame);
+  }
   function theme(next) {
     document.documentElement.setAttribute("data-theme", next || "light");
     try { localStorage.setItem("ouroboros-theme", next || "light"); } catch (e) {}
@@ -297,6 +400,7 @@ and the <b>scribe</b> writes down what happened. The highlighted stage is the on
   });
   tick();
   graph();
+  start();
   setInterval(tick, 1000);
   if (!view || !window.fetch || location.protocol === "file:") return;
   var busy = false;
@@ -326,8 +430,11 @@ and the <b>scribe</b> writes down what happened. The highlighted stage is the on
       if (doc.title) document.title = doc.title;
       window.scrollTo(x, y);
       tick();
+      var ring = document.querySelector("svg.ring");
+      if (ring) goto(ring.getAttribute("data-state") || "");
     });
   }
+  window.ouroborosSwap = swap;   // `ouroboros view --debug` swaps after each change
   function poll() {
     if (busy || document.hidden) return;
     busy = true;

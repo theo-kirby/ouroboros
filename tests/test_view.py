@@ -83,7 +83,8 @@ def test_render_writes_the_page_and_live_json(run_dir, repo, graph):
     assert f'data-version="{j["version"]}"' in html
     for fact in ("nt9", "Ship the widget", "ouroboros/nt9", "1 h 02", "updated 30 s ago"):
         assert fact in html
-    assert '<path class="arc on"' in html and '<g class="node on">' in html and "now the critic" in html
+    assert 'class="ring" data-state="critique"' in html and '<g class="node on" data-key="critique"' in html
+    assert html.count('class="oarc still"') == 1 and html.count('class="orb"') == 3 and 'class="arc on"' not in html and "now the critic" in html
     assert 'id="stage-for" data-since="1799999900"' in html
     assert "Commits kept</dt><dd><span class=\"num\">1</span><small>1 reverted</small>" in html   # 2 made, 1 reverted
     assert "Build passes clean" in html and "passes on CI" in html and ">met<" in html

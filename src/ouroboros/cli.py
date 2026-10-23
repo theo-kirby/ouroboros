@@ -775,7 +775,12 @@ def cmd_view(args: argparse.Namespace) -> int:
         graph = make_memory(cfg.memory, repo).graph()
     except Exception:
         pass   # no memory yet: the page shows the run without it
-    runview.render(rd, repo, goal_text=goal_path.read_text() if goal_path.exists() else "", graph=graph)
+    goal_text = goal_path.read_text() if goal_path.exists() else ""
+    if args.debug:   # a copy of the run, with a panel that sets its state
+        from . import viewdebug
+        viewdebug.serve(rd, repo, goal_text=goal_text, graph=graph, host=args.host, port=args.port)
+        return 0
+    runview.render(rd, repo, goal_text=goal_text, graph=graph)
     runview.serve(rd, host=args.host, port=args.port)
     return 0
 
@@ -982,6 +987,8 @@ def build_parser() -> argparse.ArgumentParser:
     v = sub.add_parser("view", parents=[common], help="serve the run's live page (--host 0.0.0.0 for a phone)")
     v.add_argument("--host", default="127.0.0.1", help="the address to listen on; 0.0.0.0 reaches other devices")
     v.add_argument("--port", type=int, default=8765)
+    v.add_argument("--debug", action="store_true",
+                   help="serve a copy of the run with a panel that sets its stage, iteration and usage")
     v.set_defaults(fn=cmd_view)
 
     memcli.add_parser(sub)

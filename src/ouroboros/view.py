@@ -380,8 +380,18 @@ def _point(cx: float, cy: float, r: float, deg: float) -> tuple[float, float]:
     return cx + r * math.cos(a), cy + r * math.sin(a)
 
 
+ORBIT = 17           # the dotted circle round each stage, which the arrow spins on
+ARROW = 34           # the arrow's length along its track
 def _loop(status: dict, its: list[dict]) -> str:
-    """The loop as a ring: actor -> critic -> scribe, the stage now lit, and how long it has run."""
+    """The loop as a ring: actor -> critic -> scribe, one arrow on the stage now, and how long it has run.
+
+    The track is dotted and all circles: the ring, and a small circle round each stage. The
+    page's script drives the one arrow: it spins round the running stage, and when the stage
+    changes it runs on round that small circle to where it meets the ring, along the ring,
+    and onto the next stage's circle. Without
+    the script (or with reduced motion) the arrow is drawn still, on the running stage.
+    """
+    import math
     state = str(status.get("state") or "")
     now_key = state if state in dict(STAGES) else None
     since = _float(status.get("stage_since")) or _float(status.get("epoch"))
@@ -392,20 +402,10 @@ def _loop(status: dict, its: list[dict]) -> str:
     typical = {"work": _median([i["actor_s"] for i in its if i.get("actor_s") is not None]),
                "critique": _median([i["critic_s"] for i in its if i.get("critic_s") is not None]),
                "scribe": _median([i["scribe_s"] for i in its if i.get("scribe_s") is not None])}
-    out = ['<svg class="ring" viewBox="-62 -26 424 316" role="img" aria-label="The loop: actor, then critic, then scribe'
+    out = [f'<svg class="ring" data-state="{_e(state)}" data-cx="{cx}" data-cy="{cy}" data-r="{r}" data-orbit="{ORBIT}"'
+           f' data-arrow="{ARROW}" viewBox="-62 -26 424 316" role="img" aria-label="The loop: actor, then critic, then scribe'
            + (f'; now the {STATE_WORD[now_key]}' if now_key else "") + '">',
            f'<circle class="track" cx="{cx}" cy="{cy}" r="{r}"/>']
-    keys = [k for k, _ in STAGES]
-    for i, key in enumerate(keys):
-        a0, a1 = nodes[key] + 17, nodes[keys[(i + 1) % 3]] - 17 + (360 if i == 2 else 0)
-        x0, y0 = _point(cx, cy, r, a0)
-        x1, y1 = _point(cx, cy, r, a1)
-        d = f"M{x0:.1f},{y0:.1f} A{r},{r} 0 0 1 {x1:.1f},{y1:.1f}"
-        on = key == now_key
-        out.append(f'<path class="arc{" on" if on else ""}" d="{d}" marker-end="url(#tip)"/>')
-        if on:
-            out.append(f'<circle class="mover" r="4.5"><animateMotion dur="2.4s" repeatCount="indefinite" '
-                       f'keyPoints="0;1" keyTimes="0;1" calcMode="spline" keySplines=".45 0 .55 1" path="{d}"/></circle>')
     for key, label in STAGES:
         x, y = _point(cx, cy, r, nodes[key])
         on = key == now_key
@@ -413,8 +413,15 @@ def _loop(status: dict, its: list[dict]) -> str:
         anchor = "middle" if key == "work" else ("start" if key == "critique" else "end")
         ys = (y - 52, y - 35, y - 21) if key == "work" else (ly + 2, ly + 19, ly + 34)
         t = typical[key]
-        out.append(f'<g class="node{" on" if on else ""}">'
-                   + (f'<circle class="halo" cx="{x:.1f}" cy="{y:.1f}" r="15"/>' if on else "")
+        still = ""
+        if on:   # the arrow at rest: its tip on the orbit's outer point
+            sx, sy = _point(x, y, ORBIT, nodes[key] - math.degrees(ARROW / ORBIT))
+            ex, ey = _point(x, y, ORBIT, nodes[key])
+            still = (f'<path class="oarc still" d="M{sx:.1f},{sy:.1f} A{ORBIT},{ORBIT} 0 0 1 {ex:.1f},{ey:.1f}"'
+                     ' marker-end="url(#tipon)"/>')
+        out.append(f'<g class="node{" on" if on else ""}" data-key="{key}" data-x="{x:.1f}" data-y="{y:.1f}"'
+                   f' data-a="{nodes[key]}"><circle class="orb" cx="{x:.1f}" cy="{y:.1f}" r="{ORBIT}"/>'
+                   + still
                    + f'<circle class="dot" cx="{x:.1f}" cy="{y:.1f}" r="9"/>'
                    f'<text x="{lx:.1f}" y="{ys[0]:.1f}" text-anchor="{anchor}" class="nl">{_e(label)}</text>'
                    f'<text x="{lx:.1f}" y="{ys[1]:.1f}" text-anchor="{anchor}" class="ns">{_e(what[key])}</text>'
@@ -428,8 +435,8 @@ def _loop(status: dict, its: list[dict]) -> str:
                f'<text x="{cx}" y="{cy + 10}" text-anchor="middle" class="cn">{_e(status.get("iteration", "–"))}</text>'
                f'<text x="{cx}" y="{cy + 34}" text-anchor="middle" class="cs">{_e(word if now_key else state or "–")}</text>'
                + timer)
-    out.insert(1, '<defs><marker id="tip" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="5" markerHeight="5" '
-               'orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9z" class="tipm"/></marker></defs>')
+    out.insert(1, '<defs><marker id="tipon" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="4" markerHeight="4" '
+               'orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9z" class="tipon"/></marker></defs>')
     out.append("</svg>")
     return "".join(out)
 
