@@ -397,3 +397,27 @@ def test_status_carries_tokens_models_and_the_time_budget(repo):
     assert status["tokens"] == {"fake": {"input": 20, "output": 8}}
     assert status["models"] == {"fake": {"opus": ["actor"]}}
     assert status["time_budget_s"] == 8 * 3600 and status["started_at"] == pytest.approx(eng.budget.started_at)
+
+
+def test_the_heartbeat_writes_what_the_call_is_doing(repo):
+    import time
+    eng = make_engine(repo, FakeHarness([works()]))
+    eng.iteration = 3
+    eng._status("work")
+    sample = (Path(__file__).parent / "samples" / "activity_claude.jsonl").read_text().splitlines()
+    path = eng.recorder.transcript_path(3, "actor")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(sample[0] + "\n")
+    with eng._heartbeat(poll=0.02):
+        deadline = time.time() + 5
+        while (eng.recorder.read_status() or {}).get("activity", {}).get("kind") != "command" and time.time() < deadline:
+            time.sleep(0.02)
+        assert eng.recorder.read_status()["activity"]["kind"] == "command"
+        path.write_text("\n".join(sample[:3]) + "\n")   # the agent moves on to a monitor
+        deadline = time.time() + 5
+        while eng.recorder.read_status()["activity"]["kind"] != "wait" and time.time() < deadline:
+            time.sleep(0.02)
+        assert eng.recorder.read_status()["state"] == "work"
+    assert eng.recorder.read_status()["activity"]["kind"] == "wait"
+    eng._status("critique")   # the next stage's status has no activity until its own heartbeat
+    assert "activity" not in eng.recorder.read_status()

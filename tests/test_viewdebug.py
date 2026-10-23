@@ -46,3 +46,9 @@ def test_the_debug_server_sets_state_on_a_copy(run_dir, repo):  # noqa: F811
         srv.shutdown()
         srv.server_close()
     assert (run_dir / "status.json").read_text() == before   # the real run is never written
+
+
+def test_apply_sets_an_activity_and_clears_it():
+    st = viewdebug.apply({"state": "work"}, {"activity": "wait", "shells": 2}, now=100.0)
+    assert st["activity"]["kind"] == "wait" and st["activity"]["background"] == 2
+    assert "activity" not in viewdebug.apply(st, {"activity": "none"})

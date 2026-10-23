@@ -379,3 +379,16 @@ def test_a_graph_too_big_keeps_the_claims_and_the_newest_records(monkeypatch):
     assert omitted == 30 and len(ids) == 12 and {"root", "c1", "r40", "r31"} <= ids and not {"old", "r30", "r1"} & ids
     assert all(n["parentId"] is None or n["parentId"] in ids for n in data["nodes"])
     assert "Only the newest 10 of 40 records are drawn" in view._graph(graph, "v1", omitted)
+
+
+def test_the_ring_shows_a_command_and_the_background_shells(run_dir, repo):
+    st = json.loads((run_dir / "status.json").read_text())
+    st["activity"] = {"kind": "command", "what": "uv run pytest -q", "since": 1_799_999_950.0, "background": 2, "id": "x"}
+    (run_dir / "status.json").write_text(json.dumps(st))
+    html = view.render(run_dir, repo, goal_text=GOAL).read_text()
+    assert 'data-activity="command"' in html and "2 background shells" in html
+    assert "running a command" in html and '<span class="act-for" data-since="1799999950">' in html
+    st["state"] = "idle"   # between stages, an old activity is not shown
+    (run_dir / "status.json").write_text(json.dumps(st))
+    html = view.render(run_dir, repo, goal_text=GOAL).read_text()
+    assert 'data-activity=""' in html and "background shell" not in html

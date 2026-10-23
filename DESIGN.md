@@ -731,7 +731,13 @@ The delta is measured against the charter at the merge base.
 
 - **The facts, which need no model.** The engine re-renders the page at every
   status change, and once a minute while a model call runs (the heartbeat, so a
-  long turn does not read as a dead loop). It reads the run directory and the
+  long turn does not read as a dead loop). Every 5 s the heartbeat also reads the
+  end of the call's live transcript (`activity.py`): an open tool call with no
+  result yet (Claude `tool_use`/`tool_result`, Codex `item.started`/
+  `item.completed`, paired by id) and Claude's background shells. It writes that
+  as `activity` in status.json (thinking, tool, command, or wait: a Monitor, a
+  ScheduleWakeup, a `sleep`/`until` loop) and renders again when it changes. Pi
+  has no recorded sample with call ids, so a Pi call reads as thinking. It reads the run directory and the
   memory snapshot, escapes everything (then turns inline markdown into HTML: `**bold**`, `*em*` or
   `_em_`, `` `code` ``, `[text](https://...)`; only `**` is bold, so `__init__`
   stays a name), and shows: the run and the goal; the loop
@@ -739,7 +745,10 @@ The delta is measured against the charter at the merge base.
   round each; one arrow, driven by the page's script, spins round the running
   stage and, when the stage changes, runs round to where its circle meets the
   ring, along the ring and onto the next stage's circle, or to the actor between
-  iterations; how long it has run
+  iterations. While the agent runs a command the arrow holds still and the
+  stage's dotted circle turns; while it waits the arrow holds still and fades in
+  and out; its background shells are counted under the stage, and "Right now"
+  names the command and how long it has run; how long the stage has run
   from `stage_since` in status.json, and each stage's median time); the key
   figures (iteration, elapsed, criteria met, commits kept and reverted, last
   verdict); the time budget (`stop.after` or `stop.until`, the sooner) as one
@@ -812,7 +821,8 @@ showed CPU and stage clocks but nothing of what the run had found.
 `ouroboros view --debug` serves the same page from a temp copy of the run
 (`viewdebug.py`), with a panel on top: the stage, the iteration, the time in
 the stage, the elapsed time and budget, the usage of each window, and the
-harness of the actor. Each change writes the copy's `status.json`, renders the
+harness of the actor, what the agent is doing (thinking, tool, command, wait)
+and its background shells. Each change writes the copy's `status.json`, renders the
 page again and swaps it in (`window.ouroborosSwap`); auto-play steps actor,
 critic, scribe, idle. It is for work on the page's look and animations; the
 run's own directory is never written.
@@ -1051,6 +1061,7 @@ ouroboros/
     watch.py                # the reporter: triggers off the run directory, digests since the last one
     view.py  view_template.html   # the run's live page: render (facts + the scribe's story), serve
     viewdebug.py                  # `ouroboros view --debug`: the page on a copy, with a state panel
+    activity.py                   # what a running call does now, from its live transcript
     logo.svg  vendor/governor-report.{js,css}   # the page's logo; Governor's graph embed (vendored)
     notify.py               # Pushover; credentials from the environment or .env files
     history.py              # the durable record: .ouroboros/history/<run>.md digests + RUNS.md index
@@ -1066,7 +1077,7 @@ ouroboros/
     test_memory_files.py test_memory_governor.py (needs the governor and flywheel CLIs)
     test_claude_parse.py test_drivers_parse.py test_headless.py test_backend_tmux.py (needs tmux)
     test_gitguard.py test_recorder.py test_config.py test_history.py test_operator.py
-    test_watch.py test_notify.py (the reporter and its channel) test_view.py (the run's page) test_viewdebug.py (its debug panel)
+    test_watch.py test_notify.py (the reporter and its channel) test_view.py (the run's page) test_viewdebug.py (its debug panel) test_activity.py (recorded samples in tests/samples)
   DESIGN.md                 # this file
   README.md  AGENTS.md
 ```

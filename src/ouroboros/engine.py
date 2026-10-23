@@ -32,7 +32,7 @@ from .roles.actor import build_actor_prompt
 from .loops import LoopDetector, loop_reply
 from .roles.critic import HISTORY_WINDOW, Critic, RulesCritic, Signals, Verdict
 from .roles.scribe import Scribe, build_scribe_prompt, summary_of
-from . import view
+from . import activity, view
 
 Sleeper = Callable[[float], None]
 
@@ -634,16 +634,39 @@ class Engine:
         view.render(self.recorder.run_dir, self.repo, goal_text=self.goal_text, graph=graph, alive=True)
 
     @contextmanager
-    def _heartbeat(self, every: float = 60.0):
-        """Re-render the view while a harness call runs, so a long turn does not read as a dead loop."""
+    def _heartbeat(self, every: float = 60.0, poll: float = 5.0):
+        """Re-render the view while a harness call runs, so a long turn does not read as a dead loop.
+
+        Every `poll` seconds it also reads what the call is doing now from the end of its
+        live transcript (`activity.live`: thinking, a tool, a command, a wait, and the
+        background shells) into status.json, and re-renders when that changes.
+        """
         stop = threading.Event()
+        state = (self.stage or ("", 0.0))[0]
 
         def beat() -> None:
-            while not stop.wait(every):
-                self._render_view()
+            seen, since, rendered = None, time.time(), time.time()
+            while not stop.wait(poll):
+                try:
+                    act = activity.live(self.recorder.run_dir, self.iteration, state)
+                    key = (act or {}).get("kind"), (act or {}).get("id"), (act or {}).get("background")
+                    now = time.time()
+                    if key[:2] != (seen or (None, None))[:2]:
+                        since = now
+                    if key != seen and not stop.is_set():
+                        seen = key
+                        self.recorder.patch_status(activity={**act, "since": since} if act else None)
+                    elif now - rendered < every:
+                        continue
+                    rendered = now
+                    if not stop.is_set():
+                        self._render_view()
+                except Exception as exc:   # the page is a view; the loop goes on without it
+                    self.recorder.log(f"heartbeat: {exc!r}")
         t = threading.Thread(target=beat, name="view-heartbeat", daemon=True)
         t.start()
         try:
             yield
         finally:
             stop.set()
+            t.join(timeout=10)   # no late activity write over the status that comes next

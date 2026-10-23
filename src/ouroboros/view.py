@@ -382,6 +382,17 @@ def _point(cx: float, cy: float, r: float, deg: float) -> tuple[float, float]:
 
 ORBIT = 17           # the dotted circle round each stage, which the arrow spins on
 ARROW = 34           # the arrow's length along its track
+ACT_WORDS = {"thinking": "thinking", "tool": "using a tool", "command": "running a command", "wait": "waiting"}
+
+
+def _activity(status: dict) -> dict | None:
+    """What the running call does now (`activity.live`, written by the loop's heartbeat), while a stage runs."""
+    act = status.get("activity")
+    if str(status.get("state") or "") not in dict(STAGES) or not isinstance(act, dict):
+        return None
+    return act if act.get("kind") in ACT_WORDS else None
+
+
 def _loop(status: dict, its: list[dict]) -> str:
     """The loop as a ring: actor -> critic -> scribe, one arrow on the stage now, and how long it has run.
 
@@ -402,7 +413,10 @@ def _loop(status: dict, its: list[dict]) -> str:
     typical = {"work": _median([i["actor_s"] for i in its if i.get("actor_s") is not None]),
                "critique": _median([i["critic_s"] for i in its if i.get("critic_s") is not None]),
                "scribe": _median([i["scribe_s"] for i in its if i.get("scribe_s") is not None])}
-    out = [f'<svg class="ring" data-state="{_e(state)}" data-cx="{cx}" data-cy="{cy}" data-r="{r}" data-orbit="{ORBIT}"'
+    act = _activity(status)
+    kind = act["kind"] if act else ""
+    shells = _int((act or {}).get("background"), 0) or 0
+    out = [f'<svg class="ring" data-state="{_e(state)}" data-activity="{_e(kind)}" data-cx="{cx}" data-cy="{cy}" data-r="{r}" data-orbit="{ORBIT}"'
            f' data-arrow="{ARROW}" viewBox="-62 -26 424 316" role="img" aria-label="The loop: actor, then critic, then scribe'
            + (f'; now the {STATE_WORD[now_key]}' if now_key else "") + '">',
            f'<circle class="track" cx="{cx}" cy="{cy}" r="{r}"/>']
@@ -427,13 +441,16 @@ def _loop(status: dict, its: list[dict]) -> str:
                    f'<text x="{lx:.1f}" y="{ys[1]:.1f}" text-anchor="{anchor}" class="ns">{_e(what[key])}</text>'
                    + (f'<text x="{lx:.1f}" y="{ys[2]:.1f}" text-anchor="{anchor}" class="ns">typ. {_e(_span(t))}</text>'
                       if t is not None else "")
+                   + (f'<text x="{lx:.1f}" y="{(ys[0] - 17) if key == "work" else (ys[2] + 15):.1f}" text-anchor="{anchor}"'
+                      f' class="ns bg">{shells} background shell{"s" if shells != 1 else ""}</text>' if on and shells else "")
                    + "</g>")
     word = STATE_WORD.get(state, state) or "–"
     timer = (f'<text x="{cx}" y="{cy + 52}" text-anchor="middle" class="ct" id="stage-for" data-since="{since:.0f}"'
              f' data-live="{1 if state in LIVE_STATES else 0}"></text>' if since and state in LIVE_STATES else "")
     out.append(f'<text x="{cx}" y="{cy - 30}" text-anchor="middle" class="cl">iteration</text>'
                f'<text x="{cx}" y="{cy + 10}" text-anchor="middle" class="cn">{_e(status.get("iteration", "–"))}</text>'
-               f'<text x="{cx}" y="{cy + 34}" text-anchor="middle" class="cs">{_e(word if now_key else state or "–")}</text>'
+               f'<text x="{cx}" y="{cy + 34}" text-anchor="middle" class="cs">{_e(word if now_key else state or "–")}'
+               + (f'<tspan class="ca"> · {_e(ACT_WORDS[kind])}</tspan>' if kind and kind != "thinking" else "") + '</text>'
                + timer)
     out.insert(1, '<defs><marker id="tipon" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="4" markerHeight="4" '
                'orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9z" class="tipon"/></marker></defs>')
@@ -599,8 +616,16 @@ def _now(status: dict, decisions: list[dict], goal_text: str) -> str:
     kicker = NOW_WORDS.get(state, state or "Unknown")
     if state in dict(STAGES) and n:
         kicker += f" · iteration {n}"
+    act = _activity(status)
+    doing_now = ""
+    if act and act["kind"] != "thinking":   # what the call waits on: a command, a tool, a monitor
+        since = _float(act.get("since"))
+        what = str(act.get("what") or "")
+        doing_now = (f'<p class="now-a act-{_e(act["kind"])}"><b>{_e(ACT_WORDS[act["kind"]].capitalize())}</b>'
+                     + (f' <span class="act-for" data-since="{since:.0f}"></span>' if since else "")
+                     + (f': <code>{_e(_clip(what, 200))}</code>' if what else "") + "</p>")
     return (f'<p class="now-k">{"<i class=\"live\"></i>" if live else ""}Right now · {_e(kicker)}</p>'
-            f'<p class="now-t">{_md(_clip(main, 400))}</p>'
+            f'<p class="now-t">{_md(_clip(main, 400))}</p>' + doing_now
             + (f'<p class="now-s">{_md(_clip(sub, 300))}</p>' if sub else ""))
 
 

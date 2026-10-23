@@ -22,6 +22,9 @@ from . import view
 STATES = ("starting", "work", "critique", "scribe", "idle", "backoff", "stopped")
 DEBUG_PATH = "/__debug"
 OTHER_MODEL = {"claude": "claude-opus-5-5", "codex": "gpt-5.5-codex"}
+ACTIVITIES = ("thinking", "tool", "command", "wait")
+SAMPLE_WHAT = {"tool": "Read src/ouroboros/view.py", "command": "uv run pytest -q",
+               "wait": "until grep -q iou score.log; do sleep 5; done"}
 
 
 def copy_run(run_dir: Path) -> Path:
@@ -60,6 +63,13 @@ def apply(base: dict, knobs: dict, now: float | None = None) -> dict:
     if st.get("state") == "stopped":
         st.setdefault("stop_reason", "Stopped by hand.")
 
+    act = knobs.get("activity")
+    if act in ACTIVITIES:
+        st["activity"] = {"kind": act, "what": SAMPLE_WHAT.get(act, ""), "tool": None, "id": act,
+                          "since": now - min(42.0, max(0.0, _float(knobs.get("stage_s"), 0))),
+                          "background": max(0, int(_float(knobs.get("shells"), 0)))}
+    elif "activity" in knobs:
+        st.pop("activity", None)
     actor = knobs.get("actor")
     models = st.get("models") if isinstance(st.get("models"), dict) else {}
     if actor in OTHER_MODEL:
@@ -113,6 +123,8 @@ background:var(--paper);color:var(--ink);border:1px solid var(--ink);box-shadow:
 <label>Budget<input type="range" min="0" max="24" step="1" data-k="budget_h"><output></output></label>
 <label>5-hour used<input type="range" min="0" max="150" step="1" data-k="five_hour"><output></output></label>
 <label>Weekly used<input type="range" min="0" max="150" step="1" data-k="seven_day"><output></output></label>
+<div class="row">Doing <span class="st" data-group="activity" style="margin:0"></span></div>
+<label>Bg shells<input type="range" min="0" max="4" step="1" data-k="shells"><output></output></label>
 <div class="row">Actor on <span class="st" data-group="actor" style="margin:0"></span></div>
 <div class="row"><button type="button" data-play>▶ Auto-play</button>
 <label style="display:flex;margin:0">every <input type="number" min="1" max="60" value="4" data-every style="width:3.5em"> s</label>
@@ -126,7 +138,7 @@ background:var(--paper);color:var(--ink);border:1px solid var(--ink);box-shadow:
              elapsed_min: function (v) { return v < 60 ? v + " min" : (v / 60).toFixed(1) + " h"; },
              budget_h: function (v) { return +v ? v + " h" : "none"; },
              five_hour: function (v) { return v + "%"; }, seven_day: function (v) { return v + "%"; },
-             iteration: function () { return ""; }};
+             shells: function (v) { return v; }, iteration: function () { return ""; }};
   function buttons(group, values) {
     var g = box.querySelector('[data-group="' + group + '"]');
     g.innerHTML = "";
@@ -140,6 +152,7 @@ background:var(--paper);color:var(--ink);border:1px solid var(--ink);box-shadow:
   function draw() {
     buttons("state", STATES);
     buttons("actor", ["claude", "codex"]);
+    buttons("activity", __ACTIVITIES__);
     box.querySelectorAll("[data-k]").forEach(function (i) {
       var k = i.getAttribute("data-k");
       if (document.activeElement !== i) i.value = K[k];
@@ -198,11 +211,12 @@ def knobs_of(status: dict) -> dict:
             "elapsed_min": round(_float(status.get("elapsed_s"), 0) / 60),
             "budget_h": round(_float(status.get("time_budget_s"), 0) / 3600),
             "five_hour": round(100 * spent.get("five_hour", 0)), "seven_day": round(100 * spent.get("seven_day", 0)),
-            "actor": actor}
+            "actor": actor, "activity": "thinking", "shells": 0}
 
 
 def panel(knobs: dict) -> str:
     return (PANEL.replace("__KNOBS__", json.dumps(knobs)).replace("__STATES__", json.dumps(list(STATES)))
+            .replace("__ACTIVITIES__", json.dumps(list(ACTIVITIES)))
             .replace("__DEBUG__", DEBUG_PATH))
 
 

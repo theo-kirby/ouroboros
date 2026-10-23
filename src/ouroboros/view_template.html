@@ -60,6 +60,12 @@ figcaption b{color:var(--ink);font-weight:600}
 .ring .node.on .dot{fill:var(--acc);stroke:var(--acc)}
 .ring .oarc{fill:none;stroke:var(--acc);stroke-width:2.5;stroke-linecap:round}
 .ring .tipon,.ring .trav{fill:var(--acc)}
+.ring .ca{fill:var(--mute)}
+.ring .bg{fill:var(--acc);font-weight:600}
+.ring[data-activity="command"] .node.on .orb{stroke:var(--acc);opacity:1;animation:orbit-run .7s linear infinite}
+.ring[data-activity="wait"] .oarc,.ring[data-activity="wait"] .trav{animation:breathe 2.6s ease-in-out infinite}
+@keyframes orbit-run{to{stroke-dashoffset:-7}}
+@keyframes breathe{50%{opacity:.2}}
 .ring .nl{font:600 19px var(--serif);fill:var(--ink)}
 .ring .node:not(.on) .nl{fill:var(--mute)}
 .ring .ns{font:12.5px var(--sans);fill:var(--mute)}
@@ -104,6 +110,7 @@ dt{font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;color:var(--mu
 .now-k{font:600 .7rem var(--sans);letter-spacing:.12em;text-transform:uppercase;color:var(--acc);display:flex;align-items:center;gap:8px}
 .now-k .live{width:8px;height:8px;border-radius:50%;background:var(--acc);animation:blink 1.6s ease-in-out infinite}
 .now-t{font-size:1.2rem;line-height:1.45;margin-top:4px!important}
+.now-a{font:.9rem/1.45 var(--sans);margin-top:6px!important}.now-a code{font-size:.82rem}.now-a .act-for{color:var(--mute)}
 .now-s{font:.86rem/1.45 var(--sans);color:var(--mute);margin-top:4px!important}
 @keyframes blink{50%{opacity:.25}}
 
@@ -256,6 +263,9 @@ and the <b>scribe</b> writes down what happened. The arrow spins round the stage
     var st = document.getElementById("stage-for");
     var since = st && +st.getAttribute("data-since");
     if (since) st.textContent = "for " + clock(Math.max(0, Math.round(now - since)));
+    document.querySelectorAll(".act-for[data-since]").forEach(function (a) {
+      a.textContent = "for " + clock(Math.max(0, Math.round(now - +a.getAttribute("data-since"))));
+    });
     document.querySelectorAll(".clock[data-start]").forEach(function (g) {
       var used = Math.max(0, Math.round(now - +g.getAttribute("data-start")));
       var budget = +g.getAttribute("data-budget") || 0;
@@ -298,15 +308,15 @@ and the <b>scribe</b> writes down what happened. The arrow spins round the stage
     while (t1 - t > 1e-6) { t = Math.min(t1, t + Math.PI); var p = on(n, ro, t); d += " A" + ro + "," + ro + " 0 0 1 " + p.x.toFixed(2) + "," + p.y.toFixed(2); }
     return d;
   }
-  function want(state) {
-    if (KEYS.indexOf(state) >= 0) return {key: state, mode: "spin"};
+  function want(state, act) {   // a command or a wait holds the arrow still: the agent is not the one working
+    if (KEYS.indexOf(state) >= 0) return {key: state, mode: act === "command" || act === "wait" ? "park" : "spin"};
     if (state === "idle" || state === "refreshed") return {key: "work", mode: "park"};
     return {key: null, mode: "none"};
   }
   function goto(state) {
     var ring = document.querySelector("svg.ring");
     if (!ring || still) return;
-    var w = want(state), ro = +ring.getAttribute("data-orbit"), len = +ring.getAttribute("data-arrow");
+    var w = want(state, ring.getAttribute("data-activity")), ro = +ring.getAttribute("data-orbit"), len = +ring.getAttribute("data-arrow");
     if (A.mode === "travel") { A.key = A.dest; A.th = A.destTh; A.mode = A.after; }   // a new stage mid-run: land first
     var g = w.key && geo(ring, w.key);
     if (!g) { A = {mode: "none", key: null, th: 0}; return; }

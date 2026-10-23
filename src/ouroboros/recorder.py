@@ -66,6 +66,18 @@ class Recorder:
         tmp.write_text(json.dumps(data, indent=2, default=str))
         os.replace(tmp, self.status_path)
 
+    def patch_status(self, **fields) -> None:
+        """Set some fields of status.json and keep the rest (a field set to None is removed)."""
+        data = self.read_status() or {}
+        for k, v in fields.items():
+            if v is None:
+                data.pop(k, None)
+            else:
+                data[k] = v
+        tmp = self.status_path.with_suffix(".patch.tmp")
+        tmp.write_text(json.dumps(data, indent=2, default=str))
+        os.replace(tmp, self.status_path)
+
     def read_status(self) -> dict | None:
         if not self.status_path.exists():
             return None
