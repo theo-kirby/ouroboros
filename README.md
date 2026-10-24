@@ -7,7 +7,7 @@
 
 <h1 align="center">Ouroboros</h1>
 
-<p align="center"><b>Leave the agent alone. Trust what it did.</b></p>
+<p align="center"><b>Autonomous framework for long-running agents</b></p>
 
 <p align="center">
   <a href="https://borris.dev"><img alt="Site: borris.dev" src="https://img.shields.io/badge/site-borris.dev-111111"></a>
@@ -18,25 +18,20 @@
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-green"></a>
 </p>
 
-<p align="center">Claude Code · Codex · Pi · open source · all state is files in your repo</p>
-
 ---
 
-It is easy to keep an agent running. It is hard to trust what it did while you
-were away. With no supervision, an agent drifts from the goal. It says "done"
-before it is done. It keeps busy but ships nothing. And in the morning you get
-200 commits and no explanation.
-
-Ouroboros gives a long run discipline. You write a charter. One agent makes one
-change, a second agent checks that change against the charter, and a third
-writes down what happened and why. Each change is checked, each step is
-recorded, and each iteration must move the work forward. You come back to a
-branch that you can read, and a report that tells you what to merge.
+Agents are good at staying busy. Leave one alone overnight and it drifts off
+the goal, calls things done that aren't, and hands you 200 commits with no
+story behind them. Ouroboros is an attempt to make long runs work. A charter
+guides Claude Code, Codex or Pi through a loop that runs for hours: one agent
+makes a change, another checks it against the charter and reverts it if it
+doesn't hold up, and a third writes down what happened. In the morning you get
+a branch you can read and a report on what's worth merging.
 
 <a href="https://borris.dev">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/site-dark.png">
-    <img src="docs/site-light.png" alt="The borris.dev page in the style of an Ouroboros run report: the loop of actor, critic and scribe, the key figures, and usage from a real run">
+    <img src="docs/site-light.png" alt="The borris.dev page in the style of an Ouroboros run report: the loop of actor, critic and scribe, the key figures, the time budget and usage windows">
   </picture>
 </a>
 
