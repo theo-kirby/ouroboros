@@ -752,7 +752,7 @@ The delta is measured against the charter at the merge base.
   from `stage_since` in status.json, and each stage's median time); the key
   figures (iteration, elapsed, criteria met, commits kept and reverted, last
   verdict); the time budget (`stop.after` or `stop.until`, the sooner) as one
-  row of 20 cells that ramp from green to red, ticking in the browser; usage per
+  row of 20 cells that ramp along viridis, ticking in the browser; usage per
   harness: the models it ran and for which roles, one row of cells per rationing
   window and the tokens. A window's row is this run's own share of one whole
   window, not the account's level (other use of the account fills that too): the
@@ -767,9 +767,11 @@ The delta is measured against the charter at the merge base.
   or the charter's boxes) and the open problems (the frontier), each the first
   three rows with the rest behind a "show N more" toggle; and the timeline:
   one column per iteration (stacked by stage time, the verdict under it, a fold
-  above it) and one table row per iteration, newest first (the critic's `did`,
-  `reason` and `doing`, the time taken, the records the scribe wrote). A record
-  belongs to the iteration whose scribe step is the first at or after its time.
+  above it) and one folded row per iteration, newest first (the critic's `did`
+  and the time taken; opened, its `reason` and `doing` and the records the scribe
+  wrote; a column's link opens its row). A record belongs to the iteration whose
+  scribe step is the first at or after its time. Top to bottom, the sections run:
+  progress and open problems, the memory graph, the findings, the timeline.
 - **The memory graph, drawn by Governor.** `view/graph.html` holds Governor's
   report embed (its hub renderer: the root in the centre, claims around it by
   status, records on the rim; the only layout with a light palette, and only for
@@ -791,7 +793,8 @@ The delta is measured against the charter at the merge base.
   in). `view/story.html` is an HTML fragment with what the run has found, each
   section a finding stated as a sentence, then its evidence (tables, figures,
   small inline SVG charts), curated rather than appended, images in
-  `view/assets/`. The template gives it a few classes (`grid`, `chip`,
+  `view/assets/`. On the page each top-level `<section>` that opens with an
+  `<h2>` or `<h3>` folds under that heading (open by default). The template gives it a few classes (`grid`, `chip`,
   `ok`/`warn`/`bad`, `num`, `src`).
 
 The page looks like a report, not a dashboard: light by default (a button

@@ -8,15 +8,17 @@
 <link rel="icon" href="{{favicon}}">
 <script>try{var t=localStorage.getItem("ouroboros-theme");if(t==="dark")document.documentElement.setAttribute("data-theme","dark")}catch(e){}</script>
 <style>
-:root{--paper:#fbfaf6;--ink:#1d1d1b;--mute:#6d6a63;--rule:#d6d1c4;--faint:#ece8dd;--acc:#1f4e79;--acc-bg:#e3ebf3;
---ok:#2f7a4d;--ok-bg:#e4f0e7;--warn:#a46a10;--warn-bg:#f6ecd9;--bad:#a4332b;--bad-bg:#f5e1de;
---actor:#1f4e79;--critic:#b7863a;--scribe:#6f8f7c;--code:#f1eee6;
+:root{--paper:#fbfaf6;--ink:#1d1d1b;--mute:#6d6a63;--rule:#d6d1c4;--faint:#ece8dd;--acc:#1f77b4;--acc-bg:#dee7f1;
+--ok:#2ca02c;--ok-bg:#d5f0cd;--warn:#ff7f0e;--warn-bg:#fde2c6;--bad:#d62728;--bad-bg:#fdd5d2;
+--ok-t:#217621;--warn-t:#bd5e0a;--bad-t:#9e1d1e;--blocked:#e377c2;
+--actor:#1f77b4;--critic:#9467bd;--scribe:#8c564b;--code:#f1eee6;
 --serif:"Iowan Old Style","Charter","Palatino Linotype","Book Antiqua",Georgia,serif;
 --sans:"Avenir Next","Helvetica Neue",system-ui,-apple-system,"Segoe UI",sans-serif;
 --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace}
 :root[data-theme="dark"]{color-scheme:dark;--paper:#17181a;--ink:#e7e4dc;--mute:#9b978e;--rule:#3a3a37;--faint:#26272a;
---acc:#8fb4dc;--acc-bg:#1e2a36;--ok:#7cc495;--ok-bg:#1b2a20;--warn:#e0b25e;--warn-bg:#2f2615;--bad:#e8867c;--bad-bg:#33201d;
---actor:#7fa7d3;--critic:#d4a95e;--scribe:#8fb39d;--code:#222326}
+--acc:#aec7e8;--acc-bg:#192d3c;--ok:#98df8a;--ok-bg:#1c361e;--warn:#ffbb78;--warn-bg:#4a2f17;--bad:#ff9896;--bad-bg:#411b1d;
+--ok-t:#98df8a;--warn-t:#ffbb78;--bad-t:#ff9896;--blocked:#f7b6d2;
+--actor:#aec7e8;--critic:#c5b0d5;--scribe:#c49c94;--code:#222326}
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--paper);color:var(--ink);font:17px/1.55 var(--serif);overflow-wrap:anywhere}
@@ -83,14 +85,16 @@ dt{font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;color:var(--mu
 .fig .chip{font-size:.8rem;vertical-align:middle}
 .lab{font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;color:var(--mute);font-weight:600;margin:0 0 6px}
 
-/* usage: a row of cells per window, green to red */
+/* usage: a row of cells per window, lit in viridis */
 .gauge{display:grid;grid-template-columns:minmax(9em,auto) 1fr auto;align-items:center;gap:0 12px;padding:4px 0;font-family:var(--sans)}
 .gl{font-size:.86rem;font-weight:600}
 .gl small{display:block;font-weight:400;color:var(--mute);font-size:.76rem}
 .cells{display:flex;gap:3px}
-.cells i{flex:1;max-width:16px;height:18px;background:var(--faint);border-radius:1px}
-.cells i.on{background:hsl(var(--h) 58% 44%)}
-:root[data-theme="dark"] .cells i.on{background:hsl(var(--h) 55% 52%)}
+.cells i{flex:1;max-width:16px;height:18px;background:var(--faint);border-radius:4px}
+.cells i.on:nth-child(1){background:#482475}.cells i.on:nth-child(2){background:#45337e}.cells i.on:nth-child(3){background:#414286}.cells i.on:nth-child(4){background:#3c4f8a}.cells i.on:nth-child(5){background:#365c8c}
+.cells i.on:nth-child(6){background:#31688d}.cells i.on:nth-child(7){background:#2c748e}.cells i.on:nth-child(8){background:#27808d}.cells i.on:nth-child(9){background:#238c8c}.cells i.on:nth-child(10){background:#21978a}
+.cells i.on:nth-child(11){background:#22a286}.cells i.on:nth-child(12){background:#29ad80}.cells i.on:nth-child(13){background:#39b876}.cells i.on:nth-child(14){background:#4dc26b}.cells i.on:nth-child(15){background:#66ca5c}
+.cells i.on:nth-child(16){background:#81d24c}.cells i.on:nth-child(17){background:#a1d938}.cells i.on:nth-child(18){background:#c0df26}.cells i.on:nth-child(19){background:#dfe325}.cells i.on:nth-child(20){background:#fde725}
 .gv{font-size:1.15rem;font-weight:600;min-width:3.2em;text-align:right}
 .gv small{font-size:.7em;color:var(--mute)}
 .gv.wide{grid-column:2/-1;text-align:left}
@@ -124,9 +128,9 @@ main{counter-reset:sec}
 
 .chip{display:inline-block;padding:0 6px;border:1px solid currentColor;border-radius:2px;font-size:.7rem;font-weight:600;
 letter-spacing:.06em;text-transform:uppercase;line-height:1.6;white-space:nowrap;color:var(--mute);text-decoration:none;vertical-align:.1em}
-.chip.ok{color:var(--ok);background:var(--ok-bg)}.chip.warn{color:var(--warn);background:var(--warn-bg)}
-.chip.bad{color:var(--bad);background:var(--bad-bg)}.chip.on{color:var(--acc);background:var(--acc-bg)}.chip.mute{color:var(--mute)}
-.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}
+.chip.ok{color:var(--ok-t);background:var(--ok-bg)}.chip.warn{color:var(--warn-t);background:var(--warn-bg)}
+.chip.bad{color:var(--bad-t);background:var(--bad-bg)}.chip.on{color:var(--acc);background:var(--acc-bg)}.chip.mute{color:var(--mute)}
+.ok{color:var(--ok-t)}.warn{color:var(--warn-t)}.bad{color:var(--bad-t)}
 
 .meter{margin:0 0 6px;font-family:var(--sans);font-size:.9rem}
 .meter .num{font-weight:700;font-size:1rem}
@@ -134,7 +138,7 @@ letter-spacing:.06em;text-transform:uppercase;line-height:1.6;white-space:nowrap
 .bar span{display:block;height:100%;background:var(--ok)}
 .rows{list-style:none;margin:0;padding:0}
 .rows li{display:flex;gap:12px;align-items:baseline;padding:9px 0;border-bottom:1px solid var(--rule)}
-.rows li:last-child,.story tbody tr:last-child td,.its tbody tr:last-child td{border-bottom:0}
+.rows li:last-child,.story tbody tr:last-child td{border-bottom:0}
 .rows .chip{flex:none;min-width:5.6em;text-align:center}
 .more-rows{border-top:1px solid var(--rule)}
 .more-rows>summary{list-style:none;cursor:pointer;display:inline-flex;align-items:center;gap:6px;padding:8px 0;color:var(--acc);font:600 .8rem var(--sans);letter-spacing:.04em}
@@ -189,23 +193,36 @@ figure.wide{margin:0 0 10px}
 .legend{display:flex;flex-wrap:wrap;gap:4px 14px;margin:0;font-size:.78rem}
 .legend i{display:inline-block;width:10px;height:10px;margin-right:5px;vertical-align:-1px}
 .tablewrap{overflow-x:auto}
-table.its{border-collapse:collapse;width:100%;font:.88rem/1.45 var(--sans)}
-.its th{font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;color:var(--mute);text-align:left;border-bottom:1px solid var(--rule);padding:6px 10px 6px 0}
-.its td{border-bottom:1px solid var(--rule);padding:8px 10px 8px 0;vertical-align:top}
-.its td.what{min-width:16em}
-.its td.next{color:var(--mute);min-width:12em}
-.its .num{text-align:right;white-space:nowrap}
-.its tr:target{background:var(--acc-bg)}
-.its .chip{margin-right:4px}
+/* a finding and an iteration fold the same way: a chevron, the summary, the rest under it */
+.finding>summary,.it>summary{list-style:none;cursor:pointer;display:flex;gap:10px;align-items:baseline}
+.finding>summary::-webkit-details-marker,.it>summary::-webkit-details-marker{display:none}
+.finding>summary::before,.it>summary::before{content:"";flex:none;width:7px;height:7px;border-right:1.5px solid var(--acc);border-bottom:1.5px solid var(--acc);transform:rotate(-45deg) translateY(-2px);transition:transform .15s}
+.finding[open]>summary::before,.it[open]>summary::before{transform:rotate(45deg) translate(-3px,-1px)}
+.finding{border-bottom:1px solid var(--rule);padding:4px 0 6px}
+.finding:last-child,.story>section:last-child .finding{border-bottom:0}
+.finding>summary>h2,.finding>summary>h3{font-size:1.22rem;font-weight:600;margin:.35em 0}
+.finding[open]>summary{margin-bottom:.35em}
+ul.its{list-style:none;margin:0;padding:0;font:.88rem/1.45 var(--sans)}
+ul.its>li{border-bottom:1px solid var(--rule)}
+ul.its>li:last-child{border-bottom:0}
+.it>summary{padding:8px 0}
+.it .n{flex:none;min-width:1.6em;font-weight:600}
+.it .chip{flex:none}
+.it .what .chip{margin-left:4px}
+.it .took{flex:none;color:var(--mute)}
+.it:target{background:var(--acc-bg)}
+.it dl.more{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;margin:0 0 10px;padding-left:calc(17px + 1.6em)}
+.it dl.more dt{font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;color:var(--mute);padding-top:.2em}
+.it dl.more dd{margin:0}
 details.older>summary{cursor:pointer;color:var(--acc);font:.88rem var(--sans);padding:8px 0}
 .graphfig{margin:0}
-iframe.graph{display:block;width:100%;height:min(560px,75vh);border:1px solid var(--rule);background:var(--paper)}
+iframe.graph{display:block;width:100%;height:min(560px,75vh);border:0;background:var(--paper)}
 .graphfig .legend{margin-top:6px}
-.legend .g-working{background:#2f7a4d;border-radius:50%}.legend .g-open{background:#b7791f;border-radius:50%}
-.legend .g-broken{background:#b03a2e;border-radius:50%}.legend .g-blocked{background:#8e5bb0;border-radius:50%}
-.legend .g-record{background:hsl(212 16% 55%);border-radius:50%;transform:scale(.7)}
+.legend .g-working{background:var(--ok);border-radius:50%}.legend .g-open{background:var(--warn);border-radius:50%}
+.legend .g-broken{background:var(--bad);border-radius:50%}.legend .g-blocked{background:var(--blocked);border-radius:50%}
+.legend .g-record{background:linear-gradient(90deg,#440154,#21918c,#fde725);border-radius:50%;transform:scale(.7)}
 footer{margin-top:40px;padding-top:8px;border-top:1px solid var(--rule);color:var(--mute);font:.76rem var(--sans)}
-@media (max-width:640px){body{font-size:16px}.logo{width:44px;height:44px}.kick{font-size:.82rem}iframe.graph{height:380px}.figs{grid-template-columns:repeat(3,minmax(0,1fr))}.its td.what,.its td.next{min-width:0}.lede p{font-size:1.05rem}.its .next,.its .rec{display:none}
+@media (max-width:640px){body{font-size:16px}.logo{width:44px;height:44px}.kick{font-size:.82rem}iframe.graph{height:380px}.figs{grid-template-columns:repeat(3,minmax(0,1fr))}.lede p{font-size:1.05rem}.it dl.more{grid-template-columns:1fr;padding-left:0}.it dl.more dd{margin-bottom:6px}
 .gauge{grid-template-columns:1fr auto}.cells,.tbar{grid-column:1/-1;order:3}.gs{grid-column:1/-1;order:4;margin-top:2px}.fig dd{font-size:1.5rem}}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
@@ -225,14 +242,25 @@ and the <b>scribe</b> writes down what happened. The arrow spins round the stage
 <section class="sec" aria-labelledby="h-criteria"><h2 id="h-criteria">Progress toward done</h2>{{criteria}}</section>
 <section class="sec" aria-labelledby="h-frontier"><h2 id="h-frontier">Open problems</h2>{{frontier}}</section>
 </div>
-<section class="sec story" aria-labelledby="h-story"><h2 id="h-story">Findings</h2>{{story}}</section>
 <section class="sec" id="graph-sec" data-v="{{graph_version}}" aria-labelledby="h-graph"><h2 id="h-graph">Memory graph</h2>{{graph}}</section>
+<section class="sec story" aria-labelledby="h-story"><h2 id="h-story">Findings</h2>{{story}}</section>
 <section class="sec" aria-labelledby="h-progress"><h2 id="h-progress">Timeline</h2>{{progress}}</section>
 <footer>{{generated}}</footer>
 </main>
 <script>
 (function () {
   var view = document.getElementById("view");
+  // a link to a folded row (the chart's columns) opens it, and whatever folds it in
+  function reveal() {
+    var t = location.hash.length > 1 && document.getElementById(decodeURIComponent(location.hash.slice(1)));
+    for (; t; t = t.parentElement) if (t.tagName === "DETAILS") t.open = true;
+  }
+  window.addEventListener("hashchange", reveal);
+  document.addEventListener("click", function (e) {
+    var a = e.target.closest && e.target.closest('a[href^="#"]');
+    if (a && a.getAttribute("href") === location.hash) reveal();   // the same link twice fires no hashchange
+  });
+  reveal();
   function fmt(s) {
     if (s >= 172800) return Math.floor(s / 86400) + " d " + Math.floor(s % 86400 / 3600) + " h";
     if (s < 60) return s + " s";
@@ -275,10 +303,7 @@ and the <b>scribe</b> writes down what happened. The arrow spins round the stage
       put(".left", span(Math.max(0, budget - used)));
       put(".pc", Math.min(100, Math.round(100 * used / budget)));
       var cells = g.querySelectorAll(".cells i"), lit = Math.round(Math.min(1, used / budget) * cells.length);
-      cells.forEach(function (c, k) {
-        c.className = k < lit ? "on" : "";
-        c.style.setProperty("--h", k < lit ? Math.round(130 - 130 * k / (cells.length - 1)) : "");
-      });
+      cells.forEach(function (c, k) { c.className = k < lit ? "on" : ""; });
     });
     document.querySelectorAll(".reset[data-at]").forEach(function (r) {
       var left = Math.round(+r.getAttribute("data-at") - now);

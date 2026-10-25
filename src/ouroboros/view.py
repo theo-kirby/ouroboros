@@ -470,10 +470,10 @@ TOKEN_WORDS = (("input", "in"), ("cache_read", "cache read"), ("cache_write", "c
 
 
 def _cells(fraction: float, label: str) -> str:
-    """A row of USAGE_CELLS cells, lit from the left in green to red; past 1.0 every cell is lit."""
+    """A row of USAGE_CELLS cells, lit from the left (the stylesheet colours them in viridis); past 1.0 every cell is lit."""
     lit = round(max(0.0, min(fraction, 1.0)) * USAGE_CELLS)
     cells = "".join(
-        f'<i class="on" style="--h:{round(130 - 130 * k / (USAGE_CELLS - 1))}"></i>' if k < lit else "<i></i>"
+        '<i class="on"></i>' if k < lit else "<i></i>"
         for k in range(USAGE_CELLS))
     return (f'<span class="cells" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{round(100 * fraction)}"'
             f' aria-label="{_e(label)}">{cells}</span>')
@@ -747,8 +747,8 @@ VERDICT_WORD = {"continue": "kept", "accept": "kept", "answer": "answered", "don
 def _progress(its: list[dict], status: dict) -> str:
     """Every iteration as a column: how long each stage took, the verdict under it, the folds above.
 
-    Then the same iterations as a table, newest first: what was done, what the critic
-    said, what comes next and the record it left.
+    Then the same iterations as a list, newest first: what was done, each opening on
+    what the critic said, what comes next and the record it left.
     """
     if not its:
         return '<p class="quiet">No iteration has finished yet.</p>'
@@ -819,20 +819,20 @@ def _progress(its: list[dict], status: dict) -> str:
             _chip("folded", "mute") if it.get("fold") else "",
             _chip(f"loop: {it['signal']}", "warn") if it.get("signal") else "",
             _chip("error", "bad") if it.get("error") and not v else "") if x)
+        body = "".join(f"<dt>{k}</dt><dd>{x}</dd>" for k, x in (
+            ("Critic", _md(_clip(str(why), 600))), ("Next", _md(_clip(str(d.get("doing") or ""), 400))),
+            ("Record", rec.strip())) if x)
         rows.append(
-            f'<tr id="it-{it["n"]}"><td class="num">{it["n"]}</td>'
-            f'<td>{_chip("running", "on") if running else _chip(VERDICT_WORD.get(v, v), VERDICT_CLASS.get(v, "")) if v else "–"}</td>'
-            f'<td class="what">{_md(_clip(str(did), 300)) or "–"} {flags}'
-            f'{f"<span class=\"sub\">Critic: {_md(_clip(str(why), 300))}</span>" if why else ""}</td>'
-            f'<td class="next">{_md(_clip(str(d.get("doing") or ""), 220)) or "–"}</td>'
-            f'<td class="num">{_e(_span(took)) if took else "–"}</td><td class="rec">{rec or "–"}</td></tr>')
-    head = ('<thead><tr><th class="num">#</th><th>Verdict</th><th>What happened</th><th class="next">Next</th>'
-            '<th class="num">Took</th><th class="rec">Record</th></tr></thead>')
+            f'<li><details class="it" id="it-{it["n"]}"><summary><span class="num n">{it["n"]}</span>'
+            f'{_chip("running", "on") if running else _chip(VERDICT_WORD.get(v, v), VERDICT_CLASS.get(v, "")) if v else _chip("–", "mute")}'
+            f'<span class="what">{_md(_clip(str(did), 300)) or "–"} {flags}</span>'
+            f'<span class="num took">{_e(_span(took)) if took else "–"}</span></summary>'
+            f'<dl class="more">{body or "<dd>(nothing more)</dd>"}</dl></details></li>')
     shown, older = rows[:PROGRESS_ROWS], rows[PROGRESS_ROWS:]
-    table = f'<div class="tablewrap"><table class="its">{head}<tbody>{"".join(shown)}</tbody></table></div>'
+    table = f'<ul class="its">{"".join(shown)}</ul>'
     if older:
         table += (f'<details id="it-older" class="older"><summary>{len(older)} older iteration(s)</summary>'
-                  f'<div class="tablewrap"><table class="its">{head}<tbody>{"".join(older)}</tbody></table></div></details>')
+                  f'<ul class="its">{"".join(older)}</ul></details>')
     return f'<figure class="wide">{"".join(g)}<figcaption>{legend}</figcaption></figure>{table}'
 
 
@@ -986,11 +986,43 @@ def _graph(graph: Graph | None, version: str | None, omitted: int = 0) -> str:
             + f'<span class="legend">{swatch}</span></figcaption></figure>')
 
 
+_SECTION_TAG = re.compile(r"<(/?)section\b[^>]*>", re.I)
+_LEAD_HEADING = re.compile(r"\s*<h([23])\b[^>]*>(.*?)</h\1\s*>", re.I | re.S)
+
+
+def _findings(text: str) -> str:
+    """Each top-level <section> that opens with an <h2> or <h3> becomes a finding that folds:
+    the heading is the summary, the rest the body. Anything else passes through as written."""
+    out, depth, at, start, seen = [], 0, 0, 0, set()
+    for m in _SECTION_TAG.finditer(text):
+        if not m.group(1):
+            depth += 1
+            if depth == 1:
+                start = m.end()
+            continue
+        if depth == 0:   # a stray close: leave it be
+            continue
+        depth -= 1
+        if depth:
+            continue
+        head = _LEAD_HEADING.match(text, start, m.start())
+        if not head:
+            continue
+        key = _id("f", hashlib.sha256(head.group(2).strip().encode()).hexdigest()[:10])
+        if key in seen:
+            continue
+        seen.add(key)
+        out += [text[at:start], f'<details class="finding" id="{key}" open><summary>{head.group(0).strip()}</summary>',
+                text[head.end():m.start()], "</details>"]
+        at = m.start()
+    return "".join(out) + text[at:]
+
+
 def _story(run_dir: Path) -> str:
     text = _read_text(story_path(run_dir))
     if not text.strip():
         return '<p class="quiet">The scribe has not written the story yet.</p>'
-    return text
+    return _findings(text)
 
 
 def _template(repo: Path | None) -> str:

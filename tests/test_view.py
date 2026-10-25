@@ -165,10 +165,30 @@ def test_the_timeline_has_a_column_and_a_row_per_iteration(run_dir, repo, graph)
     view.render(run_dir, repo, goal_text=GOAL, graph=graph)
     html = page(run_dir)
     assert 'href="#it-5"' in html and 'href="#it-6"' in html
-    assert '<tr id="it-6">' in html and html.index('<tr id="it-6">') < html.index('<tr id="it-5">'), "newest first"
+    six, five = '<details class="it" id="it-6">', '<details class="it" id="it-5">'
+    assert six in html and html.index(six) < html.index(five), "newest first, each folded"
     assert 'class="fold"' in html and 'class="x"' in html   # iteration 5 folded, iteration 6 reverted
-    assert "next: tests" in html and "Critic: good unit" in html
+    assert "<dt>Next</dt><dd>next: tests</dd>" in html and "<dt>Critic</dt><dd>good unit</dd>" in html
     assert "typ. 1 min" in html   # the critic and the scribe each took a minute in iteration 5
+
+
+def test_each_finding_folds_under_its_heading(run_dir, repo):
+    view.render(run_dir, repo, goal_text=GOAL)
+    view.story_path(run_dir).write_text(
+        '<p>lead</p><section><h2 class="x">Fast now</h2><p>body</p><section><h3>inner</h3></section></section>'
+        '<section><p>no heading</p></section>')
+    view.render(run_dir, repo, goal_text=GOAL)
+    html = page(run_dir)
+    assert ('<section><details class="finding" id="f-') in html and \
+        ' open><summary><h2 class="x">Fast now</h2></summary><p>body</p><section><h3>inner</h3></section></details></section>' in html
+    assert html.count('class="finding"') == 1, "nested sections and headless ones pass through"
+    assert "<p>lead</p>" in html and "<section><p>no heading</p></section>" in html
+
+
+def test_the_memory_graph_comes_before_the_findings(run_dir, repo, graph):
+    view.render(run_dir, repo, goal_text=GOAL, graph=graph)
+    html = page(run_dir)
+    assert html.index('id="h-graph"') < html.index('id="h-story"') < html.index('id="h-progress"')
 
 
 def test_the_summary_is_the_scribes_else_the_mission(run_dir, repo):
