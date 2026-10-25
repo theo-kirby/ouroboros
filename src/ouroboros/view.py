@@ -374,14 +374,6 @@ def _facts(status: dict, steps: list[dict], run_name: str, goal_text: str) -> st
     return _header(status, run_name, goal_text) + _figures(status, steps, None, goal_text)
 
 
-def _point(cx: float, cy: float, r: float, deg: float) -> tuple[float, float]:
-    import math
-    a = math.radians(deg)
-    return cx + r * math.cos(a), cy + r * math.sin(a)
-
-
-ORBIT = 17           # the dotted circle round each stage, which the arrow spins on
-ARROW = 34           # the arrow's length along its track
 ACT_WORDS = {"thinking": "thinking", "tool": "using a tool", "command": "running a command", "wait": "waiting"}
 
 
@@ -394,72 +386,56 @@ def _activity(status: dict) -> dict | None:
 
 
 def _loop(status: dict, its: list[dict]) -> str:
-    """The loop as a ring: actor -> critic -> scribe, one arrow on the stage now, and how long it has run.
+    """The loop as a dial: one turn is a round span of time, and the band fills clockwise from
+    twelve o'clock as the iteration runs, coloured by stage, with the hand at now.
 
-    The track is dotted and all circles: the ring, and a small circle round each stage. The
-    page's script drives the one arrow: it spins round the running stage, and when the stage
-    changes it runs on round that small circle to where it meets the ring, along the ring,
-    and onto the next stage's circle. Without
-    the script (or with reduced motion) the arrow is drawn still, on the running stage.
+    The page's script draws it, every second, from what this puts on the svg (data-dial): the
+    iteration's start, each stage's start and end so far (the running one has no end), the
+    three iterations before, the critic's verdict and what the call is doing. Here only the
+    centre is drawn, so the page still reads without the script.
     """
-    import math
     state = str(status.get("state") or "")
-    now_key = state if state in dict(STAGES) else None
-    since = _float(status.get("stage_since")) or _float(status.get("epoch"))
-    cx = cy = 150
-    r = 104
-    nodes = {"work": -90, "critique": 30, "scribe": 150}
-    what = {"work": "does the work", "critique": "judges it", "scribe": "writes it down"}
-    typical = {"work": _median([i["actor_s"] for i in its if i.get("actor_s") is not None]),
-               "critique": _median([i["critic_s"] for i in its if i.get("critic_s") is not None]),
-               "scribe": _median([i["scribe_s"] for i in its if i.get("scribe_s") is not None])}
+    n = _int(status.get("iteration"))
+    epoch, elapsed = _float(status.get("epoch")), _float(status.get("elapsed_s"))
+    row = next((i for i in its if i["n"] == n), None)
+    before = [i for i in its if n is None or i["n"] < n]
+    started = epoch - elapsed if epoch is not None and elapsed is not None else None
+    start = row["start"] if row and row.get("start") is not None else (before[-1].get("end") if before else started)
+    ts = row["ts"] if row else {}
+    keys = [k for k, _ in STAGES]
+    begin = {"work": start, "critique": ts.get("commit"), "scribe": ts.get("critique")}
+    end = {"work": ts.get("commit"), "critique": ts.get("critique"), "scribe": ts.get("scribe")}
+    since = _float(status.get("stage_since"))
+    if state in begin:   # the running stage: from when the status says it began, to now
+        begin[state] = begin[state] or since
+        end[state] = None
+        at = keys.index(state)
+        if at and begin[state] is not None:
+            end[keys[at - 1]] = end[keys[at - 1]] or begin[state]
+        for k in keys[at + 1:]:
+            begin[k] = end[k] = None
+        if start is None:
+            start = begin["work"] or begin[state]
+    stages = [[k, round(begin[k]), round(end[k]) if end[k] is not None else None] for k in keys if begin[k] is not None]
+    past = [[i.get("actor_s"), i.get("critic_s"), i.get("scribe_s"), VERDICT_CLASS.get(str(i.get("verdict") or ""), "")]
+            for i in reversed(before) if None not in (i.get("actor_s"), i.get("critic_s"), i.get("scribe_s"))][:3]
     act = _activity(status)
     kind = act["kind"] if act else ""
-    shells = _int((act or {}).get("background"), 0) or 0
-    out = [f'<svg class="ring" data-state="{_e(state)}" data-activity="{_e(kind)}" data-cx="{cx}" data-cy="{cy}" data-r="{r}" data-orbit="{ORBIT}"'
-           f' data-arrow="{ARROW}" viewBox="-62 -26 424 316" role="img" aria-label="The loop: actor, then critic, then scribe'
-           + (f'; now the {STATE_WORD[now_key]}' if now_key else "") + '">',
-           f'<circle class="track" cx="{cx}" cy="{cy}" r="{r}"/>']
-    for key, label in STAGES:
-        x, y = _point(cx, cy, r, nodes[key])
-        on = key == now_key
-        lx, ly = _point(cx, cy, r + 30, nodes[key])
-        anchor = "middle" if key == "work" else ("start" if key == "critique" else "end")
-        ys = (y - 52, y - 35, y - 21) if key == "work" else (ly + 2, ly + 19, ly + 34)
-        t = typical[key]
-        still = ""
-        if on:   # the arrow at rest: its tip on the orbit's outer point
-            sx, sy = _point(x, y, ORBIT, nodes[key] - math.degrees(ARROW / ORBIT))
-            ex, ey = _point(x, y, ORBIT, nodes[key])
-            still = (f'<path class="oarc still" d="M{sx:.1f},{sy:.1f} A{ORBIT},{ORBIT} 0 0 1 {ex:.1f},{ey:.1f}"'
-                     ' marker-end="url(#tipon)"/>')
-        out.append(f'<g class="node{" on" if on else ""}" data-key="{key}" data-x="{x:.1f}" data-y="{y:.1f}"'
-                   f' data-a="{nodes[key]}"><circle class="orb" cx="{x:.1f}" cy="{y:.1f}" r="{ORBIT}"/>'
-                   + still
-                   + f'<circle class="dot" cx="{x:.1f}" cy="{y:.1f}" r="9"/>'
-                   f'<text x="{lx:.1f}" y="{ys[0]:.1f}" text-anchor="{anchor}" class="nl">{_e(label)}</text>'
-                   f'<text x="{lx:.1f}" y="{ys[1]:.1f}" text-anchor="{anchor}" class="ns">{_e(what[key])}</text>'
-                   + (f'<text x="{lx:.1f}" y="{ys[2]:.1f}" text-anchor="{anchor}" class="ns">typ. {_e(_span(t))}</text>'
-                      if t is not None else "")
-                   + (f'<text x="{lx:.1f}" y="{(ys[0] - 17) if key == "work" else (ys[2] + 15):.1f}" text-anchor="{anchor}"'
-                      f' class="ns bg">{shells} background shell{"s" if shells != 1 else ""}</text>' if on and shells else "")
-                   + "</g>")
+    spec = {"n": n, "state": state, "live": state in LIVE_STATES, "at": round(epoch) if epoch else None,
+            "start": round(start) if start is not None else None, "stages": stages, "past": past,
+            "verdict": VERDICT_CLASS.get(str((row or {}).get("verdict") or ""), "") if ts.get("critique") else "",
+            "kind": kind, "shells": _int((act or {}).get("background"), 0) or 0}
     word = STATE_WORD.get(state, state) or "–"
-    timer = (f'<text x="{cx}" y="{cy + 52}" text-anchor="middle" class="ct" id="stage-for" data-since="{since:.0f}"'
-             f' data-live="{1 if state in LIVE_STATES else 0}"></text>' if since and state in LIVE_STATES else "")
-    out.append(f'<text x="{cx}" y="{cy - 30}" text-anchor="middle" class="cl">iteration</text>'
-               f'<text x="{cx}" y="{cy + 10}" text-anchor="middle" class="cn">{_e(status.get("iteration", "–"))}</text>'
-               f'<text x="{cx}" y="{cy + 34}" text-anchor="middle" class="cs">{_e(word if now_key else state or "–")}'
-               + (f'<tspan class="ca"> · {_e(ACT_WORDS[kind])}</tspan>' if kind and kind != "thinking" else "") + '</text>'
-               + timer)
-    out.insert(1, '<defs><marker id="tipon" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="4" markerHeight="4" '
-               'orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9z" class="tipon"/></marker></defs>')
-    out.append("</svg>")
-    return "".join(out)
+    label = "The loop as a dial: actor, then critic, then scribe" + (f"; now the {STATE_WORD[state]}" if state in STATE_WORD else "")
+    return (f'<svg class="ring dial" data-state="{_e(state)}" data-activity="{_e(kind)}" data-dial="{_e(json.dumps(spec))}"'
+            f' viewBox="-72 -24 444 348" role="img" aria-label="{_e(label)}">'
+            f'<text x="150" y="120" text-anchor="middle" class="cl">iteration</text>'
+            f'<text x="150" y="160" text-anchor="middle" class="cn">{_e(n if n is not None else "–")}</text>'
+            f'<text x="150" y="184" text-anchor="middle" class="cs">{_e(word)}</text></svg>')
 
 
 def _stages(status: dict) -> str:
-    """The loop ring without the per-stage timings, for a template that has the old `{{stages}}` slot."""
+    """The loop dial without the iterations, for a template that has the old `{{stages}}` slot."""
     return _loop(status, [])
 
 
@@ -839,6 +815,10 @@ def _progress(its: list[dict], status: dict) -> str:
 # -- the memory graph: Governor's hub renderer, fed from either store ------------
 
 GRAPH_PAGE = "graph.html"
+# Fig. 2's colours, as borris.dev's theme build makes them for its "blues" graph palette (seaborn's
+# Blues): met claims darkest, open ones pale, records between and paler with age. The embed reads them
+# from window.GRAPH_THEME before it draws.
+GRAPH_COLOURS = {"light": {"citation": "#1f77b4", "status": {"open": "#9ecae1", "broken": "#d62728", "blocked": "#9467bd", "working": "#08519c", "done": "#7f7f7f"}, "tint": {"open": "#e8f0f2", "broken": "#f4d0cd", "blocked": "#e6ddeb", "working": "#cad8e4", "done": "#ece8dd", "record": "#d6e5ec"}, "records": ["#4292c6", "#559ccc", "#68a7d2", "#7bb1d8", "#8dbcdd", "#a0c6e3", "#b3d1e9", "#c6dbef"]}, "dark": {"citation": "#679fce", "status": {"open": "#2171b5", "broken": "#ff9896", "blocked": "#c5b0d5", "working": "#c6dbef", "done": "#c7c7c7"}, "tint": {"open": "#1a2e41", "broken": "#513839", "blocked": "#433e49", "working": "#43494f", "done": "#26272a", "record": "#2c3e49"}, "records": ["#6baed6", "#609dc4", "#548db3", "#497ca1", "#3e6c8f", "#335b7d", "#274b6c", "#1c3a5a"]}}
 GRAPH_MAX_NODES, GRAPH_MAX_EDGES, GRAPH_MAX_BYTES = 5000, 20000, 1_000_000
 _HEAD = re.compile(r"^sha256:[a-f0-9]{64}$")
 _GRAPH_KINDS = ("root", "state", "record")
@@ -955,7 +935,8 @@ def _graph_page(vdir: Path, graph: Graph | None) -> tuple[str | None, int]:
             '<meta name="viewport" content="width=device-width,initial-scale=1"><title>Memory graph</title>'
             '<script>if(/[?&]theme=dark(&|$)/.test(location.search))document.documentElement.dataset.theme="dark"</script>'
             f"<style>{css}</style></head><body><div id=\"root\"></div>"
-            f'<script id="flywheel-snapshot" type="application/json">{payload}</script><script>{script}</script></body></html>\n')
+            f'<script id="flywheel-snapshot" type="application/json">{payload}</script>'
+            f'<script>window.GRAPH_THEME={json.dumps(GRAPH_COLOURS)}</script><script>{script}</script></body></html>\n')
     version = hashlib.sha256(page.encode()).hexdigest()[:16]
     path = vdir / GRAPH_PAGE
     if _read_text(path) != page:
@@ -980,7 +961,7 @@ def _graph(graph: Graph | None, version: str | None, omitted: int = 0) -> str:
             f'<figcaption><b>Fig. 2. What the run knows.</b> The centre is the run. Around it are <b>claims</b>: what is true now'
             f' ({len(claims)}), coloured by status. On the rim are <b>records</b>: one per iteration, what happened'
             f' ({len(records)}, {folded} folded into the claims; older ones are paler). Click a dot to show its links;'
-            f' drag to move, scroll to zoom, F to fit.'
+            f' drag to move, Shift + scroll to zoom, F to fit, N to show the names.'
             + (f' <b>Only the newest {len(records) - omitted} of {len(records)} records are drawn</b>, so the graph fits;'
                ' the older ones live on in the claims they were folded into.' if omitted else "")
             + f'<span class="legend">{swatch}</span></figcaption></figure>')

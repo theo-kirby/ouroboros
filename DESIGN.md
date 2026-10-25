@@ -741,15 +741,15 @@ The delta is measured against the charter at the merge base.
   memory snapshot, escapes everything (then turns inline markdown into HTML: `**bold**`, `*em*` or
   `_em_`, `` `code` ``, `[text](https://...)`; only `**` is bold, so `__init__`
   stays a name), and shows: the run and the goal; the loop
-  as a ring (actor → critic → scribe on a dotted circle, a small dotted circle
-  round each; one arrow, driven by the page's script, spins round the running
-  stage and, when the stage changes, runs round to where its circle meets the
-  ring, along the ring and onto the next stage's circle, or to the actor between
-  iterations. While the agent runs a command the arrow holds still and the
-  stage's dotted circle turns; while it waits the arrow holds still and fades in
-  and out; its background shells are counted under the stage, and "Right now"
-  names the command and how long it has run; how long the stage has run
-  from `stage_since` in status.json, and each stage's median time); the key
+  as a dial (one turn is the smallest round span, 5 min to 16 h, that holds this
+  iteration and the three before it; a band fills clockwise from twelve o'clock as
+  the iteration runs, coloured by stage and labelled with each stage's time, the
+  running stage's from `stage_since` in status.json; a hand at now, a tick for the
+  critic's verdict, and the three iterations before as thin rings inside, on the
+  same clock. `view.py` puts the iteration on the svg as data and the page's script
+  draws it every second; the centre names the iteration, the stage, what the call
+  is doing (a command, a wait, a tool) and its background shells, and "Right now"
+  names the command and how long it has run); the key
   figures (iteration, elapsed, criteria met, commits kept and reverted, last
   verdict); the time budget (`stop.after` or `stop.until`, the sooner) as one
   row of 20 cells that ramp along viridis, ticking in the browser; usage per
@@ -778,7 +778,10 @@ The delta is measured against the charter at the merge base.
   root, state and record nodes, so a legacy `plan` claim or an unknown kind is
   drawn as a state claim) and the memory as Governor's `ReportGraph`, which
   `view.report_graph` builds from the snapshot either store gives (the same
-  mapping as Governor's `toViewer`). The page frames it. The embed is vendored in
+  mapping as Governor's `toViewer`). The page frames it and gives it its colours
+  (`view.GRAPH_COLOURS`, seaborn's Blues: met claims darkest, open ones pale,
+  records between and paler with age); a plain wheel scrolls the page, Shift +
+  wheel zooms, and a button (or N) names the nodes. The embed is vendored in
   `src/ouroboros/vendor/` (`scripts/vendor-governor-report.sh` refreshes it from a
   Governor checkout; `GOVERNOR_VERSION` names the commit), so a files run draws
   its graph with no Node and no Governor installed. The graph page is rewritten

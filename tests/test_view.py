@@ -2,7 +2,9 @@
 
 import http.client
 import json
+import re
 import threading
+from html import unescape
 from pathlib import Path
 
 import pytest
@@ -73,6 +75,11 @@ def live(run_dir):
     return json.loads((run_dir / "view" / "live.json").read_text())
 
 
+def dial(html: str) -> dict:
+    """What the page's script draws Fig. 1 from."""
+    return json.loads(unescape(re.search(r'data-dial="([^"]*)"', html).group(1)))
+
+
 def test_render_writes_the_page_and_live_json(run_dir, repo, graph):
     out = view.render(run_dir, repo, goal_text=GOAL, graph=graph, now=1_800_000_030.0)
     assert out == run_dir / "view" / "index.html"
@@ -83,9 +90,10 @@ def test_render_writes_the_page_and_live_json(run_dir, repo, graph):
     assert f'data-version="{j["version"]}"' in html
     for fact in ("nt9", "Ship the widget", "ouroboros/nt9", "1 h 02", "updated 30 s ago"):
         assert fact in html
-    assert 'class="ring" data-state="critique"' in html and '<g class="node on" data-key="critique"' in html
-    assert html.count('class="oarc still"') == 1 and html.count('class="orb"') == 3 and 'class="arc on"' not in html and "now the critic" in html
-    assert 'id="stage-for" data-since="1799999900"' in html
+    assert 'class="ring dial" data-state="critique"' in html and "now the critic" in html
+    d = dial(html)
+    assert d["n"] == 7 and d["live"] and d["stages"][-1] == ["critique", 1_799_999_900, None], "the critic runs from stage_since"
+    assert [k for k, *_ in d["stages"]] == ["work", "critique"] and d["stages"][0][2] == 1_799_999_900
     assert "Commits kept</dt><dd><span class=\"num\">1</span><small>1 reverted</small>" in html   # 2 made, 1 reverted
     assert "Build passes clean" in html and "passes on CI" in html and ">met<" in html
     assert "Network test flakes" in html and ">broken<" in html
@@ -169,7 +177,7 @@ def test_the_timeline_has_a_column_and_a_row_per_iteration(run_dir, repo, graph)
     assert six in html and html.index(six) < html.index(five), "newest first, each folded"
     assert 'class="fold"' in html and 'class="x"' in html   # iteration 5 folded, iteration 6 reverted
     assert "<dt>Next</dt><dd>next: tests</dd>" in html and "<dt>Critic</dt><dd>good unit</dd>" in html
-    assert "typ. 1 min" in html   # the critic and the scribe each took a minute in iteration 5
+    assert any(p[1] == 60 and p[2] == 60 for p in dial(html)["past"])   # the critic and the scribe each took a minute in iteration 5
 
 
 def test_each_finding_folds_under_its_heading(run_dir, repo):
@@ -401,14 +409,14 @@ def test_a_graph_too_big_keeps_the_claims_and_the_newest_records(monkeypatch):
     assert "Only the newest 10 of 40 records are drawn" in view._graph(graph, "v1", omitted)
 
 
-def test_the_ring_shows_a_command_and_the_background_shells(run_dir, repo):
+def test_the_dial_shows_a_command_and_the_background_shells(run_dir, repo):
     st = json.loads((run_dir / "status.json").read_text())
     st["activity"] = {"kind": "command", "what": "uv run pytest -q", "since": 1_799_999_950.0, "background": 2, "id": "x"}
     (run_dir / "status.json").write_text(json.dumps(st))
     html = view.render(run_dir, repo, goal_text=GOAL).read_text()
-    assert 'data-activity="command"' in html and "2 background shells" in html
-    assert "running a command" in html and '<span class="act-for" data-since="1799999950">' in html
+    assert 'data-activity="command"' in html and dial(html)["kind"] == "command" and dial(html)["shells"] == 2
+    assert "Running a command" in html and '<span class="act-for" data-since="1799999950">' in html
     st["state"] = "idle"   # between stages, an old activity is not shown
     (run_dir / "status.json").write_text(json.dumps(st))
     html = view.render(run_dir, repo, goal_text=GOAL).read_text()
-    assert 'data-activity=""' in html and "background shell" not in html
+    assert 'data-activity=""' in html and dial(html)["kind"] == "" and dial(html)["shells"] == 0

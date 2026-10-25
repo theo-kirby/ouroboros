@@ -13,13 +13,15 @@
 --ok:#2ca02c;--ok-bg:#d5f0cd;--warn:#ff7f0e;--warn-bg:#fde2c6;--bad:#d62728;--bad-bg:#fdd5d2;
 --ok-t:#238323;--warn-t:#b1580c;--bad-t:#d62728;--blocked:#e377c2;
 --actor:#1f77b4;--critic:#9467bd;--scribe:#17becf;--code:#f1eee6;
+--g-met:#08519c;--g-open:#9ecae1;--g-broken:#d62728;--g-blocked:#9467bd;--rec:linear-gradient(90deg,#4292c6,#7bb1d8,#b3d1e9);
 --serif:"Iowan Old Style","Charter","Palatino Linotype","Book Antiqua",Georgia,serif;
 --sans:"Avenir Next","Helvetica Neue",system-ui,-apple-system,"Segoe UI",sans-serif;
 --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace}
 :root[data-theme="dark"]{color-scheme:dark;--paper:#17181a;--ink:#e7e4dc;--mute:#9b978e;--rule:#3a3a37;--faint:#26272a;--acc:#679fce;--acc-bg:#192d3c;
 --ok:#62c05b;--ok-bg:#1c361e;--warn:#ff9d43;--warn-bg:#4a2f17;--bad:#eb605f;--bad-bg:#411b1d;
 --ok-t:#62c05b;--warn-t:#ff9d43;--bad-t:#eb605f;--blocked:#ed97ca;
---actor:#679fce;--critic:#ad8cc9;--scribe:#5bccda;--code:#222326}
+--actor:#679fce;--critic:#ad8cc9;--scribe:#5bccda;--code:#222326;
+--g-met:#c6dbef;--g-open:#2171b5;--g-broken:#ff9896;--g-blocked:#c5b0d5;--rec:linear-gradient(90deg,#6baed6,#497ca1,#274b6c)}
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--paper);color:var(--ink);font:17px/1.55 var(--serif);overflow-wrap:anywhere}
@@ -58,24 +60,24 @@ h1{font-size:clamp(1.8rem,4.2vw,2.7rem);line-height:1.12;font-weight:600;letter-
 .ring{width:100%;max-width:470px;height:auto;display:block;margin:0 auto}
 figcaption,.cap{font:.82rem/1.45 var(--sans);color:var(--mute);margin-top:6px;text-align:left}
 figcaption b{color:var(--ink);font-weight:600}
-.ring .track,.ring .orb{fill:none;stroke:var(--mute);stroke-width:2;stroke-linecap:round;stroke-dasharray:0 7;opacity:.6}
-.ring .dot{fill:var(--paper);stroke:var(--mute);stroke-width:2}
-.ring .node.on .dot{fill:var(--acc);stroke:var(--acc)}
-.ring .oarc{fill:none;stroke:var(--acc);stroke-width:2.5;stroke-linecap:round}
-.ring .tipon,.ring .trav{fill:var(--acc)}
+.ring .track{fill:none;stroke:var(--mute);stroke-width:2;stroke-linecap:round;stroke-dasharray:0 7;opacity:.6}
 .ring .ca{fill:var(--mute)}
 .ring .bg{fill:var(--acc);font-weight:600}
-.ring[data-activity="command"] .node.on .orb{stroke:var(--acc);opacity:1;animation:orbit-run .7s linear infinite}
-.ring[data-activity="wait"] .oarc,.ring[data-activity="wait"] .trav{animation:breathe 2.6s ease-in-out infinite}
-@keyframes orbit-run{to{stroke-dashoffset:-7}}
-@keyframes breathe{50%{opacity:.2}}
 .ring .nl{font:600 19px var(--serif);fill:var(--ink)}
-.ring .node:not(.on) .nl{fill:var(--mute)}
 .ring .ns{font:12.5px var(--sans);fill:var(--mute)}
 .ring .cl{font:600 10px var(--sans);letter-spacing:.14em;text-transform:uppercase;fill:var(--mute)}
 .ring .cn{font:600 50px var(--serif);fill:var(--ink)}
 .ring .cs{font:600 12px var(--sans);letter-spacing:.12em;text-transform:uppercase;fill:var(--acc)}
 .ring .ct{font:14px var(--mono);fill:var(--mute)}
+.dial .seg{fill:none;stroke-linecap:butt}
+.dial .seg.work{stroke:var(--actor)}.dial .seg.critique{stroke:var(--critic)}.dial .seg.scribe{stroke:var(--scribe)}
+.dial .seg.past{opacity:.45}
+.dial .nl{font-size:16px;fill:var(--mute)}.dial .nl.on{fill:var(--ink)}
+.dial .hand{stroke:var(--acc);stroke-width:1.6}
+.dial .head{fill:var(--acc);stroke:var(--paper);stroke-width:1.5}
+.dial .vt{stroke-width:2}.dial .vt.ok{stroke:var(--ok)}.dial .vt.warn{stroke:var(--warn)}.dial .vt.bad{stroke:var(--bad)}
+.dial .mk{stroke:var(--mute);stroke-width:1.5}
+.loopfig .legend{margin:4px 0 6px}
 
 .figs{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));margin:0 0 18px;border-top:1px solid var(--rule)}
 .fig{padding:8px 12px 10px 0;border-bottom:1px solid var(--rule)}
@@ -220,9 +222,9 @@ details.older>summary{cursor:pointer;color:var(--acc);font:.88rem var(--sans);pa
 .graphfig{margin:0}
 iframe.graph{display:block;width:100%;height:min(560px,75vh);border:0;background:var(--paper)}
 .graphfig .legend{margin-top:6px}
-.legend .g-working{background:var(--ok);border-radius:50%}.legend .g-open{background:var(--warn);border-radius:50%}
-.legend .g-broken{background:var(--bad);border-radius:50%}.legend .g-blocked{background:var(--blocked);border-radius:50%}
-.legend .g-record{background:var(--acc);border-radius:50%;transform:scale(.7)}
+.legend .g-working{background:var(--g-met);border-radius:50%}.legend .g-open{background:var(--g-open);border-radius:50%}
+.legend .g-broken{background:var(--g-broken);border-radius:50%}.legend .g-blocked{background:var(--g-blocked);border-radius:50%}
+.legend .g-record{background:var(--rec);border-radius:50%;transform:scale(.7)}
 footer{margin-top:40px;padding-top:8px;border-top:1px solid var(--rule);color:var(--mute);font:.76rem var(--sans)}
 @media (max-width:640px){body{font-size:16px}.logo{width:44px;height:44px}.kick{font-size:.82rem}iframe.graph{height:380px}.figs{grid-template-columns:repeat(3,minmax(0,1fr))}.lede p{font-size:1.05rem}.it dl.more{grid-template-columns:1fr;padding-left:0}.it dl.more dd{margin-bottom:6px}
 .gauge{grid-template-columns:1fr auto}.cells,.tbar{grid-column:1/-1;order:3}.gs{grid-column:1/-1;order:4;margin-top:2px}.fig dd{font-size:1.5rem}}
@@ -235,8 +237,9 @@ footer{margin-top:40px;padding-top:8px;border-top:1px solid var(--rule);color:va
 {{summary}}
 <div class="hero">
 <figure class="loopfig">{{loop}}
-<figcaption><b>Fig. 1. The loop.</b> In each iteration, the <b>actor</b> makes one change, the <b>critic</b> keeps or reverts it,
-and the <b>scribe</b> writes down what happened. The arrow spins round the stage running now; when it is done, it moves on along the dotted ring to the next one.</figcaption></figure>
+<figcaption><p class="legend"><span><i class="s-actor"></i>actor</span><span><i class="s-critic"></i>critic</span><span><i class="s-scribe"></i>scribe</span><span class="quiet" id="dial-turn"></span></p>
+<b>Fig. 1. The loop.</b> In each iteration, the <b>actor</b> makes one change, the <b>critic</b> keeps or reverts it,
+and the <b>scribe</b> writes down what happened. The band fills as the iteration runs, the hand is now, and the tick is the critic’s verdict. The inner rings are the iterations before, on the same clock.</figcaption></figure>
 <div class="side">{{figures}}<h3 class="lab">Time budget</h3>{{time_budget}}<h3 class="lab">Usage this run</h3>{{usage}}</div>
 </div>
 <section class="now" aria-live="polite" aria-label="Right now">{{now}}</section>
@@ -290,9 +293,7 @@ and the <b>scribe</b> writes down what happened. The arrow spins round the stage
       el.textContent = "updated " + fmt(s) + " ago" + (stale ? " (stale)" : "");
       el.classList.toggle("warn", stale);
     }
-    var st = document.getElementById("stage-for");
-    var since = st && +st.getAttribute("data-since");
-    if (since) st.textContent = "for " + clock(Math.max(0, Math.round(now - since)));
+    dial();
     document.querySelectorAll(".act-for[data-since]").forEach(function (a) {
       a.textContent = "for " + clock(Math.max(0, Math.round(now - +a.getAttribute("data-since"))));
     });
@@ -318,112 +319,77 @@ and the <b>scribe</b> writes down what happened. The arrow spins round the stage
     var want = f.getAttribute("data-src") + (document.documentElement.getAttribute("data-theme") === "dark" ? "&theme=dark" : "");
     if (f.getAttribute("src") !== want) f.setAttribute("src", want);
   }
-  // The loop's one arrow. It spins round the running stage's dotted circle; when the stage
-  // changes it runs on round that circle to where it meets the ring, along the ring, and
-  // onto the next stage's circle, where it spins. Each change of circle is rounded over CUT. It lives here, not in the page, so it carries on across swaps.
-  var KEYS = ["work", "critique", "scribe"], SPIN = 1.8, NS = "http://www.w3.org/2000/svg";
-  var still = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
-  var A = {mode: "none", key: null, th: 0}, drawn = null, body = null, tip = null, last = null;
-  function rad(d) { return d * Math.PI / 180; }
-  function geo(ring, key) {
-    var g = ring.querySelector('.node[data-key="' + key + '"]');
-    return g && {x: +g.getAttribute("data-x"), y: +g.getAttribute("data-y"), a: rad(+g.getAttribute("data-a"))};
+  // Fig. 1, the dial, drawn from what view.py puts on the svg (data-dial) and again every second.
+  // One turn is the smallest round span that holds this iteration and the three before it; the
+  // band fills from twelve o'clock by stage, the hand is now, the tick the critic's verdict, and
+  // the thin inner rings are the iterations before, on the same clock.
+  var KEYS = ["work", "critique", "scribe"], NAMES = {work: "actor", critique: "critic", scribe: "scribe"};
+  var TURNS = [300, 600, 900, 1800, 3600, 7200, 14400, 28800, 57600];
+  var CX = 150, CY = 150, R = 108, BAND = 14, PAST = [94, 86, 78];
+  function f1(x) { return x.toFixed(1); }
+  function pt(r, a) { var t = a * Math.PI / 180; return [CX + r * Math.cos(t), CY + r * Math.sin(t)]; }
+  function arc(r, a0, a1) {   // clockwise round the centre from a0 to a1, in degrees
+    var p = pt(r, a0), q = pt(r, a1);
+    return "M" + f1(p[0]) + "," + f1(p[1]) + " A" + r + "," + r + " 0 " + (a1 - a0 > 180 ? 1 : 0) + " 1 " + f1(q[0]) + "," + f1(q[1]);
   }
-  function on(n, ro, th) { return {x: n.x + ro * Math.cos(th), y: n.y + ro * Math.sin(th)}; }
-  function arcs(n, ro, t0, t1) {   // clockwise round a node from t0 to t1, in pieces of at most half a turn
-    var d = "", t = t0;
-    while (t1 - t > 1e-6) { t = Math.min(t1, t + Math.PI); var p = on(n, ro, t); d += " A" + ro + "," + ro + " 0 0 1 " + p.x.toFixed(2) + "," + p.y.toFixed(2); }
-    return d;
+  function seg(out, key, a0, a1, r, w, cls) {
+    if (a1 - a0 > 0.3) out.push('<path class="seg ' + key + (cls || "") + '" d="' + arc(r, a0, Math.min(a1, a0 + 359.9)) + '" stroke-width="' + w + '"/>');
   }
-  function want(state, act) {   // a command or a wait holds the arrow still: the agent is not the one working
-    if (KEYS.indexOf(state) >= 0) return {key: state, mode: act === "command" || act === "wait" ? "park" : "spin"};
-    if (state === "idle" || state === "refreshed") return {key: "work", mode: "park"};
-    return {key: null, mode: "none"};
+  function label(a, name, sub, on) {   // a stage's name outside the dial, anchored by where it sits
+    var t = a * Math.PI / 180, c = Math.cos(t), s = Math.sin(t), p = pt(R + BAND / 2 + 14, a);
+    var anchor = c > 0.35 ? "start" : c < -0.35 ? "end" : "middle", y = s < -0.6 ? p[1] - 20 : s > 0.6 ? p[1] + 12 : p[1] - 2;
+    return '<text class="nl' + (on ? " on" : "") + '" x="' + f1(p[0]) + '" y="' + f1(y) + '" text-anchor="' + anchor + '">' + name + '</text>' +
+      '<text class="ns" x="' + f1(p[0]) + '" y="' + f1(y + 16) + '" text-anchor="' + anchor + '">' + sub + '</text>';
   }
-  function goto(state) {
-    var ring = document.querySelector("svg.ring");
-    if (!ring || still) return;
-    var w = want(state, ring.getAttribute("data-activity")), ro = +ring.getAttribute("data-orbit"), len = +ring.getAttribute("data-arrow");
-    if (A.mode === "travel") { A.key = A.dest; A.th = A.destTh; A.mode = A.after; }   // a new stage mid-run: land first
-    var g = w.key && geo(ring, w.key);
-    if (!g) { A = {mode: "none", key: null, th: 0}; return; }
-    if (A.mode === "none" || !A.key || A.key === w.key) {
-      if (A.key !== w.key || A.mode === "none") A.th = g.a;
-      A.key = w.key; A.mode = w.mode; return;
+  function turnLabel(s) { return s < 3600 ? s / 60 + " min" : s / 3600 + " h"; }
+  function dial() {
+    var svg = document.querySelector("svg.dial[data-dial]");
+    if (!svg) return;
+    var d;
+    try { d = JSON.parse(svg.getAttribute("data-dial")); } catch (e) { return; }
+    var now = d.live || !d.at ? Date.now() / 1000 : d.at;
+    var t = d.start != null ? Math.max(0, now - d.start) : 0;
+    var need = t, out = ['<circle class="track" cx="' + CX + '" cy="' + CY + '" r="' + R + '"/>'];
+    d.past.forEach(function (p) { need = Math.max(need, p[0] + p[1] + p[2]); });
+    var turn = TURNS[TURNS.length - 1];
+    for (var k = 0; k < TURNS.length; k++) if (TURNS[k] >= need * 1.1) { turn = TURNS[k]; break; }
+    function A(s) { return -90 + 360 * s / turn; }
+    for (var m = 0; m < 3; m++) {   // a mark every third of a turn
+      var p0 = pt(R + BAND / 2 + 2, A(m * turn / 3)), p1 = pt(R + BAND / 2 + 7, A(m * turn / 3));
+      out.push('<line class="mk" x1="' + f1(p0[0]) + '" y1="' + f1(p0[1]) + '" x2="' + f1(p1[0]) + '" y2="' + f1(p1[1]) + '"/>');
     }
-    var from = geo(ring, A.key), i = KEYS.indexOf(A.key), j = KEYS.indexOf(w.key);
-    var c = {x: +ring.getAttribute("data-cx"), y: +ring.getAttribute("data-cy")}, R = +ring.getAttribute("data-r");
-    var n = (j - i + 3) % 3 || 3, dl = 2 * Math.asin(ro / (2 * R)), CUT = 6;
-    var ra = Math.atan2(from.y - c.y, from.x - c.x), rb = ra + n * 2 * Math.PI / 3;   // the stages on the ring
-    var px = on(c, R, ra + dl), pe = on(c, R, rb - dl);                             // where the circles cross
-    var fx = Math.atan2(px.y - from.y, px.x - from.x), fe = Math.atan2(pe.y - g.y, pe.x - g.x);
-    var out = fx - CUT / ro;
-    while (out < A.th) out += 2 * Math.PI;
-    var t0 = A.th - len / ro, p0 = on(from, ro, t0), r0 = on(c, R, ra + dl + CUT / R), r1 = on(c, R, rb - dl - CUT / R);
-    var land = fe + CUT / ro, q = on(g, ro, land);
-    function xy(p) { return p.x.toFixed(2) + "," + p.y.toFixed(2); }
-    var d = "M" + xy(p0) + arcs(from, ro, t0, out)
-      + " Q" + xy(px) + " " + xy(r0) + arcs(c, R, ra + dl + CUT / R, rb - dl - CUT / R)
-      + " Q" + xy(pe) + " " + xy(q);
-    var destTh = land;
-    var v = 2 * Math.PI * ro / SPIN;
-    A = {mode: "travel", key: A.key, th: A.th, d: d, len: len, v0: A.mode === "spin" ? v : 0,
-         v1: w.mode === "spin" ? v : 0, t0: null, dest: w.key, destTh: destTh, after: w.mode};
-  }
-  function frame(ts) {
-    requestAnimationFrame(frame);
-    var ring = document.querySelector("svg.ring");
-    if (!ring) return;
-    var dt = last === null ? 0 : Math.min(0.1, (ts - last) / 1000);
-    last = ts;
-    if (drawn !== ring) {   // a fresh page: the script draws the arrow from now on
-      drawn = ring;
-      ring.querySelectorAll(".still").forEach(function (x) { x.parentNode.removeChild(x); });
-      body = document.createElementNS(NS, "path"); body.setAttribute("class", "oarc");
-      tip = document.createElementNS(NS, "path"); tip.setAttribute("class", "trav"); tip.setAttribute("d", "M-4,-4.5 L6,0 L-4,4.5z");
-      ring.appendChild(body); ring.appendChild(tip);
+    d.past.forEach(function (p, i) {
+      var s = 0;
+      KEYS.forEach(function (key, j) { seg(out, key, A(s), A(s + p[j]), PAST[i], 6, " past"); s += p[j]; });
+    });
+    var prev = -Infinity, running = null;
+    d.stages.forEach(function (st) {
+      var s0 = st[1] - d.start, s1 = (st[2] != null ? st[2] : now) - d.start;
+      if (st[2] == null) running = st[0];
+      seg(out, st[0], A(s0), A(s1), R, BAND);
+      var a = Math.max(A((s0 + s1) / 2), prev + 30);   // nudged apart where a stage is short
+      prev = a;
+      out.push(label(a, NAMES[st[0]], clock(Math.max(0, Math.round(s1 - s0))), st[2] == null));
+    });
+    var judged = d.stages.filter(function (st) { return st[0] === "critique" && st[2] != null; })[0];
+    if (judged && d.verdict) {
+      var v0 = pt(R - BAND / 2 - 1, A(judged[2] - d.start)), v1 = pt(R - BAND / 2 - 7, A(judged[2] - d.start));
+      out.push('<line class="vt ' + d.verdict + '" x1="' + f1(v0[0]) + '" y1="' + f1(v0[1]) + '" x2="' + f1(v1[0]) + '" y2="' + f1(v1[1]) + '"/>');
     }
-    var ro = +ring.getAttribute("data-orbit"), len = +ring.getAttribute("data-arrow"), p, ang;
-    body.style.display = tip.style.display = A.mode === "none" ? "none" : "";
-    if (A.mode === "none") return;
-    if (A.mode === "travel") {
-      if (body.getAttribute("d") !== A.d) {
-        body.setAttribute("d", A.d);
-        A.L = body.getTotalLength();
-        A.T = Math.max(0.9, (A.L - A.len) / 240);
-      }
-      if (A.t0 === null) A.t0 = ts;
-      var x = Math.min(1, (ts - A.t0) / 1000 / A.T);
-      if (x >= 1) { A.key = A.dest; A.th = A.destTh; A.mode = A.after; }
-      else {   // Hermite: leaves at the spin's speed, arrives at the next spin's (or at rest)
-        var D = A.L - A.len, x2 = x * x, x3 = x2 * x;
-        var s = A.len + (x3 - 2 * x2 + x) * A.T * A.v0 + (-2 * x3 + 3 * x2) * D + (x3 - x2) * A.T * A.v1;
-        s = Math.max(A.len, Math.min(A.L, s));
-        p = body.getPointAtLength(s);
-        var q = body.getPointAtLength(Math.min(A.L, s + 0.5)), o = body.getPointAtLength(s - 0.5);
-        ang = Math.atan2(q.y - o.y, q.x - o.x) * 180 / Math.PI;
-        body.style.strokeDasharray = A.len + " " + (A.L + A.len);
-        body.style.strokeDashoffset = -(s - A.len);
-      }
+    if (d.start != null) {
+      var h0 = pt(60, A(t)), h1 = pt(R + BAND / 2 + 4, A(t)), hh = pt(R, A(t));
+      out.push('<line class="hand" x1="' + f1(h0[0]) + '" y1="' + f1(h0[1]) + '" x2="' + f1(h1[0]) + '" y2="' + f1(h1[1]) + '"/>' +
+        '<circle class="head" cx="' + f1(hh[0]) + '" cy="' + f1(hh[1]) + '" r="4"/>');
     }
-    if (A.mode !== "travel") {
-      var n = geo(ring, A.key);
-      if (!n) return;
-      if (A.mode === "spin") A.th += dt * 2 * Math.PI / SPIN;
-      A.th %= 2 * Math.PI;
-      var b0 = on(n, ro, A.th - len / ro);
-      body.setAttribute("d", "M" + b0.x.toFixed(2) + "," + b0.y.toFixed(2) + arcs(n, ro, A.th - len / ro, A.th));
-      body.style.strokeDasharray = body.style.strokeDashoffset = "";
-      p = on(n, ro, A.th);
-      ang = A.th * 180 / Math.PI + 90;
-    }
-    tip.setAttribute("transform", "translate(" + p.x.toFixed(2) + "," + p.y.toFixed(2) + ") rotate(" + ang.toFixed(1) + ")");
-  }
-  function start() {
-    var ring = document.querySelector("svg.ring");
-    if (!ring || still || !window.requestAnimationFrame) return;
-    goto(ring.getAttribute("data-state") || "");
-    requestAnimationFrame(frame);
+    var word = NAMES[d.state] || d.state || "–", act = d.kind === "command" ? "command" : d.kind === "wait" ? "waiting" : d.kind === "tool" ? "tool" : "";
+    out.push('<text x="' + CX + '" y="' + (CY - 30) + '" text-anchor="middle" class="cl">iteration</text>' +
+      '<text x="' + CX + '" y="' + (CY + 10) + '" text-anchor="middle" class="cn">' + (d.n != null ? d.n : "–") + '</text>' +
+      '<text x="' + CX + '" y="' + (CY + 34) + '" text-anchor="middle" class="cs">' + word + (act ? '<tspan class="ca"> · ' + act + '</tspan>' : "") + '</text>' +
+      (d.start != null ? '<text x="' + CX + '" y="' + (CY + 52) + '" text-anchor="middle" class="ct">' + clock(Math.round(t)) + '</text>' : "") +
+      (d.shells ? '<text x="' + CX + '" y="' + (CY + 68) + '" text-anchor="middle" class="ns bg">' + d.shells + ' background shell' + (d.shells === 1 ? "" : "s") + '</text>' : ""));
+    svg.innerHTML = out.join("");
+    var tl = document.getElementById("dial-turn");
+    if (tl) tl.textContent = "one turn: " + turnLabel(turn);
   }
   function theme(next) {
     document.documentElement.setAttribute("data-theme", next || "light");
@@ -437,7 +403,6 @@ and the <b>scribe</b> writes down what happened. The arrow spins round the stage
   });
   tick();
   graph();
-  start();
   setInterval(tick, 1000);
   if (!view || !window.fetch || location.protocol === "file:") return;
   var busy = false;
@@ -467,8 +432,6 @@ and the <b>scribe</b> writes down what happened. The arrow spins round the stage
       if (doc.title) document.title = doc.title;
       window.scrollTo(x, y);
       tick();
-      var ring = document.querySelector("svg.ring");
-      if (ring) goto(ring.getAttribute("data-state") || "");
     });
   }
   window.ouroborosSwap = swap;   // `ouroboros view --debug` swaps after each change
