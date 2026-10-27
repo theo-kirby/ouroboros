@@ -358,6 +358,18 @@ def test_manual_refresh_request_wakes_backoff(repo):
     assert eng.recorder.read_status()["state"] == "refreshed"
 
 
+def test_manual_refresh_also_checks_the_scribes_harness(repo):
+    board = LimitBoard()
+    a = named("a", [lambda cwd, p: Result(text="OK")])
+    s = named("s", [lambda cwd, p: Result(text="OK")])
+    board.block("s", recheck=True)
+    eng = make_engine(repo, PooledHarness([(a, None)], board), scribe=PooledHarness([(s, None)], board))
+    eng.recorder.run_dir.joinpath("refresh.request").touch()
+    eng.sleeper = lambda seconds: pytest.fail("refresh must wake without sleeping")
+    eng._sleep(1800, "limited")
+    assert not board.is_blocked("s"), "a scribe-only harness is rechecked too"
+
+
 def test_refresh_arriving_during_sleep_wakes_runner(repo):
     import threading
     board = LimitBoard()

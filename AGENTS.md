@@ -20,7 +20,7 @@ either without recording why there.
   `engine.py` must survive an exception (log, back off, continue). Never add a
   prompt, an input(), or a bare `raise` on the hot path.
 - **Role prompts are skills**, under `src/ouroboros/skills/*/SKILL.md`, inlined
-  into every call by the roles and memory modules. Edit the skill, not a
+  into every call by the roles and memory modules (the reporter's by `watch.py`). Edit the skill, not a
   Python string. Placeholders are `{name}`.
 - **One memory surface.** Agents reach memory only through `ouroboros mem`. A new
   verb or rule goes into both stores in the same commit, with a test on each.
@@ -43,7 +43,9 @@ See `DESIGN.md` section 17. Short form: `cli.py` (commands, signals),
 `engine.py` (the state machine), `config.py`, `goal.py` (charter parser),
 `harness/` (drivers, pool, backends), `memory/` (graph.py, the model and loop logic; governor.py and files.py, the two stores), `memcli.py` (`ouroboros mem`),
 `roles/` (prompt assembly and JSON parsing), `gitguard.py`, `budget.py`,
-`recorder.py`, `tmux.py`, `skills/`.
+`recorder.py`, `loops.py` (the loop detector), `launch.py` and `tmux.py` (where `run` puts
+the loop), `watch.py` and `notify.py` (the reporter), `view.py` (the run page),
+`history.py` (digests and RUNS.md), `tui/`, `skills/`.
 
 ## Smoke tests that cost real usage
 

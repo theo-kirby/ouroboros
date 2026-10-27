@@ -39,8 +39,8 @@ What to push back on:
   one box, and it will read as unfinished after every run. Split it.
 - **Criteria that are already true** belong checked, or in `## Later criteria`
   where nothing is seeded. Only unchecked boxes under `## Done criteria` become
-  gaps on the frontier, and that seeding happens **once**, at the first start of
-  a run name.
+  gaps on the frontier, and each is seeded **once**: a revised charter seeds
+  only the criteria it adds.
 - **No clocks.** The ladder is granularity, not time. A unit gated on hours or
   iterations is a unit the actor cannot satisfy, and that is what stalled nt3
   for 113 iterations.
@@ -72,7 +72,7 @@ Edit `.ouroboros/config.yml`:
 
 - `run:` — a fresh name starts a fresh frontier and a fresh branch. **Reusing a
   name continues that run**: same branch, same iteration count, and the charter
-  gaps are not re-seeded. Both are useful; be deliberate about which.
+  gaps already seeded are not re-seeded. Both are useful; be deliberate about which.
 - `stop:` — `after:` is the wall clock. A usage window is not a good stop: it
   refills, and the loop waits it out on its own.
 - Roles and models. The critic burns a window as fast as the actor does; ot4
@@ -119,8 +119,9 @@ off for want of credentials, tell them once: `PO_USER` and `PO_TOKEN` in `.env`
 
 ## While it runs
 
-Do not edit files the loop is working in. A charter edit applies at the next run
-start, not this one — say so if the user asks for one. If something is wrong
+Do not edit files the loop is working in. A charter edit is picked up at the next
+iteration boundary (a running call is never interrupted), and it mints a new
+directive that seeds only the criteria it adds — say so if the user asks for one. If something is wrong
 enough to fix now, the honest options are `ouroboros stop`, fix, and start again
 under the same run name.
 

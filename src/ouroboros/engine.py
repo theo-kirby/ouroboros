@@ -428,7 +428,7 @@ class Engine:
                 return False
             request.unlink()
             self.recorder.log("manual refresh: checking current harness accounts")
-            pools = [self.harness, getattr(self.critic, "harness", None)]
+            pools = [self.harness, getattr(self.critic, "harness", None), getattr(self.scribe, "harness", None)]
             boards = {}
             for pool in pools:
                 board = getattr(pool, "board", None)

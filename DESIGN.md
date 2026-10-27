@@ -4,7 +4,7 @@
 It runs Claude Code, Codex, or Pi again and again, never blocks on a question,
 never believes "done" too early, and leaves a clean memory trail for the check-in.
 
-Status: every phase of section 18 is built and tested (104 tests). Sections 1–5
+Status: every phase of section 18 is built and tested (466 tests). Sections 1–5
 are the intent; sections 6–17 describe what is built and are kept true to the
 code; section 20 is the charter/plan layer; section 21 is what the first real
 night (cadex nt1, 2026-09-05) taught and what changed because of it. When code
@@ -43,10 +43,10 @@ ouroboros skills install      # → ./.claude/skills, ./.agents/skills, ./.pi/sk
                               #   --user → ~/.claude, ~/.codex, ~/.pi/agent (those present) and ~/.agents
 ouroboros init                # → .ouroboros/config.yml + goal.md (the charter)
 ouroboros design              # the charter interview, in claude, codex, or pi (--harness)
-ouroboros run --for 10h       # preflight (git, charter filled in, logins), then the configured launcher: a systemd unit, a tern session, or tmux
+ouroboros run --for 10h       # preflight (git, charter filled in, logins), then the configured launcher: a systemd unit, a tern session, tmux, or the foreground
 ouroboros status --watch      # the live TUI (also `ouroboros top`); --plain for the text loop
 ouroboros stop                # SIGTERM the loop and its children, then the tmux window, tern session or unit it took
-ouroboros report              # REPORT.md: verdicts, decisions, reverts, cost
+ouroboros report              # REPORT.md: verdicts, decisions, reverts, usage
 ```
 
 A second `ouroboros run` with the same run name continues the run: iteration
@@ -84,7 +84,7 @@ ten minutes.
 | Question | Decision |
 |---|---|
 | How to drive a harness | Headless subprocess by default. A tmux TUI driver is a second backend. |
-| Memory between iterations | One record/state model: a governor graph when `.flywheel/db.sqlite` exists, else the same model as files in `.ouroboros/graph/`. |
+| Memory between iterations | One record/state model: a governor graph when `.flywheel/db.sqlite` exists and `governor` is on `PATH`, else the same model as files in `.ouroboros/graph/`. Governor is optional. |
 | Who judges the change, answers questions, and writes the next prompt | One critic agent, read-only, every iteration. Rules as fallback. |
 | Git | Auto-commit every iteration on `ouroboros/<run-name>`. |
 
@@ -185,7 +185,7 @@ different:
 
 | counter | what it counts | default |
 |---|---|---|
-| `no_product` | iterations whose diff touched only `.ouroboros/`, `.flywheel/`, `.governor/`, `STATE.md`, `PLAN.md` | 8 |
+| `no_product` | iterations whose diff touched only `.ouroboros/`, `.flywheel/`, `.governor/`, `STATE.md`, `PLAN.md`, `ROADMAP.md` | 8 |
 | `no_frontier` | iterations after which the memory's frontier digest was unchanged | 30 |
 
 Each resets the moment the thing it measures happens. A memory adapter with no
@@ -234,6 +234,11 @@ checkout and `governor` is on `PATH`, else `files`. `handoff`, the old name of t
 fallback, reads as `files`. Ouroboros does not run `flywheel repo:init` or
 `governor init` for you.
 
+Governor is optional. The files store is plain Python: it needs no Node, no
+Flywheel and no Governor, and the run's page draws its graph from a vendored copy
+of Governor's embed (section 15). Governor lives beside this repo at `../governor`
+(https://github.com/theo-kirby/governor).
+
 ### 7a. `ouroboros mem`: the only surface an agent sees
 
 The agent never learns which store it has. Every prompt names one command, and
@@ -247,6 +252,7 @@ the command does whatever the store needs (`memcli.py`):
 | `fold` | the tail with its impacts (shared code) | the same |
 | `fold --apply FILE` | `governor fold --apply`, then `governor render -o STATE.md` | validates like governor, writes `claims/`, logs `folds/f-NNNN.json`, renders |
 | `check` | `governor check --json` | the same rules (below) in Python |
+| `render` | `governor render -o STATE.md` | renders STATE.md from the files |
 
 `run` sets `OUROBOROS_MEMORY` for the harnesses it starts, so their `ouroboros mem`
 acts on the run's store even when `--memory` overrode the config. The prompts are
@@ -396,13 +402,13 @@ class Harness(Protocol):
 
 | | Claude Code | Codex | Pi |
 |---|---|---|---|
-| Command | `claude -p --output-format json` | `codex exec --json` | `pi -p --mode json` |
-| Prompt | positional / stdin | positional | positional (`--` first) |
+| Command | `claude -p --output-format stream-json --verbose` | `codex exec --json` | `pi -p --mode json` |
+| Prompt | stdin | stdin (`-`) | positional (`--` first) |
 | Permissions | `--dangerously-skip-permissions` | `--dangerously-bypass-approvals-and-sandbox` | none needed |
 | Resume | `--resume <id>` | `codex exec resume <id>` | `--session-id <id>` |
-| System append | `--append-system-prompt` | `-c` config or prompt prefix | `--append-system-prompt` |
-| Last message | JSON `result` | `-o <file>` | JSON stream, last assistant |
-| Cost | `total_cost_usd` in JSON | not reported → estimate from tokens | not reported → estimate |
+| System append | `--append-system-prompt` | a `<system>` prefix on the prompt | `--append-system-prompt` |
+| Last message | JSON `result` | JSON stream, last agent message | JSON stream, last assistant |
+| Cost | `total_cost_usd` in JSON | not reported; tokens only | `usage.cost.total` per message |
 | Skills path | `.claude/skills/` | `.agents/skills/` (verify) | `--skill <dir>` per call |
 
 Ouroboros runs each harness with `--dangerously-…` flags. That is the point.
@@ -421,11 +427,11 @@ reachable session (a `--foreground` run, no tmux) calls fall back to headless.
 `ouroboros stop` and SIGTERM kill active windows as well as child processes.
 
 
-Starts the harness's normal TUI in a tmux pane. Sends the prompt with
-`send-keys`. Polls `capture-pane`. Detects the idle prompt and question
-dialogs with per-harness regexes. Types the critic's answer.
+Not built: a driver that starts the harness's normal TUI in a tmux pane, sends
+the prompt with `send-keys`, polls `capture-pane`, detects the idle prompt and
+question dialogs with per-harness regexes, and types the critic's answer.
 
-Use it only when a harness has a feature headless mode does not. It is
+It would be for a harness with a feature headless mode does not have. It is
 fragile. The design isolates it behind the same `Harness` protocol so the loop
 engine never knows which backend ran.
 
@@ -475,15 +481,16 @@ Rules:
   into a block.
 - The block ends one minute after the parsed reset time. When no reset time is
   known, the cooldown doubles on every repeat up to `max_cooldown`.
-- At each actor/agent-critic transition (both directions), probe each blocked
+- At each hand-off between roles that call a model (actor, an agent critic, an
+  agent scribe), probe each blocked
   provider once with a fresh CLI process, a 20-second timeout, an empty working
   directory, no tools, and a minimal availability prompt. This picks up a new
   login without restarting the run. Checks consume a small amount of usage and
   their reported cost/usage is included in the run ledger. Success clears the
   cooldown; configured reserves additionally require a fresh long-window reading
   below the reserve. Failures and missing reserve readings retain the original
-  deadline. Deliberate loop-rotation blocks are not probed. Actor retries and
-  rules-only critics do not trigger checks.
+  deadline. Deliberate loop-rotation blocks are not probed. Actor retries, and a
+  run whose critic and scribe are both `rules`, do not trigger checks.
 - When every entry is blocked, the engine sleeps until the earliest block ends
   (capped at 6 h), then tries again.
 - Session ids are remembered per harness; a resume only happens on the harness
@@ -547,18 +554,17 @@ yet.
 - On start: create `ouroboros/<run-name>` from the current HEAD (or check it
   out when it exists). Refuse to run on a dirty tree unless `--allow-dirty`.
 - After every WORK: `git add -A && git commit -m "ouroboros #<n>: <summary>"`,
-  where the summary is the title of the newest record. **No change, no commit.** The actor may commit on its own; the loop
+  where the summary is the first line of the report's `## What`. **No change, no commit.** The actor may commit on its own; the loop
   counts a moved HEAD as change.
 - After a `continue`, `answer`, `done_rejected`, or `done_accepted` verdict:
   tag `ouroboros/<run>/ok-<n>`. This is the revert target.
-- After a `reject`: revert commits back to the
-  last `ok-*` tag (never a history rewrite). The reverted diff is saved to
+- After a `reject`: revert commits that undo this iteration's commits only, back
+  to the head the actor started from (never a history rewrite), when there is an
+  `ok-*` tag behind it. The reverted diff is saved to
   `runs/<run>/reverted/<n>.patch` so the memory can cite it as a dead end.
-- Reconcile and plan passes commit as `reconcile:` / `plan:` (the agent's own
-  commit) or `ouroboros #<n>: reconcile|plan — ...` (the loop's catch-all).
-  All catch-all commits skip an unchanged tree, including when the role already
-  committed its work. Unchanged, unrecorded actor turns do not advance maintenance
-  or planning counters or dispatch those passes.
+- The scribe's memory commits as `ouroboros #<n>: record — <title>`, and the `ok`
+  tag goes on that commit. Every loop commit skips an unchanged tree. An actor
+  turn that failed or changed nothing does not advance the fold counter.
 - Never force-push. Never touch `main`. Never rebase. The merge after a run is
   yours. Merge with a merge commit: record nodes cite commit SHAs, so a squash
   or rebase dangles them.
@@ -619,8 +625,8 @@ Resilience. These are not stop conditions. The loop absorbs them:
 | Rate limit / 429 / "overloaded" | Backoff: 1m, 2m, 5m, 10m, then 10m forever. Never exit. Log every wait. Three in a row count as a usage limit. |
 | Usage limit ("session limit · resets 2:50am (Europe/Madrid)", `usage_limit_reached`) | Switch to the next harness in the chain. With no chain, sleep until one minute past the reset (capped at 6 h) or a growing cooldown when the message has no time. |
 | Auth expired | Block the harness on the limit board and use the next one. With no chain, backoff 10m and retry forever. Write `NEEDS_HUMAN.md` so the check-in shows it first. |
-| Context exhausted mid-call | The call ends. The recorder notices no record. Next prompt starts with "record first". |
-| Overseer returns `stuck` | Backoff: 1m, 2m, 5m, 10m, then 10m forever. The streak clears on any other verdict; `stop.max_stuck` in a row ends the run. |
+| Context exhausted mid-call | The call ends. The scribe records it from whatever report there is, and the loop writes the record itself when the scribe does not. A missing report is a signal to the critic. |
+| The critic returns `stuck` | Backoff: 1m, 2m, 5m, 10m, then 10m forever. The streak clears on any other verdict; `stop.max_stuck` in a row ends the run. |
 | Engine error (git, disk, a bug in a step) | Logged, 60 s backoff, next iteration. The loop only exits on a stop condition, Ctrl-C, or SIGTERM. |
 | Terminal dies (SIGHUP) | The logger falls back to file only and the loop keeps running. |
 | SIGTERM / `ouroboros stop` / Ctrl-C | Every harness child (process group, tmux window) is killed; status says `killed`. |
@@ -644,11 +650,12 @@ through an interview. Its sections are fixed; `goal.py` parses them:
 ## Constraints        — never do X. always keep Y green. stay inside dir Z.
 ## Question policy    — how to decide for me. e.g. "prefer the reversible option".
 ## Exhaustion policy  — creative | maintain | report_done
-   - creative:  the critic proposes three directions, picks one, continues
+   - creative:  the actor is told to propose three directions, pick one, continue
    - maintain:  tests, flakes, docs, refactors, forever
    - report_done: the critic may accept done; loop idles and polls every idle_interval
 ## Quality bar        — what the critic grades against (with Constraints).
-## Reconcile          — graph memory only: prose for the reconcile pass.
+## Reconcile          — optional, either store: prose for the scribe's fold.
+                        no code parses it; it reaches the scribe with the charter.
 ```
 
 The horizon ladder is the trick. A goal whose long-term rung holds standing
@@ -672,6 +679,8 @@ the actor chain names first, by skill name when installed and inline otherwise.
 | `ouroboros-critic` | Internal. The role prompt for CRITIC: the reviewer and the sleeping user. Returns strict JSON (section 8). |
 | `ouroboros-scribe` | Internal. The role prompt for SCRIBE: fix, fold when due, record, check, write the story. |
 | `ouroboros-fold` | Internal. The fold procedure, put into the scribe's prompt when a fold is due. |
+| `ouroboros-orient` | Internal. The memory as the actor reads it, put into the actor's prompt. |
+| `ouroboros-reporter` | Internal. The digest prompt for the reporter, `ouroboros watch` (section 15). |
 
 Role prompts live as skills, not as Python strings, so you can edit them
 without touching code and so a harness can load them natively.
@@ -683,14 +692,16 @@ without touching code and so a harness can load them natively.
   run.yml                    # frozen config + start time + version
   pid                        # the loop's pid; status and stop read it
   loop.log                   # every step, backoff, harness switch, limit wait
-  iterations.jsonl           # one line per step: actor | commit | critique | loop | revert | scribe | check
+  iterations.jsonl           # one line per step: actor | commit | critique | loop | revert | scribe | check | goal_reload | engine_error
                              # (older runs: reconcile, plan, and `housekeeping` on a commit)
   critic.jsonl               # every decision the critic made for you (verdict, reason, reply, did, doing, fix_first)
                              # (runs from before the merge have overseer.jsonl and an `oversee` step; readers accept both)
   status.json                # state, iteration, harness, usage windows, elapsed, last verdict, limit blocks
   transcripts/NNNN-<role>[-attempt].json   # raw harness output (+ .stderr); roles: actor, critic, scribe (older runs: housekeeping, maintainer, planner)
   reverted/NNNN.patch        # what a revert threw away
-  view/index.html            # the run's live page; live.json, summary.txt + story.html (the scribe's), assets/
+  view/index.html            # the run's live page; live.json, graph.html, summary.txt + story.html (the scribe's), assets/
+  criteria.json              # the charter criteria met at the start and now (section 21)
+  refresh.request            # left by `ouroboros refresh` until the loop takes it
   NEEDS_HUMAN.md             # only exists while something needs you (auth failure)
   REPORT.md                  # written by `ouroboros report`
   reporter.json              # where the reporter (`ouroboros watch`) is up to; reports/ holds its digests
@@ -723,7 +734,7 @@ tip count flatters. cadex's nt3 tip reads 9 of 13 and nt3 closed none of them.
 The delta is measured against the charter at the merge base.
 
 `status.json` states: `starting`, `work`, `critique`, `scribe`, `backoff` (with
-`why` and `seconds`), `idle`, `stopped`, `killed`. Older runs also wrote
+`why` and `seconds`), `idle`, `refreshed`, `stopped`, `killed`. Older runs also wrote
 `oversee`, `reconcile` and `plan`, and `work` with `housekeeping`.
 
 **The run's page** (`view.py`, `view_template.html`) is the view a person opens:
@@ -816,7 +827,7 @@ changes, keeping open sections open, and ticks the clocks (stage timer, "updated
 N s ago", the time budget, window resets). Past two minutes in a live state the page says it is
 stale, which means the loop process is gone. A repo can replace the template with
 `.ouroboros/view/template.html`. Slots: `{{header}}`, `{{summary}}`, `{{loop}}`,
-`{{figures}}`, `{{time_budget}}`, `{{usage}}`, `{{now}}`, `{{criteria}}`, `{{frontier}}`, `{{story}}`,
+`{{figures}}`, `{{time_budget}}`, `{{usage}}`, `{{done}}`, `{{now}}`, `{{criteria}}`, `{{frontier}}`, `{{story}}`,
 `{{progress}}`, `{{graph}}` (with `{{graph_version}}`), `{{logo}}`, `{{favicon}}`, plus the older `{{facts}}`,
 `{{stages}}`, `{{decisions}}`, `{{timeline}}` and the plain values `{{title}}`,
 `{{run}}`, `{{goal}}`, `{{mission}}`, `{{state}}`, `{{iteration}}`,
@@ -880,7 +891,7 @@ stage lit. Below it the default view is chart-first, an overview and not an
 analysis: **iterations** (outcome strip over a braille chart of actor minutes),
 **activity** (harness CPU over time), and **status**. **time by stage**,
 **frontier** (charter gaps done, and the state graph's working / open / blocked
-split), **messages**, **loop**, **stages** and **log** are off by
+split), **messages** and **log** are off by
 default and reachable through the help. Panels toggle by their superscript
 number.
 
@@ -907,11 +918,10 @@ on the panel; when the panel is short the verdict rows go before the blank ones.
 every iteration and sees the actor's whole output; nothing in the engine
 branches on them, and when the critic is `rules` the panel falls back to
 the reason and the reply, which are always there. When the panel is short the
-verdict list is the first thing given up and the summaries the last. Details: **stages** (the pipeline with the active stage lit and
-per-stage run counts, last, average, total durations from `iterations.jsonl`),
+verdict list is the first thing given up and the summaries the last. Details:
 **iterations** (an outcome strip, ■ changed and recorded, ▪ changed, · empty,
 ✗ reverted, ! error, over a braille chart of actor minutes per
-iteration), **load** (a braille chart of the harness process tree's CPU, procs
+iteration), **activity** (a braille chart of the harness process tree's CPU, procs
 and RSS, loadavg, limit blocks), **messages** (the newest
 transcript tailed live: assistant text, tool calls with the command or path,
 errors, the result line; `o` shows tool output too; Claude stream-json, Codex
@@ -925,7 +935,8 @@ to be live the headless backend streams each call's stdout to the transcript
 file line by line, and Claude runs with `stream-json` in every backend.
 
 `ouroboros report` renders the run into `REPORT.md`: the STATE.md frontier,
-verdict counts, the decisions the critic made for you, cost.
+verdict counts, the decisions the critic made for you, usage per window (money
+only for a harness billed per call, section 12).
 
 **The reporter** (`ouroboros watch`, `watch.py`, `notify.py`) is the run's voice on
 a phone. It is a separate process that reads the run directory and never the
@@ -942,7 +953,7 @@ usage runs out, the reporter's model is usually out too.
   `stopped` or `killed`, with the reason), `limited` (a harness blocked in
   `loop.log`; urgent when every harness is), `stuck` and `looping` (three of the
   critic's verdicts in a row, then at ten and twenty; a `loop` step that acted at
-  escalation 2 or 3), `engine_error` (once an hour), `silent` (the pid is gone
+  escalation 2), `engine_error` (once an hour), `silent` (the pid is gone
   while the run says it is working, urgent; or `status.json` older than
   `report.silent_after`), `done_accepted`, and `reject` (off by default -- a
   revert is routine and the digest counts them). `report.on` picks the set.
@@ -1040,7 +1051,8 @@ A fallback is `{ harness: codex, model: null }`; the chain is the role's own
 harness first, then its fallbacks in order (section 9).
 
 CLI flags override config: `--run-name --for --max-iterations --max-cost
---harness --model --allow-dirty --critic --memory --foreground`.
+--max-usage --harness --model --allow-dirty --critic --scribe --memory
+--launcher --foreground` (and `--own-session` for tmux).
 
 ## 17. Repo layout
 
@@ -1048,8 +1060,8 @@ CLI flags override config: `--run-name --for --max-iterations --max-cost
 ouroboros/
   pyproject.toml            # [project.scripts] ouroboros = "ouroboros.cli:main"; pydantic, pyyaml; pytest
   src/ouroboros/
-    cli.py                  # init | design | preflight | run | stop | status | watch | report | archive | skills install; menu; signals
-    engine.py               # the state machine (section 6): step(), retry policy, reconcile, plan, critique
+    cli.py                  # init | design | preflight | run | stop | status | top | refresh | watch | report | archive | view | mem | skills install; menu; signals
+    engine.py               # the state machine (section 6): step(), retry policy, critique, revert, scribe
     config.py               # pydantic models for config.yml (section 16)
     goal.py                 # the charter parser: sections, done criteria → gap names, ladder, policies, template check
     harness/
@@ -1068,6 +1080,10 @@ ouroboros/
       actor.py  critic.py  scribe.py       # prompt assembly, JSON parsing, the rules critic, the scribe call
     gitguard.py             # branch, commit, tag, diff, revert_to
     budget.py               # BudgetClock, backoff table
+    usage.py                # subscription windows: readings, the run's ledger, reserves
+    loops.py                # motion-without-progress counters and the ladder (section 6b)
+    criteria.py             # charter criteria against claims: what is met, and criteria.json
+    banner.py               # the ASCII serpent printed before the menu
     recorder.py             # jsonl, status.json, loop.log, NEEDS_HUMAN.md
     watch.py                # the reporter: triggers off the run directory, digests since the last one
     view.py  view_template.html   # the run's live page: render (facts + the scribe's story), serve
@@ -1083,7 +1099,7 @@ ouroboros/
     skills/                 # packaged with the wheel; `ouroboros skills install` copies them out
       ouroboros-actor/  ouroboros-orient/  ouroboros-critic/  ouroboros-scribe/  ouroboros-fold/
       ouroboros-reporter/  ouroboros-design/  ouroboros-launch/  ouroboros-checkup/   (each SKILL.md)
-  tests/                    # ~430 tests; fake_harness.py scripts actors, critics and scribes
+  tests/                    # ~470 tests; fake_harness.py scripts actors, critics and scribes
     test_engine.py test_pool.py test_critic.py test_goal.py
     test_memory_files.py test_memory_governor.py (needs the governor and flywheel CLIs)
     test_claude_parse.py test_drivers_parse.py test_headless.py test_backend_tmux.py (needs tmux)
@@ -1127,7 +1143,8 @@ harness depends on skill discovery.
    (`usage.cost.total`, every model priced). Codex reports tokens only; its cost
    stays zero. Claude reports API-equivalent dollars. Reports label the sum
    `api-equivalent` and no price table exists. Time and iterations are the
-   real caps.
+   real caps. (Now the report shows usage windows, and money only for a harness
+   that reports no windows; section 12.)
 2. **Reject means revert.** Decided: on (`git.revert_on_reject`). A critic
    reject reverts the iteration and the next actor starts from the `reply`.
 3. **Skills for Codex and Pi.** Decided: the role prompt text is inlined in
@@ -1141,7 +1158,7 @@ Still open:
    way to break a fixation. Cheap to add on the pool. Not needed yet.
 5. **Views beyond `plan`.** An RL repo may want a `policy` view. The adapter
    hard-codes one view name; generalizing is a config change when someone
-   needs it.
+   needs it. (Moot since 2026-10-17: the `plan` view is gone, section 20.)
 
 ## 20. Charter and plan: self-evolving goals
 
@@ -1199,6 +1216,7 @@ the memory when a fold is due, and writes the page's story.
 - One more model call per iteration. The scribe's default chain can take a
   lighter model; `scribe: rules` runs without it.
 
+### Only two roles (2026-10-17)
 
 The operator asked for the simplest loop: an actor and a critic, nothing else.
 The maintainer and the planner had been off by default since 2026-09-09 and did
@@ -1208,7 +1226,9 @@ the `repeat_bet` loop counter and the "ban the bet" escalation rung) was dead
 weight in every prompt and every test. All of it is gone. What replaced it:
 
 - The reconcile pass is always an actor housekeeping iteration
-  (`skills/ouroboros-reconcile`, formerly `ouroboros-maintainer`).
+  (`skills/ouroboros-reconcile`, formerly `ouroboros-maintainer`). (Later the
+  same day the fold became the scribe's, with the `ouroboros-fold` skill; the
+  actor no longer does housekeeping. See section 10.)
 - The next unit is always the critic's `reply`, steered by the frontier and the
   charter's horizon ladder. The directive seeds no plan.
 - The loop ladder is two rungs: name it, change the model.
@@ -1219,7 +1239,8 @@ weight in every prompt and every test. All of it is gone. What replaced it:
   reconcile pass is told to leave them and their impacts alone.
 
 The rest of this section is the 2026-09-06 design. Where it names the planner,
-the plan view, or bets, read it as history.
+the plan view, or bets, read it as history. Where it names the reconcile pass, or
+an actor writing records, read the scribe: it records each unit and folds.
 
 ### Governor is the only graph memory (2026-10-17)
 

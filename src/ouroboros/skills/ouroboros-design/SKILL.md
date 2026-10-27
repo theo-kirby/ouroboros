@@ -66,7 +66,7 @@ the user to correct it. Never accept a vague answer; ask for the concrete versio
    node rules, doc-with-code rules.
 8. **Run shape.** Duration (`stop.after`), harness chain and fallbacks for the
    actor, the critic and the scribe (the only three roles), memory (`auto` picks governor when
-   the repo has a `.flywheel/` governor graph, else `files`: the same records and
+   the repo has a `.flywheel/` graph and `governor` is on PATH, else `files`: the same records and
    claims as markdown under `.ouroboros/graph/`).
 
 ## Write the files
@@ -90,8 +90,8 @@ graph: { reconcile_every: 5, pressure: 3, budget_units: 1 }   # when the scribe 
 ```
 
 - Read both files back to the user in full. Then say: `ouroboros run` starts it,
-  `ouroboros status --watch` watches it, `ouroboros stop` stops it, and in the
-  `/ouroboros-checkup` reads the run, live or finished.
+  `ouroboros status --watch` watches it, `ouroboros stop` stops it, and the
+  `ouroboros-checkup` skill reads the run, live or finished.
 
 ## Rules
 

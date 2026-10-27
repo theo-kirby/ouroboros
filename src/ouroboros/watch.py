@@ -214,7 +214,7 @@ def stats_text(snap: Snapshot, *, since_steps: int, since_decisions: int, run: s
     loops = [s for s in new_steps if s.get("step") == "loop"]
     if loops:
         last = loops[-1]
-        lines.append(f"loop detector: {last.get('signal')} x{last.get('streak')} (escalation {last.get('escalation')}/3)")
+        lines.append(f"loop detector: {last.get('signal')} x{last.get('streak')} (escalation {last.get('escalation')}/2)")
     if snap.decisions:
         last = snap.decisions[-1]
         if last.get("did"):
