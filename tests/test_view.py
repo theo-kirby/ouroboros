@@ -132,7 +132,13 @@ def test_the_time_budget_is_a_row_of_cells(run_dir, repo):
     view.render(run_dir, repo, goal_text=GOAL)
     html = page(run_dir)
     assert '<div class="gauge clock" data-start="1799996275" data-budget="14400">' in html
-    assert 'aria-label="time budget used"' in html and "1 h 02</span> elapsed" in html and "2 h 57</span> left" in html
+    assert 'aria-label="time budget used"' in html and "1 h 02</span> elapsed" in html and "2 h 57</span> left of 4 h 00" in html
+
+
+def test_the_last_verdict_figure_uses_the_timeline_words(run_dir, repo):
+    view.render(run_dir, repo, goal_text=GOAL)   # last_verdict: continue
+    html = page(run_dir)
+    assert '<dt>Last verdict</dt><dd><span class="chip ok">kept</span>' in html
 
 
 def test_right_now_says_what_the_stage_is_working_on(run_dir, repo):

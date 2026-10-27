@@ -751,8 +751,9 @@ The delta is measured against the charter at the merge base.
   is doing (a command, a wait, a tool) and its background shells, and "Right now"
   names the command and how long it has run); the key
   figures (iteration, elapsed, criteria met, commits kept and reverted, last
-  verdict); the time budget (`stop.after` or `stop.until`, the sooner) as one
-  row of 20 cells that ramp along viridis, ticking in the browser; usage per
+  verdict, in the timeline's words); the time budget (`stop.after` or `stop.until`,
+  the sooner) as one row of 20 square cells that ramp green to red, ticking in the
+  browser; usage per
   harness: the models it ran and for which roles, one row of cells per rationing
   window and the tokens. A window's row is this run's own share of one whole
   window, not the account's level (other use of the account fills that too): the

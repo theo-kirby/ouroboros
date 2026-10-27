@@ -12,7 +12,7 @@
 :root{--paper:#fbfaf6;--ink:#1d1d1b;--mute:#6d6a63;--rule:#d6d1c4;--faint:#ece8dd;--acc:#1f77b4;--acc-bg:#dee7f1;
 --ok:#2ca02c;--ok-bg:#d5f0cd;--warn:#ff7f0e;--warn-bg:#fde2c6;--bad:#d62728;--bad-bg:#fdd5d2;
 --ok-t:#238323;--warn-t:#b1580c;--bad-t:#d62728;--blocked:#e377c2;
---actor:#1f77b4;--critic:#9467bd;--scribe:#17becf;--code:#f1eee6;
+--actor:#08519c;--critic:#4292c6;--scribe:#9ecae1;--code:#f1eee6;
 --g-met:#08519c;--g-open:#9ecae1;--g-broken:#d62728;--g-blocked:#9467bd;--rec:linear-gradient(90deg,#4292c6,#7bb1d8,#b3d1e9);
 --serif:"Iowan Old Style","Charter","Palatino Linotype","Book Antiqua",Georgia,serif;
 --sans:"Avenir Next","Helvetica Neue",system-ui,-apple-system,"Segoe UI",sans-serif;
@@ -20,12 +20,12 @@
 :root[data-theme="dark"]{color-scheme:dark;--paper:#17181a;--ink:#e7e4dc;--mute:#9b978e;--rule:#3a3a37;--faint:#26272a;--acc:#679fce;--acc-bg:#192d3c;
 --ok:#62c05b;--ok-bg:#1c361e;--warn:#ff9d43;--warn-bg:#4a2f17;--bad:#eb605f;--bad-bg:#411b1d;
 --ok-t:#62c05b;--warn-t:#ff9d43;--bad-t:#eb605f;--blocked:#ed97ca;
---actor:#679fce;--critic:#ad8cc9;--scribe:#5bccda;--code:#222326;
+--actor:#c6dbef;--critic:#6baed6;--scribe:#2171b5;--code:#222326;
 --g-met:#c6dbef;--g-open:#2171b5;--g-broken:#ff9896;--g-blocked:#c5b0d5;--rec:linear-gradient(90deg,#6baed6,#497ca1,#274b6c)}
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--paper);color:var(--ink);font:17px/1.55 var(--serif);overflow-wrap:anywhere}
-main{max-width:1120px;margin:0 auto;padding:18px 16px 56px}
+main{max-width:1040px;margin:0 auto;padding:18px 40px 56px}
 a{color:var(--acc)}
 :focus-visible{outline:2px solid var(--acc);outline-offset:2px}
 code{font:.84em var(--mono);background:var(--code);padding:.05em .3em;border-radius:2px}
@@ -45,7 +45,7 @@ padding:0 0 12px;border-bottom:1px solid var(--rule)}
 .stamp .run{color:var(--ink);font-weight:600}
 .ago.warn{color:var(--warn);font-weight:600}
 .theme{font:inherit;background:none;border:1px solid var(--rule);color:var(--mute);border-radius:2px;padding:0 6px;cursor:pointer}
-h1{font-size:clamp(1.8rem,4.2vw,2.7rem);line-height:1.12;font-weight:600;letter-spacing:-.012em;margin:22px 0 4px}
+h1{font-size:clamp(1.6rem,3.4vw,2.2rem);line-height:1.12;font-weight:600;letter-spacing:-.012em;margin:22px 0 12px}
 .meta{margin:0 0 14px;color:var(--mute);font:.82rem var(--sans)}
 .notice{margin:0 0 12px;padding:6px 10px;border-left:3px solid var(--mute);background:var(--faint);font:.9rem var(--sans)}
 .notice.warn{border-color:var(--warn)}
@@ -54,8 +54,8 @@ h1{font-size:clamp(1.8rem,4.2vw,2.7rem);line-height:1.12;font-weight:600;letter-
 .src{font:.8rem var(--sans);color:var(--mute);margin:.2em 0 0}
 
 /* the loop and the key figures */
-.hero{display:grid;gap:8px 40px;grid-template-columns:1fr;margin:18px 0 8px;padding:18px 0 0;border-top:1px solid var(--rule)}
-@media (min-width:860px){.hero{grid-template-columns:minmax(340px,470px) 1fr;align-items:center}}
+.hero{display:grid;gap:8px 40px;grid-template-columns:1fr;margin:18px 0 8px;padding:4px 0 0;border-top:1px solid var(--rule)}
+@media (min-width:860px){.hero{grid-template-columns:minmax(320px,400px) 1fr;align-items:start}.hero .side{padding-top:22px}.hero .ring{margin-left:-36px}}
 .loopfig{margin:0;text-align:center}
 .ring{width:100%;max-width:470px;height:auto;display:block;margin:0 auto}
 figcaption,.cap{font:.82rem/1.45 var(--sans);color:var(--mute);margin-top:6px;text-align:left}
@@ -79,8 +79,10 @@ figcaption b{color:var(--ink);font-weight:600}
 .dial .mk{stroke:var(--mute);stroke-width:1.5}
 .loopfig .legend{margin:4px 0 6px}
 
-.figs{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));margin:0 0 18px;border-top:1px solid var(--rule)}
-.fig{padding:8px 12px 10px 0;border-bottom:1px solid var(--rule)}
+.figs{display:grid;grid-template-columns:repeat(5,auto);justify-content:space-between;gap:14px 16px;margin:0 0 18px}
+.fig{padding:0}
+.fig dt,.fig .num{white-space:nowrap}
+.fig dd:has(.chip){display:flex;align-items:center;height:1.1em}
 dt{font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;color:var(--mute);font-weight:600}
 .fig dd{margin:2px 0 0;font-size:1.9rem;line-height:1.1;font-weight:600}
 .fig dd small{display:block;font:.78rem var(--sans);color:var(--bad);font-weight:400;margin-top:2px}
@@ -88,16 +90,15 @@ dt{font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;color:var(--mu
 .fig .chip{font-size:.8rem;vertical-align:middle}
 .lab{font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;color:var(--mute);font-weight:600;margin:0 0 6px}
 
-/* usage: a row of cells per window, lit in viridis */
-.gauge{display:grid;grid-template-columns:minmax(9em,auto) 1fr auto;align-items:center;gap:0 12px;padding:4px 0;font-family:var(--sans)}
+/* time and usage: a row of square cells, lit green to red */
+.gauge{display:grid;grid-template-columns:7.5em 1fr auto;align-items:center;gap:0 12px;padding:4px 0;font-family:var(--sans)}
 .gl{font-size:.86rem;font-weight:600}
 .gl small{display:block;font-weight:400;color:var(--mute);font-size:.76rem}
+.ico{width:15px;height:15px;margin-right:6px;vertical-align:-2px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round}.ico .pin{fill:currentColor;stroke:none}
 .cells{display:flex;gap:3px}
-.cells i{flex:1;max-width:16px;height:18px;background:var(--faint);border-radius:4px}
-.cells i.on:nth-child(1){background:#3b528a}.cells i.on:nth-child(2){background:#375b8c}.cells i.on:nth-child(3){background:#33648d}.cells i.on:nth-child(4){background:#2f6d8e}.cells i.on:nth-child(5){background:#2b768e}
-.cells i.on:nth-child(6){background:#287f8d}.cells i.on:nth-child(7){background:#24878d}.cells i.on:nth-child(8){background:#21908c}.cells i.on:nth-child(9){background:#219889}.cells i.on:nth-child(10){background:#22a087}
-.cells i.on:nth-child(11){background:#23a983}.cells i.on:nth-child(12){background:#2fb17c}.cells i.on:nth-child(13){background:#3bb975}.cells i.on:nth-child(14){background:#49c16d}.cells i.on:nth-child(15){background:#5cc762}
-.cells i.on:nth-child(16){background:#6fcd58}.cells i.on:nth-child(17){background:#84d34b}.cells i.on:nth-child(18){background:#9bd83c}.cells i.on:nth-child(19){background:#b3dd2d}.cells i.on:nth-child(20){background:#cae126}
+.cells i{flex:1;max-width:18px;aspect-ratio:1;background:var(--faint);border-radius:4px}
+.cells i.on:nth-child(1){background:#1a9850}.cells i.on:nth-child(2){background:#2ea255}.cells i.on:nth-child(3){background:#42ab5a}.cells i.on:nth-child(4){background:#56b55f}.cells i.on:nth-child(5){background:#69be63}.cells i.on:nth-child(6){background:#7ac665}.cells i.on:nth-child(7){background:#8bcd67}.cells i.on:nth-child(8){background:#9cd569}.cells i.on:nth-child(9){background:#afd469}.cells i.on:nth-child(10){background:#c6c967}.cells i.on:nth-child(11){background:#ddbe64}.cells i.on:nth-child(12){background:#f4b362}.cells i.on:nth-child(13){background:#fca45c}.cells i.on:nth-child(14){background:#f99354}.cells i.on:nth-child(15){background:#f7824c}.cells i.on:nth-child(16){background:#f47045}.cells i.on:nth-child(17){background:#ee603d}.cells i.on:nth-child(18){background:#e65036}.cells i.on:nth-child(19){background:#df402e}.cells i.on:nth-child(20){background:#d73027}
+
 .gv{font-size:1.15rem;font-weight:600;min-width:3.2em;text-align:right}
 .gv small{font-size:.7em;color:var(--mute)}
 .gv.wide{grid-column:2/-1;text-align:left}
@@ -226,7 +227,7 @@ iframe.graph{display:block;width:100%;height:min(560px,75vh);border:0;background
 .legend .g-broken{background:var(--g-broken);border-radius:50%}.legend .g-blocked{background:var(--g-blocked);border-radius:50%}
 .legend .g-record{background:var(--rec);border-radius:50%;transform:scale(.7)}
 footer{margin-top:40px;padding-top:8px;border-top:1px solid var(--rule);color:var(--mute);font:.76rem var(--sans)}
-@media (max-width:640px){body{font-size:16px}.logo{width:44px;height:44px}.kick{font-size:.82rem}iframe.graph{height:380px}.figs{grid-template-columns:repeat(3,minmax(0,1fr))}.lede p{font-size:1.05rem}.it dl.more{grid-template-columns:1fr;padding-left:0}.it dl.more dd{margin-bottom:6px}
+@media (max-width:640px){main{padding:18px 16px 56px}body{font-size:16px}.logo{width:44px;height:44px}.kick{font-size:.82rem}iframe.graph{height:380px}.figs{grid-template-columns:repeat(3,minmax(0,1fr))}.lede p{font-size:1.05rem}.it dl.more{grid-template-columns:1fr;padding-left:0}.it dl.more dd{margin-bottom:6px}
 .gauge{grid-template-columns:1fr auto}.cells,.tbar{grid-column:1/-1;order:3}.gs{grid-column:1/-1;order:4;margin-top:2px}.fig dd{font-size:1.5rem}}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
@@ -237,10 +238,8 @@ footer{margin-top:40px;padding-top:8px;border-top:1px solid var(--rule);color:va
 {{summary}}
 <div class="hero">
 <figure class="loopfig">{{loop}}
-<figcaption><p class="legend"><span><i class="s-actor"></i>actor</span><span><i class="s-critic"></i>critic</span><span><i class="s-scribe"></i>scribe</span><span class="quiet" id="dial-turn"></span></p>
-<b>Fig. 1. The loop.</b> In each iteration, the <b>actor</b> makes one change, the <b>critic</b> keeps or reverts it,
-and the <b>scribe</b> writes down what happened. The band fills as the iteration runs, the hand is now, and the tick is the critic’s verdict. The inner rings are the iterations before, on the same clock.</figcaption></figure>
-<div class="side">{{figures}}<h3 class="lab">Time budget</h3>{{time_budget}}<h3 class="lab">Usage this run</h3>{{usage}}</div>
+<figcaption><p class="legend"><span><i class="s-actor"></i>actor</span><span><i class="s-critic"></i>critic</span><span><i class="s-scribe"></i>scribe</span><span class="quiet" id="dial-turn"></span></p></figcaption></figure>
+<div class="side">{{figures}}{{time_budget}}{{usage}}</div>
 </div>
 <section class="now" aria-live="polite" aria-label="Right now">{{now}}</section>
 <div class="two">
@@ -325,7 +324,7 @@ and the <b>scribe</b> writes down what happened. The band fills as the iteration
   // the thin inner rings are the iterations before, on the same clock.
   var KEYS = ["work", "critique", "scribe"], NAMES = {work: "actor", critique: "critic", scribe: "scribe"};
   var TURNS = [300, 600, 900, 1800, 3600, 7200, 14400, 28800, 57600];
-  var CX = 150, CY = 150, R = 108, BAND = 14, PAST = [94, 86, 78];
+  var CX = 150, CY = 150, R = 108, BAND = 22, PAST = [86, 75, 64];
   function f1(x) { return x.toFixed(1); }
   function pt(r, a) { var t = a * Math.PI / 180; return [CX + r * Math.cos(t), CY + r * Math.sin(t)]; }
   function arc(r, a0, a1) {   // clockwise round the centre from a0 to a1, in degrees
@@ -360,7 +359,7 @@ and the <b>scribe</b> writes down what happened. The band fills as the iteration
     }
     d.past.forEach(function (p, i) {
       var s = 0;
-      KEYS.forEach(function (key, j) { seg(out, key, A(s), A(s + p[j]), PAST[i], 6, " past"); s += p[j]; });
+      KEYS.forEach(function (key, j) { seg(out, key, A(s), A(s + p[j]), PAST[i], 9, " past"); s += p[j]; });
     });
     var prev = -Infinity, running = null;
     d.stages.forEach(function (st) {

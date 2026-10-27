@@ -364,7 +364,7 @@ def _figures(status: dict, steps: list[dict], graph: Graph | None, goal_text: st
         fig("Criteria met", f'<span class="num">{met}<span class="of">/{total}</span></span>' if total else "–"),
         fig("Commits kept", f'<span class="num">{max(0, commits - reverts)}</span>',
             f"{reverts} reverted" if reverts else ""),
-        fig("Last verdict", _chip(verdict, VERDICT_CLASS.get(str(verdict), "")) if verdict else "–"),
+        fig("Last verdict", _chip(VERDICT_WORD.get(str(verdict), verdict), VERDICT_CLASS.get(str(verdict), "")) if verdict else "–"),
     ]
     return f'<dl class="figs">{"".join(cells)}</dl>'
 
@@ -373,6 +373,12 @@ def _facts(status: dict, steps: list[dict], run_name: str, goal_text: str) -> st
     """The header and the key figures, for a template that has one `{{facts}}` slot."""
     return _header(status, run_name, goal_text) + _figures(status, steps, None, goal_text)
 
+
+# The gauges' icons: a clock for the time budget, a dial for usage.
+CLOCK_ICON = ('<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5"/>'
+              '<path d="M8 4.2V8l2.6 1.6"/></svg>')
+USAGE_ICON = ('<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 11.5a6 6 0 1 1 12 0"/>'
+              '<path d="M8 11.5l3-4"/><circle class="pin" cx="8" cy="11.5" r=".9"/></svg>')
 
 ACT_WORDS = {"thinking": "thinking", "tool": "using a tool", "command": "running a command", "wait": "waiting"}
 
@@ -446,7 +452,7 @@ TOKEN_WORDS = (("input", "in"), ("cache_read", "cache read"), ("cache_write", "c
 
 
 def _cells(fraction: float, label: str) -> str:
-    """A row of USAGE_CELLS cells, lit from the left (the stylesheet colours them in viridis); past 1.0 every cell is lit."""
+    """A row of USAGE_CELLS cells, lit from the left (the stylesheet colours them green to red); past 1.0 every cell is lit."""
     lit = round(max(0.0, min(fraction, 1.0)) * USAGE_CELLS)
     cells = "".join(
         '<i class="on"></i>' if k < lit else "<i></i>"
@@ -526,8 +532,8 @@ def _usage(status: dict) -> str:
         if not rows:
             continue
         m = models.get(harness) if isinstance(models.get(harness), dict) else {}
-        blocks.append(f'<div class="agent"><p class="who"><strong>{_e(harness)}</strong>'
-                      + (f" {_models(m)}" if m else "") + "</p>" + "".join(rows) + "</div>")
+        blocks.append(f'<div class="agent"><p class="who">{USAGE_ICON}<strong>{_e(harness)}</strong>'
+                      + (f" {_models(m)}" if m else "") + ' <span class="quiet">· used this run</span></p>' + "".join(rows) + "</div>")
     if not blocks:
         text = status.get("usage_compact")
         return f'<p class="quiet">{_e(text)}</p>' if text else '<p class="quiet">No usage reading yet.</p>'
@@ -545,14 +551,15 @@ def _time_budget(status: dict) -> str:
     live = state in LIVE_STATES and start is not None
     tick = f' data-start="{start:.0f}"' if live else ""
     if not budget:
-        return (f'<div class="gauge clock"{tick}><span class="gl">Elapsed <small>no time limit set</small></span>'
-                f'<span class="gv num wide"><span class="el">{_e(_span(elapsed))}</span></span></div>')
+        return (f'<div class="gauge clock"{tick}><span class="gl">{CLOCK_ICON}Time <small>no time limit set</small></span>'
+                f'<span class="gv num wide"><span class="el">{_e(_span(elapsed))}</span> elapsed</span></div>')
     f = elapsed / budget
     left = max(0.0, budget - elapsed)
-    return (f'<div class="gauge clock"{tick} data-budget="{budget:.0f}"><span class="gl">Elapsed <small>of {_e(_span(budget))}</small></span>'
+    return (f'<div class="gauge clock"{tick} data-budget="{budget:.0f}"><span class="gl">{CLOCK_ICON}Time</span>'
             + _cells(f, "time budget used")
             + f'<span class="gv num"><span class="pc">{round(100 * min(f, 1.0))}</span><small>%</small></span>'
-            f'<span class="gs"><span class="el">{_e(_span(elapsed))}</span> elapsed · <span class="left">{_e(_span(left))}</span> left</span></div>')
+            f'<span class="gs"><span class="el">{_e(_span(elapsed))}</span> elapsed · <span class="left">{_e(_span(left))}</span>'
+            f' left of {_e(_span(budget))}</span></div>')
 
 
 NOW_WORDS = {"work": "The actor is doing the work", "critique": "The critic is checking the work",
@@ -780,7 +787,7 @@ def _progress(its: list[dict], status: dict) -> str:
     legend = ('<p class="legend"><span><i class="s-actor"></i>actor</span><span><i class="s-critic"></i>critic</span>'
               '<span><i class="s-scribe"></i>scribe</span><span><i class="v ok"></i>kept</span>'
               '<span><i class="v warn"></i>held back</span><span><i class="v bad"></i>reverted</span>'
-              '<span><i class="fold"></i>memory folded</span><span class="quiet">bar height: time taken · x: iteration</span></p>')
+              '<span><i class="fold"></i>memory folded</span></p>')
     rows = []
     for it in reversed(its):
         d = it.get("decision") or {}
@@ -950,21 +957,16 @@ def _graph(graph: Graph | None, version: str | None, omitted: int = 0) -> str:
     if not version:
         return ('<p class="quiet">The memory graph could not be drawn here. '
                 '<code>ouroboros mem orient</code> prints what it holds.</p>')
-    claims = [n for n in graph.claims("state") if n.get("status") != "superseded"]
     records = graph.records()
-    folded = sum(1 for r in records if r.get("folded"))
     swatch = "".join(f'<span><i class="g-{k}"></i>{w}</span>' for k, w in (
         ("working", "true now (met)"), ("open", "open"), ("broken", "broken"), ("blocked", "blocked"),
         ("record", "record of an iteration")))
     return (f'<figure class="graphfig"><iframe class="graph" data-src="{GRAPH_PAGE}?v={version}" title="The run\'s memory graph"'
             ' loading="lazy"></iframe>'
-            f'<figcaption><b>Fig. 2. What the run knows.</b> The centre is the run. Around it are <b>claims</b>: what is true now'
-            f' ({len(claims)}), coloured by status. On the rim are <b>records</b>: one per iteration, what happened'
-            f' ({len(records)}, {folded} folded into the claims; older ones are paler). Click a dot to show its links;'
-            f' drag to move, Shift + scroll to zoom, F to fit, N to show the names.'
-            + (f' <b>Only the newest {len(records) - omitted} of {len(records)} records are drawn</b>, so the graph fits;'
+            f'<figcaption><span class="legend">{swatch}</span>'
+            + (f'<b>Only the newest {len(records) - omitted} of {len(records)} records are drawn</b>, so the graph fits;'
                ' the older ones live on in the claims they were folded into.' if omitted else "")
-            + f'<span class="legend">{swatch}</span></figcaption></figure>')
+            + '</figcaption></figure>')
 
 
 _SECTION_TAG = re.compile(r"<(/?)section\b[^>]*>", re.I)
