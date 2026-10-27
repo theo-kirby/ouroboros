@@ -755,7 +755,8 @@ The delta is measured against the charter at the merge base.
   the sooner) as one row of 20 square cells that ramp green to red, ticking in the
   browser; usage per
   harness: the models it ran and for which roles, one row of cells per rationing
-  window and the tokens. A window's row is this run's own share of one whole
+  window and the tokens; and progress toward done (the criteria met) as one more
+  row of cells. A window's row is this run's own share of one whole
   window, not the account's level (other use of the account fills that too): the
   ledger sums the rises between readings and counts a new window from zero once
   its reset time moves on, so a long run can pass 100%. Tokens are fresh input,
@@ -781,8 +782,11 @@ The delta is measured against the charter at the merge base.
   `view.report_graph` builds from the snapshot either store gives (the same
   mapping as Governor's `toViewer`). The page frames it and gives it its colours
   (`view.GRAPH_COLOURS`, seaborn's Blues: met claims darkest, open ones pale,
-  records between and paler with age); a plain wheel scrolls the page, Shift +
-  wheel zooms, and a button (or N) names the nodes. The embed is vendored in
+  records between and paler with age) and asks for the organic hub (the wheel
+  distorted a little, records brought in, every citation drawn faintly); a plain
+  wheel scrolls the page, Shift + wheel zooms. The fit, names and node-title
+  buttons sit under the legend and work the embed through its keys (F, N); on
+  `file://` the page cannot reach into the frame, so the embed keeps its own. The embed is vendored in
   `src/ouroboros/vendor/` (`scripts/vendor-governor-report.sh` refreshes it from a
   Governor checkout; `GOVERNOR_VERSION` names the commit), so a files run draws
   its graph with no Node and no Governor installed. The graph page is rewritten

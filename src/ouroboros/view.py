@@ -374,11 +374,13 @@ def _facts(status: dict, steps: list[dict], run_name: str, goal_text: str) -> st
     return _header(status, run_name, goal_text) + _figures(status, steps, None, goal_text)
 
 
-# The gauges' icons: a clock for the time budget, a dial for usage.
+# The gauges' icons: a clock for the time budget, rising bars for usage, a flag for done.
 CLOCK_ICON = ('<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5"/>'
               '<path d="M8 4.2V8l2.6 1.6"/></svg>')
-USAGE_ICON = ('<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 11.5a6 6 0 1 1 12 0"/>'
-              '<path d="M8 11.5l3-4"/><circle class="pin" cx="8" cy="11.5" r=".9"/></svg>')
+USAGE_ICON = ('<svg class="ico" viewBox="0 0 16 16" aria-hidden="true">'
+              '<path d="M3.5 13.5v-4M8 13.5v-7M12.5 13.5v-10"/></svg>')
+DONE_ICON = ('<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 14.5V2"/>'
+             '<path d="M3.5 2.5h9l-2 3 2 3h-9"/></svg>')
 
 ACT_WORDS = {"thinking": "thinking", "tool": "using a tool", "command": "running a command", "wait": "waiting"}
 
@@ -560,6 +562,18 @@ def _time_budget(status: dict) -> str:
             + f'<span class="gv num"><span class="pc">{round(100 * min(f, 1.0))}</span><small>%</small></span>'
             f'<span class="gs"><span class="el">{_e(_span(elapsed))}</span> elapsed · <span class="left">{_e(_span(left))}</span>'
             f' left of {_e(_span(budget))}</span></div>')
+
+
+def _done(graph: Graph | None, goal_text: str) -> str:
+    """Progress toward done as the gauges' row of cells: the charter's criteria met so far."""
+    met, total = _criteria_count(graph, goal_text)
+    if not total:
+        return ""
+    f = met / total
+    return (f'<div class="gauge done"><span class="gl">{DONE_ICON}Done</span>'
+            + _cells(f, "progress toward done")
+            + f'<span class="gv num">{round(100 * f)}<small>%</small></span>'
+            f'<span class="gs">{met} of {total} done criteria met</span></div>')
 
 
 NOW_WORDS = {"work": "The actor is doing the work", "critique": "The critic is checking the work",
@@ -938,10 +952,13 @@ def _graph_page(vdir: Path, graph: Graph | None) -> tuple[str | None, int]:
     payload = _graph_json(data)
     if re.search(r"</script", script, re.I) or re.search(r"</style", css, re.I):
         return None
-    page = ('<!doctype html><html lang="en" data-theme="light"><head><meta charset="utf-8">'
+    # The page under it draws the embed's tools (fit, names, titles) when it can reach in; on file://
+    # it can't, and the embed keeps its own.
+    page = ('<!doctype html><html lang="en" data-theme="light" data-layout="organic"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width,initial-scale=1"><title>Memory graph</title>'
-            '<script>if(/[?&]theme=dark(&|$)/.test(location.search))document.documentElement.dataset.theme="dark"</script>'
-            f"<style>{css}</style></head><body><div id=\"root\"></div>"
+            '<script>if(/[?&]theme=dark(&|$)/.test(location.search))document.documentElement.dataset.theme="dark";'
+            'try{if(parent!==window&&parent.document)document.documentElement.classList.add("tools-outside")}catch(e){}</script>'
+            f"<style>{css}.tools-outside .report-tools{{display:none}}</style></head><body><div id=\"root\"></div>"
             f'<script id="flywheel-snapshot" type="application/json">{payload}</script>'
             f'<script>window.GRAPH_THEME={json.dumps(GRAPH_COLOURS)}</script><script>{script}</script></body></html>\n')
     version = hashlib.sha256(page.encode()).hexdigest()[:16]
@@ -964,6 +981,9 @@ def _graph(graph: Graph | None, version: str | None, omitted: int = 0) -> str:
     return (f'<figure class="graphfig"><iframe class="graph" data-src="{GRAPH_PAGE}?v={version}" title="The run\'s memory graph"'
             ' loading="lazy"></iframe>'
             f'<figcaption><span class="legend">{swatch}</span>'
+            '<div class="graph-tools" hidden><button type="button" data-key="f">Fit graph</button>'
+            '<button type="button" data-key="n" aria-pressed="false">Show names</button>'
+            '<details><summary>Node titles</summary><ul></ul></details></div>'
             + (f'<b>Only the newest {len(records) - omitted} of {len(records)} records are drawn</b>, so the graph fits;'
                ' the older ones live on in the claims they were folded into.' if omitted else "")
             + '</figcaption></figure>')
@@ -1093,6 +1113,7 @@ def render(run_dir: Path, repo: Path, *, goal_text: str, graph=None, now: float 
             "loop": part(_loop, status, its),
             "usage": part(_usage, status),
             "time_budget": part(_time_budget, status),
+            "done": part(_done, graph, goal_text or ""),
             "now": part(_now, status, decisions, goal_text or ""),
             "progress": part(_progress, its, status),
             "graph": part(_graph, graph, graph_version, graph_omitted),

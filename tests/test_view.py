@@ -118,7 +118,8 @@ def test_usage_bars_are_the_runs_own_share_of_each_window(run_dir, repo):
     view.render(run_dir, repo, goal_text=GOAL)
     html = page(run_dir)
     assert 'aria-valuenow="130"' in html and "130<small>%</small>" in html and 'aria-valuenow="5"' in html
-    assert html.count('<i class="on"') == 20 + 1, "past a whole window every cell is lit"
+    usage = html[:html.find('class="gauge done"')]
+    assert usage.count('<i class="on"') == 20 + 1, "past a whole window every cell is lit"
     assert "<code>claude-opus-5-5</code> <span class=\"quiet\">actor, critic</span>" in html
     assert "52.6 M" in html and "640 k out" in html and 'class="t-cache_read"' in html
 
@@ -139,6 +140,18 @@ def test_the_last_verdict_figure_uses_the_timeline_words(run_dir, repo):
     view.render(run_dir, repo, goal_text=GOAL)   # last_verdict: continue
     html = page(run_dir)
     assert '<dt>Last verdict</dt><dd><span class="chip ok">kept</span>' in html
+
+
+def test_the_done_gauge_counts_the_charters_criteria_met(run_dir, repo):
+    view.render(run_dir, repo, goal_text=GOAL)
+    html = page(run_dir)
+    gauge = html[html.index('class="gauge done"'):]
+    gauge = gauge[:gauge.index("</div>")]
+    met, total = view._criteria_count(None, GOAL)
+    assert total and f"{met} of {total} done criteria met" in gauge
+    assert f'aria-valuenow="{round(100 * met / total)}"' in gauge
+    view.render(run_dir, repo, goal_text="# Goal: no criteria\n")
+    assert 'class="gauge done"' not in page(run_dir), "a charter without done criteria has no gauge"
 
 
 def test_right_now_says_what_the_stage_is_working_on(run_dir, repo):

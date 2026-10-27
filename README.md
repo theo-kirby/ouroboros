@@ -10,10 +10,10 @@
 <p align="center"><b>Autonomous framework for long-running agents</b></p>
 
 <p align="center">
-  <a href="https://borris.dev"><img alt="Site: borris.dev" src="https://img.shields.io/badge/site-borris.dev-111111"></a>
+  <a href="https://borris.dev"><img alt="Site: borris.dev" src="https://img.shields.io/badge/site-borris.dev-08519c"></a>
   <img alt="Python 3.12+" src="https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white">
-  <a href="https://docs.astral.sh/uv/"><img alt="Built with uv" src="https://img.shields.io/badge/built%20with-uv-DE5FE9"></a>
-  <img alt="Harnesses: Claude Code, Codex, Pi" src="https://img.shields.io/badge/harnesses-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20Pi-6B4FBB">
+  <a href="https://docs.astral.sh/uv/"><img alt="Built with uv" src="https://img.shields.io/badge/built%20with-uv-2ca02c"></a>
+  <img alt="Harnesses: Claude Code, Codex, Pi" src="https://img.shields.io/badge/harnesses-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20Pi-4292c6">
   <img alt="Tests: pytest" src="https://img.shields.io/badge/tests-pytest-0A9EDC?logo=pytest&logoColor=white">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-green"></a>
 </p>
@@ -31,7 +31,7 @@ a branch you can read and a report on what's worth merging.
 <a href="https://borris.dev">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/site-dark.png">
-    <img src="docs/site-light.png" alt="The borris.dev page in the style of an Ouroboros run report: the loop of actor, critic and scribe, the key figures, the time budget and usage windows">
+    <img src="docs/site-light.png" alt="The borris.dev page in the style of an Ouroboros run report: the loop as a dial, the key figures, and gauges for time, usage and progress toward done">
   </picture>
 </a>
 
@@ -148,14 +148,15 @@ step 3. A loop is a thing to break out of, not a thing to die of.
 
 Every run keeps a live page at `.ouroboros/runs/<run>/view/index.html`, written
 for someone who does not know the code. Ouroboros fills in the facts: the loop
-and its current stage, the key figures, usage, the criteria, the open problems,
-a timeline of every iteration, and the memory graph. The scribe writes a
+as a dial with the stage running now, the key figures, gauges for the time
+budget, usage and progress toward done, the criteria, the open problems, a
+timeline of every iteration, and the memory graph. The scribe writes a
 plain-language summary and the findings. `ouroboros view` serves it;
 `ouroboros view --host 0.0.0.0` lets a phone open it, for example over
 Tailscale. A repo can bring its own template at `.ouroboros/view/template.html`.
 
-See [borris.dev](https://borris.dev) for a page in this style, made from a real
-run.
+See [borris.dev](https://borris.dev) for a page in this style; its timeline is
+from a real run.
 
 ## Configuration and usage
 
