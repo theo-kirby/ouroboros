@@ -225,9 +225,11 @@ class Engine:
         for res in getattr(self.critic, "last_results", None) or []:
             self.budget.count(res, "critic", _harness_of(self.critic))
         self.recorder.decision(iteration=n, verdict=verdict.verdict, reason=verdict.reason, reply=verdict.reply,
-                               did=verdict.did, doing=verdict.doing, fix_first=verdict.fix_first, source=verdict.source)
+                               did=verdict.did, doing=verdict.doing, fix_first=verdict.fix_first, source=verdict.source,
+                               verification=verdict.verification, verification_evidence=verdict.verification_evidence)
         self.recorder.step(iteration=n, step="critique", verdict=verdict.verdict, source=verdict.source,
-                           reason=verdict.reason, cost=critic_cost)
+                           reason=verdict.reason, cost=critic_cost,
+                           verification=verdict.verification, verification_evidence=verdict.verification_evidence)
         if loop is not None:
             self._escalate(n, loop, verdict)
 
@@ -313,6 +315,7 @@ class Engine:
         """
         self._status("scribe", iteration=n)
         verdict_text = (f"{verdict.verdict} — {verdict.reason}\n\n"
+                        f"Reviewer-reported verification: {verdict.verification} — {verdict.verification_evidence}\n\n"
                         + ("The change was **reverted**: record it as a dead end." if reverted
                            else "The change stays on the branch." if commit else "There was no change."))
         try:

@@ -32,6 +32,7 @@ from importlib import resources
 from pathlib import Path
 from typing import Callable
 
+from .recorder import recorded_iterations
 from .config import Config
 from .harness import make_harness
 from .harness.base import Result
@@ -190,7 +191,7 @@ def _iteration_counts(steps: list[dict]) -> str:
     reverts = sum(1 for s in steps if s.get("step") == "revert")
     errors = sum(1 for s in steps if s.get("step") == "engine_error")
     changed = sum(1 for c in commits if c.get("changed"))
-    recorded = sum(1 for c in commits if c.get("recorded"))
+    recorded = recorded_iterations(steps)
     text = f"{len(commits)} iterations, {changed} changed, {recorded} recorded, {reverts} reverted"
     return text + (f", {errors} engine errors" if errors else "")
 

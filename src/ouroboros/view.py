@@ -682,6 +682,8 @@ def _decisions(decisions: list[dict]) -> str:
                 body.append(f"<dt>{label}</dt><dd>{_e(text)}</dd>")
         if d.get("source"):
             body.append(f"<dt>Source</dt><dd>{_e(d['source'])}</dd>")
+        body.append(f"<dt>Reviewer-reported verification</dt><dd>{_e(d.get('verification') or 'not_reported')}: "
+                    f"{_e(d.get('verification_evidence') or '')}</dd>")
         doing = f'<span class="sub">{_md(_clip(str(d["doing"]), 200))}</span>' if d.get("doing") else ""
         items.append(
             f'<li><details id="{_id("d", d.get("iteration"))}"><summary>'

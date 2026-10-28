@@ -36,6 +36,8 @@ ouroboros mem record --title "<title>" --body body.md --impact "<claim-id>: <del
 - The body has exactly `## What`, `## Why`, `## Method`, `## Result`. Take them from
   the report and make them true to the diff: cut what the diff does not show. End
   `## Result` with the line `Critic: <verdict> — <reason>`.
+  Preserve reviewer-reported verification and its evidence verbatim in the result;
+  inspection, unavailable execution and rules fallback never become reproduction.
 - The impacts come from the report's `## Claims`, checked against the diff and the
   critic's verdict: `--impact "<claim-id>: <delta>"`, `--new "<kebab-name>: <delta>"`,
   or `--none "<reason>"`. Several are fine. The delta says what changed, not what was

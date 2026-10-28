@@ -1385,3 +1385,21 @@ but labels the human-facing metric completed and includes source/unknown counts.
 Legacy reports can be regenerated with `ouroboros archive`; unknown is retained
 when historical memory evidence cannot be mapped reliably. This changes reporting,
 not critic verdicts, stop policy or scientific evidence requirements.
+
+
+### Research review corrections (2026-10-28)
+
+The October portfolio review reproduced four accounting/context failures.
+Criterion-bearing runs now fingerprint stable charter criterion identities and
+statuses, rather than all auxiliary claims; adding claims cannot reset mission
+stagnation. Historical no-criterion runs retain state-status tracking. This is
+a review signal, never an automatic stop: valuable intermediate evidence may
+justify continuation. Critic history includes prior steering and next actions.
+Verdicts retain reviewer-reported verification scope and evidence; legacy reviews
+are not_reported and deterministic fallbacks rules_only. These fields travel in
+receipts, scribe context and review details; they are not tool attestations or
+scientific approval. Recording counts deduplicate legacy commit and modern
+scribe receipts by iteration. Operator stop and SIGTERM render a terminal native
+view after writing status; renderer failure has a minimal terminal-page fallback.
+Finite completion/exhaustion semantics and the actor/critic/scribe structure are
+unchanged. Benchmark experiments compare continuation policies explicitly.

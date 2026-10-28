@@ -396,7 +396,7 @@ class GraphMemory(BaseMemory):
         return "\n".join(lines)
 
     def frontier_fingerprint(self) -> str | None:
-        """Every state claim's status, plus how many charter criteria are still open.
+        """Stable criterion statuses; auxiliary state is tracked only without a charter.
 
         These are the only two things that make a run's night worth having: a
         claim changed status, or a criterion got ticked. Records, audits and docs
@@ -406,11 +406,16 @@ class GraphMemory(BaseMemory):
         g = self.graph()
         if not g.ok:
             return None
-        pairs = sorted({(n.get("slug") or n["id"], n.get("status") or "?") for n in g.claims("state")})
-        if not pairs:
+        from ..criteria import rows
+        claims = g.claims("state")
+        if not claims:
             return None
-        open_criteria = len(charter.done_criteria(self.goal_text or ""))
-        body = f"{open_criteria}|" + ";".join(f"{slug}={status}" for slug, status in pairs)
+        if charter.done_criteria(self.goal_text or "", include_checked=True):
+            # Reuse display/accounting identities, duplicate handling and evidence rules.
+            pairs = sorted((row["key"], row["status"]) for row in rows(g, self.goal_text))
+        else:
+            pairs = sorted({(n.get("slug") or n["id"], n.get("status") or "?") for n in claims})
+        body = repr(pairs)
         return hashlib.sha256(body.encode()).hexdigest()[:16]
 
     # -- the tail --------------------------------------------------------

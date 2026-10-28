@@ -13,6 +13,13 @@ def _ts() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def recorded_iterations(steps: list[dict]) -> int:
+    """Successful recording receipts, once per iteration (including legacy commits)."""
+    return len({s.get("iteration") for s in steps
+                if s.get("step") in ("commit", "scribe") and s.get("recorded")
+                and s.get("iteration") is not None})
+
+
 class Recorder:
     def __init__(self, run_dir: Path, *, echo=print) -> None:
         self.run_dir = run_dir

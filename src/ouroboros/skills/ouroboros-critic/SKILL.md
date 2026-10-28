@@ -18,7 +18,7 @@ document below as their voice.
 Return exactly one JSON object and nothing else:
 
 ```json
-{"verdict": "<one of the verdicts>", "reply": "<text injected into the next iteration's prompt>", "reason": "<one sentence for the log>", "did": "<one sentence: the unit that just finished>", "doing": "<one sentence: the unit the next iteration starts>", "fix_first": "<what the scribe must fix in the memory before it records; empty when the memory is clean>"}
+{"verdict": "<one of the verdicts>", "reply": "<text injected into the next iteration's prompt>", "reason": "<one sentence for the log>", "did": "<one sentence: the unit that just finished>", "doing": "<one sentence: the unit the next iteration starts>", "fix_first": "<what the scribe must fix in the memory before it records; empty when the memory is clean>", "verification": "<not_reported|inspection|execution|reproduction|unavailable|rules_only>", "verification_evidence": "<completed commands, observed result and artifact/revision; state unavailable execution explicitly>"}
 ```
 
 | verdict | when |
@@ -73,6 +73,21 @@ Return exactly one JSON object and nothing else:
   is a `looping` verdict, and the `reply` must be different from the ones that failed.
 - **Stay in scope.** If the actor drifts from the mission, `continue` with a steer.
 - **Be short.** `reply` under 120 words. It is read by a busy agent.
+
+## Verification provenance
+
+Report what you actually completed in this review. `inspection` means reading;
+`execution` means completed checks; `reproduction` means a completed independent
+recalculation of a central result. Name commands, outcomes and artifact/revision
+in `verification_evidence`. A started tool call, supplied actor log, synthetic
+fixture or passing unrelated test is not independent reproduction. Use
+`unavailable` when execution was attempted but could not complete. Never upgrade
+old or missing provenance. These are reviewer-reported statements, not automatic
+tool attestations; preserve the limits even when accepting a useful patch.
+A correct local change need not justify another experiment in the same direction:
+use `reply` to choose synthesis, a different route or the finite exhaustion policy.
+A new auxiliary claim alone is not mission progress. When a criterion-stagnation
+signal fires, explain any genuinely valuable intermediate evidence before steering.
 
 ## `fix_first`
 
