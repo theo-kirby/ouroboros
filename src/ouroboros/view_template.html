@@ -13,7 +13,7 @@
 --ok:#2ca02c;--ok-bg:#d5f0cd;--warn:#ff7f0e;--warn-bg:#fde2c6;--bad:#d62728;--bad-bg:#fdd5d2;
 --ok-t:#238323;--warn-t:#b1580c;--bad-t:#d62728;--blocked:#e377c2;
 --actor:#08519c;--critic:#4292c6;--scribe:#9ecae1;--code:#f1eee6;
---g-met:#08519c;--g-open:#9ecae1;--g-broken:#d62728;--g-blocked:#9467bd;--rec:linear-gradient(90deg,#4292c6,#7bb1d8,#b3d1e9);
+--g-met:#edc443;--g-open:#fe933c;--g-broken:#e05148;--g-blocked:#e78dcc;--rec:linear-gradient(90deg,#3170b0,#679ac8,#9ec4e0);
 --serif:"Iowan Old Style","Charter","Palatino Linotype","Book Antiqua",Georgia,serif;
 --sans:"Avenir Next","Helvetica Neue",system-ui,-apple-system,"Segoe UI",sans-serif;
 --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace}
@@ -21,7 +21,7 @@
 --ok:#62c05b;--ok-bg:#1c361e;--warn:#ff9d43;--warn-bg:#4a2f17;--bad:#eb605f;--bad-bg:#411b1d;
 --ok-t:#62c05b;--warn-t:#ff9d43;--bad-t:#eb605f;--blocked:#ed97ca;
 --actor:#c6dbef;--critic:#6baed6;--scribe:#2171b5;--code:#222326;
---g-met:#c6dbef;--g-open:#2171b5;--g-broken:#ff9896;--g-blocked:#c5b0d5;--rec:linear-gradient(90deg,#6baed6,#497ca1,#274b6c)}
+--g-met:#fbd96d;--g-open:#fead66;--g-broken:#f38168;--g-blocked:#f6bedc;--rec:linear-gradient(90deg,#cddff1,#8db3d6,#4d88bb)}
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--paper);color:var(--ink);font:17px/1.55 var(--serif);overflow-wrap:anywhere}
@@ -51,11 +51,18 @@ h1{font-size:clamp(1.6rem,3.4vw,2.2rem);line-height:1.12;font-weight:600;letter-
 .notice.warn{border-color:var(--warn)}
 .lede{margin:0 0 6px}
 .lede p{font-size:1.16rem;line-height:1.55;margin:0 0 .6em}
+/* the summary's highlights (==a phrase==): a yellow stroke a little shorter than the line */
+.lede mark{color:inherit;background:linear-gradient(transparent 18%,#fdf0a6 18%,#fdf0a6 88%,transparent 88%);padding:0 2px;margin:0 -2px;-webkit-box-decoration-break:clone;box-decoration-break:clone}
+:root[data-theme="dark"] .lede mark{background:linear-gradient(transparent 18%,#4d4416 18%,#4d4416 88%,transparent 88%)}
 .src{font:.8rem var(--sans);color:var(--mute);margin:.2em 0 0}
 
 /* the loop and the key figures */
 .hero{display:grid;gap:8px 40px;grid-template-columns:1fr;margin:18px 0 8px;padding:4px 0 0;border-top:1px solid var(--rule)}
-@media (min-width:860px){.hero{grid-template-columns:minmax(340px,420px) 1fr;align-items:start}.hero .side{padding-top:22px}.hero .ring{max-width:400px;margin-left:-36px}}
+@media (min-width:860px){.hero{grid-template-columns:minmax(0,.85fr) minmax(0,1fr);align-items:stretch}
+/* the dial as big as its column; the figures and gauges run the full height beside it */
+.hero .loopfig{display:flex;align-items:center}.hero .ring{max-width:none;margin-left:-12px}
+.hero .side{display:flex;flex-direction:column;padding:18px 0 10px}
+.hero .gauges{flex:1;display:flex;flex-direction:column;justify-content:space-between}}
 .loopfig{margin:0;text-align:center}
 .ring{width:100%;max-width:470px;height:auto;display:block;margin:0 auto}
 figcaption,.cap{font:.82rem/1.45 var(--sans);color:var(--mute);margin-top:6px;text-align:left}
@@ -66,7 +73,7 @@ figcaption b{color:var(--ink);font-weight:600}
 .ring .nl{font:600 19px var(--serif);fill:var(--ink)}
 .ring .ns{font:12.5px var(--sans);fill:var(--mute)}
 .ring .cl{font:600 10px var(--sans);letter-spacing:.14em;text-transform:uppercase;fill:var(--mute)}
-.ring .cn{font:600 50px var(--serif);fill:var(--ink)}
+.ring .cn{font:600 50px var(--serif);fill:var(--ink)}.ring .cn.long{font-size:40px}.ring .cn.longer{font-size:32px}
 .ring .cs{font:600 12px var(--sans);letter-spacing:.12em;text-transform:uppercase;fill:var(--acc)}
 .ring .ct{font:14px var(--mono);fill:var(--mute)}
 .dial .seg{fill:none;stroke-linecap:butt}
@@ -78,18 +85,20 @@ figcaption b{color:var(--ink);font-weight:600}
 .dial .vt{stroke-width:2}.dial .vt.ok{stroke:var(--ok)}.dial .vt.warn{stroke:var(--warn)}.dial .vt.bad{stroke:var(--bad)}
 .dial .mk{stroke:var(--mute);stroke-width:1.5}
 
-.figs{display:grid;grid-template-columns:repeat(5,auto);justify-content:space-between;gap:14px 16px;margin:0 0 18px}
+.figs{display:flex;flex-wrap:wrap;justify-content:space-between;gap:14px 16px;margin:0 0 18px}
 .fig{padding:0}
 .fig dt,.fig .num{white-space:nowrap}
 .fig dd:has(.chip){display:flex;align-items:center;height:1.1em}
 dt{font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;color:var(--mute);font-weight:600}
-.fig dd{margin:2px 0 0;font-size:1.9rem;line-height:1.1;font-weight:600}
+.fig dd{margin:2px 0 0;font-size:1.5rem;line-height:1.1;font-weight:600}
 .fig dd small{display:block;font:.78rem var(--sans);color:var(--bad);font-weight:400;margin-top:2px}
 .fig .of{color:var(--mute);font-weight:400;font-size:.6em}
 .fig .chip{font-size:.8rem;vertical-align:middle}
+.fig.model{overflow-wrap:normal}.fig.model .num{white-space:nowrap}
+.fig.kept{justify-self:start}.fig.kept dd{text-align:center}
 .lab{font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;color:var(--mute);font-weight:600;margin:0 0 6px}
 
-/* time and usage: a row of square cells, lit green to red */
+/* time, usage, tokens and done: a row of square cells, lit green to red */
 .gauge{display:grid;grid-template-columns:7.5em 1fr auto;align-items:center;gap:0 12px;padding:4px 0;font-family:var(--sans)}
 .gl{font-size:.86rem;font-weight:600}
 .gl small{display:block;font-weight:400;color:var(--mute);font-size:.76rem}
@@ -98,18 +107,10 @@ dt{font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;color:var(--mu
 .cells i{flex:1;max-width:18px;aspect-ratio:1;background:var(--faint);border-radius:4px}
 .cells i.on:nth-child(1){background:#1a9850}.cells i.on:nth-child(2){background:#2ea255}.cells i.on:nth-child(3){background:#42ab5a}.cells i.on:nth-child(4){background:#56b55f}.cells i.on:nth-child(5){background:#69be63}.cells i.on:nth-child(6){background:#7ac665}.cells i.on:nth-child(7){background:#8bcd67}.cells i.on:nth-child(8){background:#9cd569}.cells i.on:nth-child(9){background:#afd469}.cells i.on:nth-child(10){background:#c6c967}.cells i.on:nth-child(11){background:#ddbe64}.cells i.on:nth-child(12){background:#f4b362}.cells i.on:nth-child(13){background:#fca45c}.cells i.on:nth-child(14){background:#f99354}.cells i.on:nth-child(15){background:#f7824c}.cells i.on:nth-child(16){background:#f47045}.cells i.on:nth-child(17){background:#ee603d}.cells i.on:nth-child(18){background:#e65036}.cells i.on:nth-child(19){background:#df402e}.cells i.on:nth-child(20){background:#d73027}
 
-.gv{font-size:1.15rem;font-weight:600;min-width:3.2em;text-align:right}
+.gv{font-size:1.15rem;font-weight:600;min-width:4.6em;text-align:right;white-space:nowrap}
 .gv small{font-size:.7em;color:var(--mute)}
 .gv.wide{grid-column:2/-1;text-align:left}
 .gs{grid-column:2/-1;font-size:.74rem;color:var(--mute);margin-top:-4px}
-.agent{margin:0 0 10px}
-.who{margin:4px 0 2px;font:.86rem var(--sans)}
-.who code{font-size:.8rem}.who .quiet{font-size:.76rem}
-.agent .gl{font-weight:400;color:var(--mute)}
-.tbar{display:flex;height:8px;background:var(--faint);overflow:hidden;border-radius:1px}
-.tbar span{display:block;height:100%}
-.t-input{background:var(--actor)}.t-cache_read{background:var(--rule)}.t-cache_write{background:var(--critic)}.t-output{background:var(--ok)}
-.tok .legend{gap:2px 10px;font-size:.72rem}.tok .legend i{width:8px;height:8px}
 
 /* right now: the one highlighted block */
 .now{margin:22px 0 0;padding:12px 16px 12px 14px;background:var(--acc-bg);border-left:3px solid var(--acc)}
@@ -234,8 +235,8 @@ iframe.graph{display:block;width:100%;height:min(720px,85vh);border:0;background
 .legend .g-broken{background:var(--g-broken);border-radius:50%}.legend .g-blocked{background:var(--g-blocked);border-radius:50%}
 .legend .g-record{background:var(--rec);border-radius:50%;transform:scale(.7)}
 footer{margin-top:40px;padding-top:8px;border-top:1px solid var(--rule);color:var(--mute);font:.76rem var(--sans)}
-@media (max-width:640px){main{padding:18px 16px 56px}body{font-size:16px}.logo{width:44px;height:44px}.kick{font-size:.82rem}iframe.graph{height:480px}.figs{grid-template-columns:repeat(3,minmax(0,1fr))}.lede p{font-size:1.05rem}.it dl.more{grid-template-columns:1fr;padding-left:0}.it dl.more dd{margin-bottom:6px}
-.gauge{grid-template-columns:1fr auto}.cells,.tbar{grid-column:1/-1;order:3}.gs{grid-column:1/-1;order:4;margin-top:2px}.fig dd{font-size:1.5rem}}
+@media (max-width:640px){main{padding:18px 16px 56px}body{font-size:16px}.logo{width:44px;height:44px}.kick{font-size:.82rem}iframe.graph{height:480px}.figs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.lede p{font-size:1.05rem}.it dl.more{grid-template-columns:1fr;padding-left:0}.it dl.more dd{margin-bottom:6px}
+.gauge{grid-template-columns:1fr auto}.cells{grid-column:1/-1;order:3}.gs{grid-column:1/-1;order:4;margin-top:2px}.fig dd{font-size:1.3rem}}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
@@ -245,7 +246,7 @@ footer{margin-top:40px;padding-top:8px;border-top:1px solid var(--rule);color:va
 {{summary}}
 <div class="hero">
 <figure class="loopfig">{{loop}}</figure>
-<div class="side">{{figures}}{{time_budget}}{{usage}}{{done}}</div>
+<div class="side">{{figures}}<div class="gauges">{{time_budget}}{{usage}}{{spend}}{{done}}</div></div>
 </div>
 <section class="now" aria-live="polite" aria-label="Right now">{{now}}</section>
 <div class="two">
@@ -415,7 +416,7 @@ footer{margin-top:40px;padding-top:8px;border-top:1px solid var(--rule);color:va
     }
     var word = NAMES[d.state] || d.state || "–", act = d.kind === "command" ? "command" : d.kind === "wait" ? "waiting" : d.kind === "tool" ? "tool" : "";
     out.push('<text x="' + CX + '" y="' + (CY - 30) + '" text-anchor="middle" class="cl">iteration</text>' +
-      '<text x="' + CX + '" y="' + (CY + 10) + '" text-anchor="middle" class="cn">' + (d.n != null ? d.n : "–") + '</text>' +
+      '<text x="' + CX + '" y="' + (CY + 10) + '" text-anchor="middle" class="cn' + (String(d.n).length > 3 ? " longer" : String(d.n).length > 2 ? " long" : "") + '">' + (d.n != null ? d.n : "–") + '</text>' +
       '<text x="' + CX + '" y="' + (CY + 34) + '" text-anchor="middle" class="cs">' + word + (act ? '<tspan class="ca"> · ' + act + '</tspan>' : "") + '</text>' +
       (d.start != null ? '<text x="' + CX + '" y="' + (CY + 52) + '" text-anchor="middle" class="ct">' + clock(Math.round(t)) + '</text>' : "") +
       (d.shells ? '<text x="' + CX + '" y="' + (CY + 68) + '" text-anchor="middle" class="ns bg">' + d.shells + ' background shell' + (d.shells === 1 ? "" : "s") + '</text>' : ""));

@@ -71,6 +71,9 @@ words at most. The first says what the run is trying to do and why it matters, i
 words anyone can follow. The second says where it stands now: the best result so
 far with its number, the main problem, and what comes next. Rewrite it whenever one
 of those changes, so it is always the current picture.
+Highlight the two or three phrases a skimmer must not miss, a few words each, as
+`==like this==`: the goal in the first paragraph, the best result or the blocker in
+the second. Nothing else is markup.
 
 **`{story_path}`: the findings.** An HTML fragment that shows what the run has
 achieved and found.

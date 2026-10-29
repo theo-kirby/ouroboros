@@ -760,13 +760,15 @@ The delta is measured against the charter at the merge base.
   same clock. `view.py` puts the iteration on the svg as data and the page's script
   draws it every second; the centre names the iteration, the stage, what the call
   is doing (a command, a wait, a tool) and its background shells, and "Right now"
-  names the command and how long it has run); the key
-  figures (iteration, elapsed, criteria met, commits kept and reverted, last
-  verdict, in the timeline's words); the time budget (`stop.after` or `stop.until`,
-  the sooner) as one row of 20 square cells that ramp green to red, ticking in the
-  browser; usage per
-  harness: the models it ran and for which roles, one row of cells per rationing
-  window and the tokens; and progress toward done (the criteria met) as one more
+  names the command and how long it has run; the dial fills its column, and the
+  figures and gauges beside it run its full height, the gauges spread down it); the key
+  figures above the gauges (elapsed, commits kept and reverted, last verdict in
+  the timeline's words, and the model: the actor's on the harness
+  running now, the harness under it, every model and its roles as a tooltip;
+  the dial carries the iteration and the done gauge the criteria); the
+  time budget (`stop.after` or `stop.until`, the sooner) as one row of 20 square
+  cells that ramp green to red, ticking in the browser; usage, one row of cells per
+  rationing window but the 5-hour one (it rolls over too often to say much about a run); tokens; and progress toward done (the criteria met) as one more
   row of cells. A window's row is this run's own share of one whole
   window, not the account's level (other use of the account fills that too): the
   ledger sums the rises between readings and counts a new window from zero once
@@ -774,7 +776,11 @@ The delta is measured against the charter at the merge base.
   cache read, cache write and output, summed per harness from each call's result
   (Claude's result line, Codex's `turn.completed`, Pi's messages; the model from
   Claude's `modelUsage`, Codex's rollout `turn_context`, else the configured
-  one). Then a highlighted "Right now" block: the stage, and the critic's plain
+  one). The tokens row is a rate: the calls that ended in the past 60 minutes
+  (`tokens_hour` in status.json), against `view.TOKENS_PER_HOUR`, 12 M an hour, the
+  average of the runs that counted tokens; the cells are full at twice that, and
+  the run's total is under them. The lede is the scribe's summary, where
+  `==a phrase==` is highlighted. Then a highlighted "Right now" block: the stage, and the critic's plain
   `doing` for the iteration being worked on (its `did` and the next `doing` once
   it has judged); the criteria (the gap claims,
   or the charter's boxes) and the open problems (the frontier), each the first
@@ -791,10 +797,14 @@ The delta is measured against the charter at the merge base.
   root, state and record nodes, so a legacy `plan` claim or an unknown kind is
   drawn as a state claim) and the memory as Governor's `ReportGraph`, which
   `view.report_graph` builds from the snapshot either store gives (the same
-  mapping as Governor's `toViewer`). The page frames it and gives it its colours
-  (`view.GRAPH_COLOURS`, seaborn's Blues: met claims darkest, open ones pale,
-  records between and paler with age) and asks for the organic hub (the wheel
-  distorted a little, records brought in, every citation drawn faintly); a plain
+  mapping as Governor's `toViewer`). The page frames it and gives it a layout and
+  look: `view.GRAPH_SETTINGS`, a preset exported from Governor's hub viewer (compact
+  rings, evidence outside, records anchored newest first and coloured by age, outlined
+  blobs, citations on focus) in a `governor-settings` script the embed reads, coloured by
+  `view.GRAPH_COLOURS` (borris.dev's "dial" graph palette: met claims yellow, open orange,
+  broken red, blocked pink, records in the dial's blues, darkest for the newest), which win
+  over the preset's palette; the page's light or dark wins over the preset's theme. The
+  embed fits its view to what it draws, the nodes and their blobs, not the guide rings. A plain
   wheel scrolls the page, Shift + wheel zooms. The fit, names and node-title
   buttons sit under the legend and work the embed through its keys (F, N); on
   `file://` the page cannot reach into the frame, so the embed keeps its own. The embed is vendored in
@@ -827,7 +837,7 @@ changes, keeping open sections open, and ticks the clocks (stage timer, "updated
 N s ago", the time budget, window resets). Past two minutes in a live state the page says it is
 stale, which means the loop process is gone. A repo can replace the template with
 `.ouroboros/view/template.html`. Slots: `{{header}}`, `{{summary}}`, `{{loop}}`,
-`{{figures}}`, `{{time_budget}}`, `{{usage}}`, `{{done}}`, `{{now}}`, `{{criteria}}`, `{{frontier}}`, `{{story}}`,
+`{{figures}}`, `{{time_budget}}`, `{{usage}}`, `{{spend}}`, `{{done}}`, `{{now}}`, `{{criteria}}`, `{{frontier}}`, `{{story}}`,
 `{{progress}}`, `{{graph}}` (with `{{graph_version}}`), `{{logo}}`, `{{favicon}}`, plus the older `{{facts}}`,
 `{{stages}}`, `{{decisions}}`, `{{timeline}}` and the plain values `{{title}}`,
 `{{run}}`, `{{goal}}`, `{{mission}}`, `{{state}}`, `{{iteration}}`,

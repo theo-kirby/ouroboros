@@ -153,10 +153,12 @@ _MD_CODE = re.compile(r"`([^`\n]+)`")
 _MD_STRONG = re.compile(r"\*\*(?=\S)(.+?)(?<=\S)\*\*")
 _MD_EM = re.compile(r"(?<![\w*])\*(?=[^\s*])(.+?)(?<=[^\s*])\*(?![\w*])|(?<![\w_])_(?=[^\s_])(.+?)(?<=[^\s_])_(?![\w_])")
 _MD_LINK = re.compile(r"\[([^\]\n]+)\]\((https?://[^\s)]+)\)")
+_MARK = re.compile(r"==(?=\S)(.+?)(?<=\S)==")   # the summary's highlights: ==a phrase==
 
 
-def _md(value) -> str:
-    """Escaped text with inline markdown made HTML: `code`, **bold**, *em* or _em_, [text](https://...).
+def _md(value, mark: bool = False) -> str:
+    """Escaped text with inline markdown made HTML: `code`, **bold**, *em* or _em_, [text](https://...),
+    and with `mark` (the summary) ==highlight==.
 
     Escaping comes first, so a model's text can format but never inject. Code spans and
     link targets are set aside before the rest, so `snake_case`, `a*b` and URLs stay as
@@ -172,6 +174,8 @@ def _md(value) -> str:
     text = _MD_LINK.sub(lambda m: keep(f'<a href="{m.group(2)}" rel="noopener noreferrer">') + m.group(1) + keep("</a>"), text)
     text = _MD_STRONG.sub(lambda m: f"<strong>{m.group(1)}</strong>", text)
     text = _MD_EM.sub(lambda m: f"<em>{m.group(1) or m.group(2)}</em>", text)
+    if mark:
+        text = _MARK.sub(lambda m: f"<mark>{m.group(1)}</mark>", text)
     return re.sub("\x00(\\d+)\x00", lambda m: kept[int(m.group(1))], text)
 
 
@@ -345,28 +349,58 @@ def _summary(run_dir: Path, goal_text: str) -> str:
     if not text:
         return ""
     paras = [one_line(p) for p in re.split(r"\n\s*\n", text) if p.strip()][:4]
-    return '<div class="lede">' + "".join(f"<p>{_md(_clip(p, 900))}</p>" for p in paras) + source + "</div>"
+    return '<div class="lede">' + "".join(f"<p>{_md(_clip(p, 900), mark=True)}</p>" for p in paras) + source + "</div>"
 
 
 def _figures(status: dict, steps: list[dict], graph: Graph | None, goal_text: str) -> str:
     commits = sum(1 for s in steps if s.get("step") == "commit" and s.get("sha"))
     reverts = sum(1 for s in steps if s.get("step") == "revert")
     verdict = status.get("last_verdict")
-    met, total = _criteria_count(graph, goal_text)
 
-    def fig(label: str, value: str, sub: str = "") -> str:
-        return (f'<div class="fig"><dt>{_e(label)}</dt><dd>{value}'
+    def fig(label: str, value: str, sub: str = "", cls: str = "") -> str:
+        return (f'<div class="fig{f" {cls}" if cls else ""}"><dt>{_e(label)}</dt><dd>{value}'
                 f'{f"<small>{sub}</small>" if sub else ""}</dd></div>')
 
     cells = [
-        fig("Iteration", f'<span class="num">{_e(status.get("iteration", "–"))}</span>'),
         fig("Elapsed", f'<span class="num">{_e(_span(status.get("elapsed_s")))}</span>'),
-        fig("Criteria met", f'<span class="num">{met}<span class="of">/{total}</span></span>' if total else "–"),
         fig("Commits kept", f'<span class="num">{max(0, commits - reverts)}</span>',
-            f"{reverts} reverted" if reverts else ""),
+            f"{reverts} reverted" if reverts else "", "kept"),
         fig("Last verdict", _chip(VERDICT_WORD.get(str(verdict), verdict), VERDICT_CLASS.get(str(verdict), "")) if verdict else "–"),
+        _model(status),
     ]
     return f'<dl class="figs">{"".join(cells)}</dl>'
+
+
+_CLAUDE_MODEL = re.compile(r"^claude-([a-z]+)-(\d+)(?:[-.](\d{1,2}))?(?:-\d{8})?(?:\[\w+\])?$", re.I)
+_GPT_MODEL = re.compile(r"^gpt-(\d+(?:\.\d+)?)-([a-z]+)$", re.I)
+
+
+def _model_name(name: str) -> str:
+    """'claude-opus-5-5' -> 'Opus 5.5', 'gpt-6-astra' -> 'Astra 6'; a name of another shape as it is."""
+    m = _CLAUDE_MODEL.match(name)
+    if m:
+        return f"{m.group(1).capitalize()} {m.group(2)}" + (f".{m.group(3)}" if m.group(3) else "")
+    m = _GPT_MODEL.match(name)
+    if m:
+        return f"{m.group(2).capitalize()} {m.group(1)}"
+    return name
+
+
+def _model(status: dict) -> str:
+    """The model card: the actor's model on the harness running now, by its short name; every model in full as a tooltip."""
+    models = status.get("models") if isinstance(status.get("models"), dict) else {}
+    harness = str(status.get("harness") or "")
+    runs = [(h, str(name), [str(r) for r in roles] if isinstance(roles, list) else [])
+            for h, m in models.items() if isinstance(m, dict) for name, roles in m.items()]
+    runs.sort(key=lambda x: (x[0] != harness, "actor" not in x[2]))
+    if runs:
+        tip = "; ".join(f"{h} {n}" + (f" ({', '.join(r)})" if r else "") for h, n, r in runs)
+        value = f'<span class="num" title="{_e(tip)}">{_e(_model_name(runs[0][1]))}</span>'
+    elif harness:
+        value = f'<span class="num" title="no model reported yet">{_e(harness)}</span>'
+    else:
+        value = "–"
+    return f'<div class="fig model"><dt>Model</dt><dd>{value}</dd></div>'
 
 
 def _facts(status: dict, steps: list[dict], run_name: str, goal_text: str) -> str:
@@ -379,6 +413,8 @@ CLOCK_ICON = ('<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><circle c
               '<path d="M8 4.2V8l2.6 1.6"/></svg>')
 USAGE_ICON = ('<svg class="ico" viewBox="0 0 16 16" aria-hidden="true">'
               '<path d="M3.5 13.5v-4M8 13.5v-7M12.5 13.5v-10"/></svg>')
+SPEND_ICON = ('<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><ellipse cx="8" cy="4" rx="5" ry="2"/>'
+              '<path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/></svg>')
 DONE_ICON = ('<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 14.5V2"/>'
              '<path d="M3.5 2.5h9l-2 3 2 3h-9"/></svg>')
 
@@ -436,10 +472,16 @@ def _loop(status: dict, its: list[dict]) -> str:
     word = STATE_WORD.get(state, state) or "–"
     label = "The loop as a dial: actor, then critic, then scribe" + (f"; now the {STATE_WORD[state]}" if state in STATE_WORD else "")
     return (f'<svg class="ring dial" data-state="{_e(state)}" data-activity="{_e(kind)}" data-dial="{_e(json.dumps(spec))}"'
-            f' viewBox="-72 -24 444 348" role="img" aria-label="{_e(label)}">'
+            f' viewBox="-44 -22 388 340" role="img" aria-label="{_e(label)}">'
             f'<text x="150" y="120" text-anchor="middle" class="cl">iteration</text>'
-            f'<text x="150" y="160" text-anchor="middle" class="cn">{_e(n if n is not None else "–")}</text>'
+            f'<text x="150" y="160" text-anchor="middle" class="cn{_digits_class(n)}">{_e(n if n is not None else "–")}</text>'
             f'<text x="150" y="184" text-anchor="middle" class="cs">{_e(word)}</text></svg>')
+
+
+def _digits_class(n) -> str:
+    """The dial's centre number gets smaller past two digits, so it clears the rings inside the dial."""
+    digits = len(str(n)) if n is not None else 1
+    return " longer" if digits > 3 else " long" if digits > 2 else ""
 
 
 def _stages(status: dict) -> str:
@@ -448,6 +490,7 @@ def _stages(status: dict) -> str:
 
 
 USAGE_CELLS = 20
+HIDDEN_WINDOWS = {"five_hour"}   # it rolls over too often to say much about a run; the weekly ones stay
 WINDOW_WORDS = {"five_hour": "5-hour window", "seven_day": "weekly window", "seven_day_opus": "weekly, Opus",
                 "seven_day_sonnet": "weekly, Sonnet", "daily": "daily window", "hourly": "hourly window"}
 TOKEN_WORDS = (("input", "in"), ("cache_read", "cache read"), ("cache_write", "cache write"), ("output", "out"))
@@ -471,47 +514,54 @@ def _count(n: int) -> str:
     return str(n)
 
 
-def _tokens(tokens: dict) -> str:
-    """The run's tokens on one harness: the total, and a thin bar of what kind they were."""
-    counts = [(k, w, _int(tokens.get(k), 0) or 0) for k, w in TOKEN_WORDS]
-    total = sum(n for _, _, n in counts)
+# What a run spends in an hour, on average: 11.5 to 11.9 M tokens over the four runs that counted
+# tokens (crab-walk-02 to 04 and troodon-robustness, October 2026, all Codex). The spend gauge
+# sets the past hour against it; its row of cells is full at twice that.
+TOKENS_PER_HOUR = 12_000_000
+
+
+def _spend(status: dict) -> str:
+    """Tokens: the past 60 minutes' as a row of cells against the average hour, and the run's total under it."""
+    tokens = status.get("tokens") if isinstance(status.get("tokens"), dict) else {}
+    counts = {}
+    for t in tokens.values():
+        for k, n in (t.items() if isinstance(t, dict) else ()):
+            counts[k] = counts.get(k, 0) + (_int(n, 0) or 0)
+    total = sum(counts.values())
     if not total:
         return ""
-    bar = "".join(f'<span class="t-{k}" style="width:{100 * n / total:.2f}%" title="{_e(w)}: {n:,}"></span>'
-                  for k, w, n in counts if n)
-    words = "".join(f'<span><i class="t-{k}"></i>{_e(_count(n))} {_e(w)}</span>' for k, w, n in counts if n)
-    return (f'<div class="gauge tok"><span class="gl">Tokens</span>'
-            f'<span class="tbar" role="img" aria-label="{total:,} tokens">{bar}</span>'
-            f'<span class="gv num">{_e(_count(total))}</span><span class="gs legend">{words}</span></div>')
-
-
-def _models(models: dict) -> str:
-    """'claude-opus-5-5 (actor, critic) · claude-sonnet-5 (scribe)'."""
-    out = []
-    for name, roles in models.items():
-        roles = [str(r) for r in roles] if isinstance(roles, list) else []
-        out.append(f'<code>{_e(name)}</code>' + (f' <span class="quiet">{_e(", ".join(roles))}</span>' if roles else ""))
-    return " · ".join(out)
+    hour = _int(status.get("tokens_hour"))
+    if hour is None:   # a status from before tokens_hour: the run's own hourly mean
+        elapsed = _float(status.get("elapsed_s")) or 0
+        hour, when = (round(total * 3600 / elapsed), "an hour on average this run") if elapsed >= 600 else (None, "")
+    else:
+        when = "the past 60 min"
+    tip = " · ".join(f"{_count(counts[k])} {w}" for k, w in TOKEN_WORDS if counts.get(k))
+    head = f'<div class="gauge spend" title="{_e(tip)}"><span class="gl">{SPEND_ICON}Tokens</span>'
+    if hour is None:
+        return head + f'<span class="gv num wide">{_e(_count(total))}</span><span class="gs">this run, too soon for a rate</span></div>'
+    f = hour / TOKENS_PER_HOUR
+    return (head + _cells(f / 2, "tokens in the past hour, against twice the average hour")
+            + f'<span class="gv num">{_e(_count(hour))}<small>/h</small></span>'
+            f'<span class="gs">in {_e(when)}, {f:.1f}× the {_e(_count(TOKENS_PER_HOUR))}/h average · {_e(_count(total))} this run</span></div>')
 
 
 def _usage(status: dict) -> str:
-    """Per harness: its models, what this run took of each rationing window, and its tokens.
+    """What this run took of each rationing window, per harness (the models are a key figure, the tokens a gauge).
 
     A bar is the run's own share of one whole window (the account's level is not shown:
     other use of the account fills it too). The share sums the rises between readings and
     starts again from zero when a window resets, so it can pass 100% on a long run.
     """
     usage = status.get("usage") if isinstance(status.get("usage"), dict) else {}
-    tokens = status.get("tokens") if isinstance(status.get("tokens"), dict) else {}
-    models = status.get("models") if isinstance(status.get("models"), dict) else {}
     money = status.get("money") if isinstance(status.get("money"), dict) else {}
-    blocks = []
-    for harness in sorted(set(usage) | set(tokens) | set(models) | {h for h, a in money.items() if _float(a)}):
+    harnesses = sorted(set(usage) | {h for h, a in money.items() if _float(a)})
+    rows = []
+    for harness in harnesses:
         d = usage.get(harness) if isinstance(usage.get(harness), dict) else {}
-        rows = []
         first = d.get("first_windows") or {}
         spent = d.get("run_spent") or {}
-        wins = [(n, w) for n, w in (d.get("windows") or {}).items() if isinstance(w, dict)]
+        wins = [(n, w) for n, w in (d.get("windows") or {}).items() if isinstance(w, dict) and n not in HIDDEN_WINDOWS]
         for name, w in sorted(wins, key=lambda kv: -(_int(kv[1].get("minutes"), 0) or 0)):
             u, was = _float(w.get("utilization")), _float(first.get(name))
             took = _float(spent.get(name))
@@ -521,25 +571,20 @@ def _usage(status: dict) -> str:
                 continue
             reset = _float(w.get("resets_at"))
             word = WINDOW_WORDS.get(name, name.replace("_", " "))
-            rows.append(f'<div class="gauge"><span class="gl">{_e(word)}</span>'
+            if len(harnesses) > 1:
+                word = f"{harness} · {word}"
+            rows.append(f'<div class="gauge"><span class="gl">{USAGE_ICON}Usage <small>{_e(word)}</small></span>'
                         + _cells(took, f"{harness} {word}: used this run")
                         + f'<span class="gv num">{round(100 * took)}<small>%</small></span>'
                         + (f'<span class="gs">resets <span class="reset" data-at="{reset:.0f}"></span></span>' if reset else "")
                         + "</div>")
         if harness not in usage and _float(money.get(harness)):
-            rows.append(f'<div class="gauge"><span class="gl">API <small>billed per call</small></span>'
+            rows.append(f'<div class="gauge"><span class="gl">{USAGE_ICON}API <small>{_e(harness)}, billed per call</small></span>'
                         f'<span class="gv num wide">${_float(money[harness]):.2f}</span></div>')
-        if isinstance(tokens.get(harness), dict):
-            rows.append(_tokens(tokens[harness]))
-        if not rows:
-            continue
-        m = models.get(harness) if isinstance(models.get(harness), dict) else {}
-        blocks.append(f'<div class="agent"><p class="who">{USAGE_ICON}<strong>{_e(harness)}</strong>'
-                      + (f" {_models(m)}" if m else "") + ' <span class="quiet">· used this run</span></p>' + "".join(rows) + "</div>")
-    if not blocks:
+    if not rows:
         text = status.get("usage_compact")
         return f'<p class="quiet">{_e(text)}</p>' if text else '<p class="quiet">No usage reading yet.</p>'
-    return "".join(blocks)
+    return "".join(rows)
 
 
 def _time_budget(status: dict) -> str:
@@ -789,7 +834,7 @@ def _progress(its: list[dict], status: dict) -> str:
         mark = min(bw, 12.0)
         mx = x + (bw - mark) / 2
         g.append(f'<rect class="v {vc}" x="{mx:.1f}" y="{base + 6}" width="{mark:.1f}" height="{mark:.1f}"/>')
-        if it.get("reverted"):
+        if it.get("reverted") and mark >= 6:   # a narrow mark is too small to cross out; its red says it
             g.append(f'<path class="x" d="M{mx:.1f},{base + 6} l{mark:.1f},{mark:.1f} M{mx + mark:.1f},{base + 6} l{-mark:.1f},{mark:.1f}"/>')
         if it.get("fold"):
             fx = x + bw / 2
@@ -836,10 +881,45 @@ def _progress(its: list[dict], status: dict) -> str:
 # -- the memory graph: Governor's hub renderer, fed from either store ------------
 
 GRAPH_PAGE = "graph.html"
-# Fig. 2's colours, as borris.dev's theme build makes them for its "blues" graph palette (seaborn's
-# Blues): met claims darkest, open ones pale, records between and paler with age. The embed reads them
-# from window.GRAPH_THEME before it draws.
-GRAPH_COLOURS = {"light": {"citation": "#1f77b4", "status": {"open": "#9ecae1", "broken": "#d62728", "blocked": "#9467bd", "working": "#08519c", "done": "#7f7f7f"}, "tint": {"open": "#e8f0f2", "broken": "#f4d0cd", "blocked": "#e6ddeb", "working": "#cad8e4", "done": "#ece8dd", "record": "#d6e5ec"}, "records": ["#4292c6", "#559ccc", "#68a7d2", "#7bb1d8", "#8dbcdd", "#a0c6e3", "#b3d1e9", "#c6dbef"]}, "dark": {"citation": "#679fce", "status": {"open": "#2171b5", "broken": "#ff9896", "blocked": "#c5b0d5", "working": "#c6dbef", "done": "#c7c7c7"}, "tint": {"open": "#1a2e41", "broken": "#513839", "blocked": "#433e49", "working": "#43494f", "done": "#26272a", "record": "#2c3e49"}, "records": ["#6baed6", "#609dc4", "#548db3", "#497ca1", "#3e6c8f", "#335b7d", "#274b6c", "#1c3a5a"]}}
+# The memory graph's colours, as borris.dev's theme build makes them for its "dial" graph palette:
+# met claims yellow, open ones orange, broken red, blocked pink, records in the dial's blues, darkest
+# for the newest. The embed reads them from window.GRAPH_THEME before it draws; they win over the
+# preset's palette.
+GRAPH_COLOURS = {"light": {"citation": "#1f77b4", "status": {"open": "#fe933c", "broken": "#e05148", "blocked": "#e78dcc", "working": "#edc443", "done": "#919191"}, "tint": {"open": "#fce5d1", "broken": "#f6d8d3", "blocked": "#f7e4ee", "working": "#f8efd2", "done": "#ece8dd", "record": "#d3dee8"}, "records": ["#3170b0", "#437eb8", "#558cc0", "#679ac8", "#7aa8d0", "#8cb6d8", "#9ec4e0", "#b0d2e8"]}, "dark": {"citation": "#679fce", "status": {"open": "#fead66", "broken": "#f38168", "blocked": "#f6bedc", "working": "#fbd96d", "done": "#c7c7c7"}, "tint": {"open": "#513d2d", "broken": "#4e322e", "blocked": "#4f424b", "working": "#50482f", "done": "#26272a", "record": "#454a50"}, "records": ["#cddff1", "#b8d0e8", "#a2c2df", "#8db3d6", "#78a5cd", "#6396c4", "#4d88bb", "#3879b2"]}}
+# The memory graph's layout and look: a preset exported from Governor's hub viewer (its graph
+# source fields left out). The page's light or dark wins over its theme, GRAPH_COLOURS over its palette.
+GRAPH_SETTINGS = {
+    "version": 1,
+    "packing": "compact",
+    "organic": False,
+    "theme": "light",
+    "palette": "ocean",
+    "names": False,
+    "rootGap": 1.75,
+    "depthGap": 1.35,
+    "stateRingGap": 1.55,
+    "stateBlobSize": 1,
+    "stateBlobJoin": 0.7,
+    "stateAngularGap": 0.97,
+    "stagger": 0.45,
+    "evidenceOutside": True,
+    "recordGap": 1.35,
+    "recordRingGap": 0.75,
+    "recordAngularGap": 0.6,
+    "recordSpread": 0,
+    "showRecords": True,
+    "recordPercent": 100,
+    "recordPlacement": "anchored",
+    "recordOrder": "newest",
+    "recordSize": 1.1,
+    "recordOpacity": 1,
+    "ageColours": True,
+    "recordBlobs": True,
+    "preserveStateOutlines": True,
+    "preserveRecordOutlines": True,
+    "guides": True,
+    "citations": "focus"
+}
 GRAPH_MAX_NODES, GRAPH_MAX_EDGES, GRAPH_MAX_BYTES = 5000, 20000, 1_000_000
 _HEAD = re.compile(r"^sha256:[a-f0-9]{64}$")
 _GRAPH_KINDS = ("root", "state", "record")
@@ -954,13 +1034,15 @@ def _graph_page(vdir: Path, graph: Graph | None) -> tuple[str | None, int]:
         return None
     # The page under it draws the embed's tools (fit, names, titles) when it can reach in; on file://
     # it can't, and the embed keeps its own.
-    page = ('<!doctype html><html lang="en" data-theme="light" data-layout="organic"><head><meta charset="utf-8">'
+    page = ('<!doctype html><html lang="en" data-theme="light"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width,initial-scale=1"><title>Memory graph</title>'
             '<script>if(/[?&]theme=dark(&|$)/.test(location.search))document.documentElement.dataset.theme="dark";'
             'try{if(parent!==window&&parent.document)document.documentElement.classList.add("tools-outside")}catch(e){}</script>'
             f"<style>{css}.tools-outside .report-tools{{display:none}}</style></head><body><div id=\"root\"></div>"
             f'<script id="flywheel-snapshot" type="application/json">{payload}</script>'
-            f'<script>window.GRAPH_THEME={json.dumps(GRAPH_COLOURS)}</script><script>{script}</script></body></html>\n')
+            f'<script id="governor-settings" type="application/json">{json.dumps(GRAPH_SETTINGS)}</script>'
+            f'<script>window.GRAPH_THEME={json.dumps(GRAPH_COLOURS)}</script>'
+            f'<script>{script}</script></body></html>\n')
     version = hashlib.sha256(page.encode()).hexdigest()[:16]
     path = vdir / GRAPH_PAGE
     if _read_text(path) != page:
@@ -1112,6 +1194,7 @@ def render(run_dir: Path, repo: Path, *, goal_text: str, graph=None, now: float 
             "figures": part(_figures, status, steps, graph, goal_text or ""),
             "loop": part(_loop, status, its),
             "usage": part(_usage, status),
+            "spend": part(_spend, status),
             "time_budget": part(_time_budget, status),
             "done": part(_done, graph, goal_text or ""),
             "now": part(_now, status, decisions, goal_text or ""),

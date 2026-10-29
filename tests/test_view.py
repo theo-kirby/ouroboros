@@ -94,7 +94,7 @@ def test_render_writes_the_page_and_live_json(run_dir, repo, graph):
     d = dial(html)
     assert d["n"] == 7 and d["live"] and d["stages"][-1] == ["critique", 1_799_999_900, None], "the critic runs from stage_since"
     assert [k for k, *_ in d["stages"]] == ["work", "critique"] and d["stages"][0][2] == 1_799_999_900
-    assert "Commits kept</dt><dd><span class=\"num\">1</span><small>1 reverted</small>" in html   # 2 made, 1 reverted
+    assert "Commits kept</dt><dd><span class=\"num\">1</span><small>1 reverted</small>" in html and '<div class="fig kept">' in html   # 2 made, 1 reverted
     assert "Build passes clean" in html and "passes on CI" in html and ">met<" in html
     assert "Network test flakes" in html and ">broken<" in html
     assert "1</span> record(s) not folded" in html
@@ -103,25 +103,74 @@ def test_render_writes_the_page_and_live_json(run_dir, repo, graph):
 
 
 def test_usage_bars_are_the_runs_own_share_of_each_window(run_dir, repo):
-    view.render(run_dir, repo, goal_text=GOAL)
-    html = page(run_dir)
-    # no run_spent (an older status): the rise since the first reading, 62 - 27 = 35%;
-    # the weekly window has no first reading, so it has no row
-    assert html.count('<div class="gauge">') == 1
-    assert 'aria-valuenow="35"' in html and 'data-at="1800004000"' in html and "5-hour window" in html
-    assert 'aria-valuenow="62"' not in html, "the account's own level is not drawn"
     status = json.loads((run_dir / "status.json").read_text())
-    status["usage"]["claude"]["run_spent"] = {"five_hour": 1.3, "seven_day": 0.05}
-    status["tokens"] = {"claude": {"input": 1200, "output": 640_000, "cache_read": 52_000_000}}
-    status["models"] = {"claude": {"claude-opus-5-5": ["actor", "critic"], "claude-sonnet-5": ["scribe"]}}
+    status["usage"]["claude"]["windows"]["seven_day"]["resets_at"] = 1_800_400_000.0
+    status["usage"]["claude"]["first_windows"]["seven_day"] = 0.12
     (run_dir / "status.json").write_text(json.dumps(status))
     view.render(run_dir, repo, goal_text=GOAL)
     html = page(run_dir)
-    assert 'aria-valuenow="130"' in html and "130<small>%</small>" in html and 'aria-valuenow="5"' in html
-    usage = html[:html.find('class="gauge done"')]
-    assert usage.count('<i class="on"') == 20 + 1, "past a whole window every cell is lit"
-    assert "<code>claude-opus-5-5</code> <span class=\"quiet\">actor, critic</span>" in html
-    assert "52.6 M" in html and "640 k out" in html and 'class="t-cache_read"' in html
+    # no run_spent (an older status): the rise since the first reading, 20 - 12 = 8%;
+    # the 5-hour window rolls over too often to say much about a run, so it has no row
+    assert html.count('<div class="gauge">') == 1 and "5-hour" not in html
+    assert 'aria-valuenow="8"' in html and 'data-at="1800400000"' in html and "Usage <small>weekly window</small>" in html
+    assert 'aria-valuenow="20"' not in html, "the account's own level is not drawn"
+    status["usage"]["claude"]["run_spent"] = {"five_hour": 0.3, "seven_day": 1.3}
+    (run_dir / "status.json").write_text(json.dumps(status))
+    view.render(run_dir, repo, goal_text=GOAL)
+    html = page(run_dir)
+    assert 'aria-valuenow="130"' in html and "130<small>%</small>" in html and 'aria-valuenow="30"' not in html
+    usage = html[html.find('<div class="gauge">'):html.find('class="gauge done"')]
+    assert usage.count('<i class="on"') == 20, "past a whole window every cell is lit"
+
+
+def test_the_graph_page_carries_the_preset_and_the_sites_colours(run_dir, repo, graph):
+    view.render(run_dir, repo, goal_text=GOAL, graph=graph)
+    gp = (run_dir / "view" / "graph.html").read_text()
+    raw = re.search(r'<script id="governor-settings" type="application/json">(.*?)</script>', gp).group(1)
+    assert json.loads(raw) == view.GRAPH_SETTINGS and "data-layout" not in gp, "the preset sets the layout"
+    theme = json.loads(re.search(r"window\.GRAPH_THEME=(\{.*?\})</script>", gp).group(1))
+    assert theme == view.GRAPH_COLOURS and theme["light"]["status"]["working"] == "#edc443"
+
+
+def test_the_model_is_a_key_figure(run_dir, repo):
+    view.render(run_dir, repo, goal_text=GOAL)
+    assert '<div class="fig model"><dt>Model</dt><dd><span class="num" title="no model reported yet">claude</span></dd>' in page(run_dir)
+    status = json.loads((run_dir / "status.json").read_text())
+    status["models"] = {"codex": {"gpt-6-astra": ["critic"]}, "claude": {"claude-sonnet-5": ["scribe"], "claude-opus-5-5": ["actor"]}}
+    (run_dir / "status.json").write_text(json.dumps(status))
+    view.render(run_dir, repo, goal_text=GOAL)
+    html = page(run_dir)
+    fig = html[html.index('<div class="fig model">'):]
+    fig = fig[:fig.index("</div>")]
+    assert ">Opus 5.5</span></dd>" in fig, "the actor's model on the harness running now, by its short name"
+    assert "codex gpt-6-astra (critic)" in fig
+
+
+def test_the_dials_number_shrinks_past_two_digits():
+    assert [view._digits_class(n) for n in (None, 7, 42, 130, 1204)] == ["", "", "", " long", " longer"]
+
+
+def test_model_names_are_short():
+    assert [view._model_name(n) for n in ("claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5", "claude-haiku-4-5-20251001",
+                                          "claude-opus-5-5[1m]", "gpt-6-astra", "gpt-6.1-sol", "gpt-5", "kimi-k2")] == \
+        ["Opus 5.5", "Fable 5.1", "Sonnet 5", "Haiku 4.5", "Opus 5.5", "Astra 6", "Sol 6.1", "gpt-5", "kimi-k2"]
+
+
+def test_tokens_are_the_past_hour_against_the_average_hour(run_dir, repo):
+    status = json.loads((run_dir / "status.json").read_text())
+    status["tokens"] = {"claude": {"input": 1_000_000, "cache_read": 20_000_000}, "codex": {"output": 9_000_000}}
+    status["tokens_hour"] = 18_000_000
+    (run_dir / "status.json").write_text(json.dumps(status))
+    view.render(run_dir, repo, goal_text=GOAL)
+    html = page(run_dir)
+    gauge = html[html.index('<div class="gauge spend"'):html.index('class="gauge done"')]
+    assert 'aria-valuenow="75"' in gauge and gauge.count('<i class="on"') == 15, "1.5× the average, on a scale to twice it"
+    assert "18 M<small>/h</small>" in gauge and "1.5× the 12 M/h average" in gauge and "30 M this run" in gauge
+    assert 'title="1 M in · 20 M cache read · 9 M out"' in gauge
+    del status["tokens_hour"]   # an older status: the run's own hourly mean (elapsed 3725 s)
+    (run_dir / "status.json").write_text(json.dumps(status))
+    view.render(run_dir, repo, goal_text=GOAL)
+    assert "29 M<small>/h</small>" in page(run_dir) and "an hour on average this run" in page(run_dir)
 
 
 def test_the_time_budget_is_a_row_of_cells(run_dir, repo):
@@ -225,6 +274,9 @@ def test_the_summary_is_the_scribes_else_the_mission(run_dir, repo):
     view.render(run_dir, repo, goal_text=GOAL)
     html = page(run_dir)
     assert "<p>It builds &lt;now&gt;.</p><p>Next: ship it.</p>" in html and "From the charter" not in html
+    view.summary_path(run_dir).write_text("It ==builds the widget== so a == b holds. `x==y==z` stays code.")
+    view.render(run_dir, repo, goal_text=GOAL)
+    assert "It <mark>builds the widget</mark> so a == b holds. <code>x==y==z</code> stays code." in page(run_dir)
 
 
 def test_the_memory_graph_is_governors_report_shape(graph):

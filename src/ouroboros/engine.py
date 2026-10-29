@@ -608,6 +608,7 @@ class Engine:
             fields["time_budget_s"] = int(self.budget.time_budget)
         if self.budget.tokens:
             fields["tokens"] = self.budget.tokens
+            fields["tokens_hour"] = self.budget.tokens_hour
         if self.budget.models:
             fields["models"] = self.budget.models
         if self.budget.usage:

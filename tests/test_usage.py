@@ -241,6 +241,19 @@ def test_the_budget_counts_tokens_and_models_per_harness():
     assert b.models == {"claude": {"opus": ["actor", "critic"]}, "codex": {"gpt": ["actor"]}}
 
 
+def test_the_budget_keeps_the_past_hours_tokens():
+    from ouroboros.harness.base import Result
+    t = [1_800_000_000.0]
+    b = BudgetClock(StopConfig(), now=lambda: t[0])
+    b.count(Result(tokens={"input": 10, "output": 5}), "actor", "claude")
+    t[0] += 1800
+    b.count(Result(tokens={"cache_read": 100}), "critic", "claude")
+    b.count(Result(tokens={}), "scribe", "claude")
+    assert b.tokens_hour == 115
+    t[0] += 1801
+    assert b.tokens_hour == 100 and len(b.spends) == 1
+
+
 def test_the_time_budget_is_the_sooner_of_after_and_until():
     from datetime import datetime
     t = [1_800_000_000.0]
