@@ -6,11 +6,13 @@ import os
 import signal
 import subprocess
 import threading
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 
 
 _ACTIVE: set[subprocess.Popen] = set()
+COMMAND_PREFIX: ContextVar[tuple[str, ...]] = ContextVar("ouroboros_command_prefix", default=())
 BACKEND = "headless"   # "headless" | "tmux"; set by the CLI from config.backend
 
 
@@ -34,6 +36,10 @@ CARRY = ("OUROBOROS_MEMORY", "OUROBOROS_ROLE")
 def run(cmd: list[str], *, cwd: Path, timeout: float, stdin_text: str | None = None,
         log_path: Path | None = None, env: dict[str, str] | None = None) -> "ProcResult":
     """Run through the configured backend."""
+    prefix = COMMAND_PREFIX.get()
+    if prefix and BACKEND != "headless":
+        raise ValueError("experimental confinement requires the headless backend")
+    cmd = [*prefix, *cmd]
     env = {**{k: os.environ[k] for k in CARRY if k in os.environ}, **(env or {})} or None
     if BACKEND == "tmux":
         from .backend_tmux import run_in_tmux

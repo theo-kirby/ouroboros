@@ -24,7 +24,7 @@ either without recording why there.
   Python string. Placeholders are `{name}`.
 - **One memory surface.** Agents reach memory only through `ouroboros mem`. A new
   verb or rule goes into both stores in the same commit, with a test on each.
-- **Three roles, one writer.** The loop has an actor, a critic and a scribe,
+- **Production: three roles, one writer.** The loop has an actor, a critic and a scribe,
   nothing else. Only the scribe writes the memory, and only its fold writes state;
   the actor and the critic only read it. `memcli.VERBS_OF` enforces that per role:
   keep the prompts in step with it.
@@ -54,3 +54,16 @@ them) and takes a few minutes, because every governor write is a Flywheel commit
 Anything that calls a real harness (`claude`, `codex`, `pi`) is a manual smoke
 test, not a pytest; do it on a scratch repo under the scratchpad directory and
 say so in the commit message.
+
+## Explicit experimental exception
+
+Theo authorized the separate topology evaluation adapter for planner-before-actor,
+single-agent freeflow, alternating role-free peers and blind first passes. Keep
+these opt-in in experiment.py, with docs/experimental-runner.md and a dedicated
+prompt skill. Production Engine semantics remain unchanged. Each store has one
+active memory writer; generalists use the existing scribe permission principal.
+Never add hidden model-backed helpers, multiply total budgets per agent, expose
+operator answers/peer first passes, or silently reset identity/session/usage on
+restart. Default confinement is credential-free; do not copy or link host auth
+into experiment agents. Real authenticated smoke tests require a separately
+authorized credential boundary.

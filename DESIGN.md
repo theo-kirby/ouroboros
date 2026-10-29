@@ -1438,3 +1438,29 @@ scribe receipts by iteration. Operator stop and SIGTERM render a terminal native
 view after writing status; renderer failure has a minimal terminal-page fallback.
 Finite completion/exhaustion semantics and the actor/critic/scribe structure are
 unchanged. Benchmark experiments compare continuation policies explicitly.
+
+
+## 22. Opt-in research topology evaluation (2026-10-29)
+
+Theo authorized a separate evaluation adapter for the chromatin screen: current
+three-role architecture, planner before each actor, one persistent freeflow agent,
+two alternating role-free peers, and two blind first passes followed by synthesis.
+The implementation and exact behavioral boundaries are in
+[experimental-runner.md](docs/experimental-runner.md). Production Engine/CLI defaults
+and sections20–21 are preserved. Experimental prompts live in
+skills/ouroboros-experiment/SKILL.md.
+
+All identities share the run's original wall/call/usage ceiling and model. Persistent
+identities cannot silently reset sessions. Only the active authorized writer records
+scientific memory through the existing mem interface. Generalists use the scribe
+permission principal; planner/critic remain read-only. No hidden model-backed
+reporter is added. The deterministic journal and native dashboard include all calls,
+failures and explicitly labeled completion claims. Scientific acceptance is external.
+
+Atomic pending/receipt/checkpoint state preserves counters, start time and cursor.
+Unknown in-flight work is never replayed; source/config/charter changes refuse resume.
+Integrity failures stop the experimental adapter rather than inheriting infinite
+production retries. Landlock confines subprocess/tool filesystem access and defaults
+to empty identity homes without exposing host credentials. Whole-run aggregate
+resources remain the outer cgroup's responsibility. Credential-free fixture validation
+is distinct from an authenticated real-model smoke test and a scientific pilot.
