@@ -24,6 +24,7 @@ class BudgetClock:
         # Per harness: the tokens this run used, and each model with the roles it ran.
         self.tokens: dict[str, dict[str, int]] = {}
         self.models: dict[str, dict[str, list[str]]] = {}
+        self.spends: list[tuple[float, int]] = []   # (when, tokens) per call, the last hour's only
         self.iterations = 0
         self.done_streak = 0
         self.stuck_streak = 0
@@ -54,15 +55,26 @@ class BudgetClock:
             harness = (result.extra or {}).get("harness") or harness
             if not harness:
                 return
+            spent = 0
             for kind, n in (result.tokens or {}).items():
                 into = self.tokens.setdefault(harness, {})
                 into[kind] = into.get(kind, 0) + int(n)
+                spent += int(n)
+            if spent:
+                self.spends.append((self.now(), spent))
             if result.model:
                 roles = self.models.setdefault(harness, {}).setdefault(str(result.model), [])
                 if role not in roles:
                     roles.append(role)
         except Exception:   # a meter must not stop the loop
             pass
+
+    @property
+    def tokens_hour(self) -> int:
+        """The tokens of the calls that ended in the past 60 minutes, every harness together."""
+        cut = self.now() - 3600
+        self.spends = [(t, n) for t, n in self.spends if t > cut]
+        return sum(n for _, n in self.spends)
 
     @property
     def time_budget(self) -> float | None:

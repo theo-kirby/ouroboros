@@ -10,8 +10,8 @@ from typing import Optional, Set
 
 from .layout import MIN_COLS, MIN_LINES, Rect, col, compute_layout, leaf, row
 from .panels import (
-    LoadHistory, Painter, draw_feed, draw_frontier, draw_iterations, draw_load, draw_log, draw_loop,
-    draw_run, draw_stages, draw_status, draw_time,
+    LoadHistory, Painter, draw_feed, draw_frontier, draw_iterations, draw_load, draw_log,
+    draw_run, draw_status, draw_time,
 )
 from .state import Snapshot, load_snapshot
 from .theme import PAIR_DIM, PAIR_TITLE, PAIR_YELLOW, Theme
@@ -45,7 +45,7 @@ VIEW = col(
 DRAW = {
     "iterations": draw_iterations, "activity": draw_load, "time": draw_time,
     "frontier": draw_frontier, "status": draw_status,
-    "loop": draw_loop, "stages": draw_stages, "log": draw_log,
+    "log": draw_log,
 }
 
 

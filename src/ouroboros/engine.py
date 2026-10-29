@@ -431,7 +431,7 @@ class Engine:
                 return False
             request.unlink()
             self.recorder.log("manual refresh: checking current harness accounts")
-            pools = [self.harness, getattr(self.critic, "harness", None)]
+            pools = [self.harness, getattr(self.critic, "harness", None), getattr(self.scribe, "harness", None)]
             boards = {}
             for pool in pools:
                 board = getattr(pool, "board", None)
@@ -611,6 +611,7 @@ class Engine:
             fields["time_budget_s"] = int(self.budget.time_budget)
         if self.budget.tokens:
             fields["tokens"] = self.budget.tokens
+            fields["tokens_hour"] = self.budget.tokens_hour
         if self.budget.models:
             fields["models"] = self.budget.models
         if self.budget.usage:

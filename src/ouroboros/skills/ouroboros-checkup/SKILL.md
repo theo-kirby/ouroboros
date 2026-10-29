@@ -19,14 +19,14 @@ elapsed time is the whole story — check the state first and say which read thi
 ouroboros status
 ```
 
-`state=work` with a live pid means **this is a mid-run check-in**. The run
+`state=work` (or `critique`, `scribe`, `backoff`, `idle`) with a live pid means **this is a mid-run check-in**. The run
 directory is being written while you read it, so:
 
 - Do not run `ouroboros report` expecting a final number; iteration counts move.
 - Do not recommend a merge. Recommend a **correction** instead — something the
   user can change now: the charter, the config, or a stop.
-- Never edit files the loop is working in. A charter edit takes effect on the
-  next run start, not this one; say so when you suggest one.
+- Never edit files the loop is working in. A charter edit takes effect at the
+  next iteration boundary, as a new directive; say so when you suggest one.
 
 `state=stopped` or `state=killed` means the run is over: give the full read and a
 merge recommendation.
@@ -53,7 +53,7 @@ amount of loop detection fixes it.
 2. `.ouroboros/runs/<run>/NEEDS_HUMAN.md` if it exists: read it first, it is the
    one thing that blocked the loop.
 3. `.ouroboros/runs/<run>/iterations.jsonl`: steps `actor`, `commit`, `critique`,
-   `loop`, `revert` (older runs also have `oversee`, `reconcile` and `plan`, from
+   `loop`, `revert`, `scribe`, `check`, `goal_reload` (older runs also have `oversee`, `reconcile` and `plan`, from
    roles the loop no longer has).
    `critic.jsonl` (older runs: `overseer.jsonl`) for every verdict with its
    reason, reply, and `fix_first`. `loop.log` for backoffs, limit waits, and
