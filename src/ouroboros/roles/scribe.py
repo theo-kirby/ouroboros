@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from .. import publication
 from ..harness.base import Harness, Result
 from ..memory.graph import skill, section
 
@@ -35,17 +36,22 @@ def summary_of(text: str, limit: int = 72) -> str:
 
 def build_scribe_prompt(*, iteration: int, goal_text: str, where: str, report: str, verdict: str,
                         fix_first: str, diff_stat: str, commit: str, fold: str | None,
-                        view_dir: str, story_path: str, assets_dir: str, summary_path: str = "") -> str:
-    return (
+                        view_dir: str, story_path: str, assets_dir: str, summary_path: str = "",
+                        story: str | None = None, publish: str | None = None) -> str:
+    """`story` is what to do with story.html every iteration (publication.story_rules; the
+    notebook's when None), `publish` the consolidation pass when one is due."""
+    text = (
         skill("ouroboros-scribe")
-        .replace("{iteration}", str(iteration))
+        .replace("{story}", story if story is not None else section(skill("ouroboros-publish"), "notebook"))
+        .replace("{publish}", publish or "No consolidation is due this iteration. Do not rewrite the publication.")
+    )
+    text = publication.fill(text, view_dir=view_dir, story_path=story_path, assets_dir=assets_dir,
+                            summary_path=summary_path or f"{view_dir}/summary.txt")
+    return (
+        text.replace("{iteration}", str(iteration))
         .replace("{where}", where)
         .replace("{fix_first}", fix_first.strip() or "The critic found nothing to fix.")
         .replace("{fold}", fold or "No fold is due this iteration. Do not fold.")
-        .replace("{view_dir}", view_dir)
-        .replace("{story_path}", story_path)
-        .replace("{summary_path}", summary_path or f"{view_dir}/summary.txt")
-        .replace("{assets_dir}", assets_dir)
         .replace("{verdict}", verdict)
         .replace("{commit}", commit or "none")
         .replace("{diff_stat}", (diff_stat or "").strip()[:4000] or "(no change)")
@@ -68,10 +74,10 @@ class Scribe:
         self.transcript_path = transcript_path or (lambda n, attempt: None)
         self.log = log or (lambda line: None)
 
-    def run(self, prompt: str, iteration: int) -> Result:
+    def run(self, prompt: str, iteration: int, attempt: int | str = 0) -> Result:
         try:
             return self.harness.run(prompt, cwd=self.cwd, timeout=self.timeout, model=self.model,
-                                    log_path=self.transcript_path(iteration, 0), max_turns=SCRIBE_MAX_TURNS)
+                                    log_path=self.transcript_path(iteration, attempt), max_turns=SCRIBE_MAX_TURNS)
         except Exception as exc:   # the engine writes a fallback record; the loop goes on
             self.log(f"scribe harness raised {exc!r}")
             return Result(exit_code=-1, error=f"scribe raised {exc!r}")

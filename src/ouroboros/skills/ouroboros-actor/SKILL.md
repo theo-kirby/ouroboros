@@ -29,7 +29,7 @@ edges are in a loop nobody watches.
   report says what you did instead and why.
 - **No iteration without a report.** The report below is mandatory, even for a dead end.
 
-## The goal
+{profile}## The goal
 
 {goal}
 

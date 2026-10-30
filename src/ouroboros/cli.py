@@ -34,6 +34,7 @@ from .recorder import Recorder
 from . import watch as watcher
 from .roles.critic import AgentCritic, RulesCritic
 from .roles.scribe import Scribe
+from .publication import profile_text
 from . import view as runview
 
 GOAL_TEMPLATE = """# Goal: {name}
@@ -313,7 +314,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         critic = AgentCritic(
             pools["critic"], goal_text=goal_text, cwd=repo, timeout=crole.timeout_seconds,
             model=crole.model, transcript_path=lambda n, a: recorder.transcript_path(n, "critic", a),
-            log=recorder.log,
+            log=recorder.log, profile=profile_text(cfg.profile, "critic"),
         )
     else:
         critic = RulesCritic()

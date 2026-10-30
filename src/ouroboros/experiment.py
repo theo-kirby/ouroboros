@@ -23,7 +23,8 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 import yaml
 
-from . import view
+from . import publication, view
+from .config import PROFILE_TEMPLATE, FiguresConfig, PublicationConfig
 from .engine import role_env
 from .gitguard import GitGuard
 from .harness import make_harness
@@ -32,6 +33,24 @@ from .harness.backend_headless import kill_active, COMMAND_PREFIX
 from .memory import ENV, make_memory
 from .memory.graph import skill
 from .recorder import Recorder
+
+
+class ExperimentFigures(FiguresConfig):
+    model_config = ConfigDict(extra='forbid', frozen=True)
+
+
+class ExperimentPublication(PublicationConfig):
+    """Production's publication keys (DESIGN.md section 23). Here consolidate_every counts
+    cycles, and the final pass is folded into the closing writer calls, never an extra call."""
+    model_config = ConfigDict(extra='forbid', frozen=True)
+    figures: ExperimentFigures = Field(default_factory=ExperimentFigures)
+
+
+# Who keeps the publication, and whose profile guidance each identity gets.
+GENERALISTS = ('researcher','peer_a','peer_b','solver_a','solver_b')
+WRITERS = ('scribe',)+GENERALISTS
+PROFILE_ROLES = {'actor':('actor',),'critic':('critic',),'planner':('critic',),
+                 **{g:('actor','critic') for g in GENERALISTS}}
 
 
 class ExperimentConfig(BaseModel):
@@ -55,6 +74,13 @@ class ExperimentConfig(BaseModel):
     input_manifest: str | None = None
     memory_bytes: int = Field(default=8*1024**3, gt=0)
     max_cpu_seconds: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    profile: Literal['research','development','freeform'] = 'freeform'
+    publication: ExperimentPublication = Field(default_factory=ExperimentPublication)
+
+    @property
+    def template(self) -> str:
+        t=self.publication.template
+        return PROFILE_TEMPLATE[self.profile] if t=='auto' else t
 
     @model_validator(mode='after')
     def known_guidance(self):
@@ -115,6 +141,8 @@ class ExperimentRunner:
         self.inputs=self._load_inputs()
         self.template=skill('ouroboros-experiment')
         manifest={'config':config.model_dump(),'goal':self.goal,'template':self.template,'inputs':self.inputs,
+                  'skills':{n:skill(n) for n in ('ouroboros-profile','ouroboros-publish')},
+                  'publication_sha256':hashlib.sha256(Path(__file__).with_name('publication.py').read_bytes()).hexdigest(),
                   'workspaces':{k:str(v) for k,v in self.workspaces.items()},
                   'runner_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                   'sandbox_sha256':hashlib.sha256(Path(__file__).with_name('experiment_sandbox.py').read_bytes()).hexdigest(),
@@ -241,10 +269,63 @@ class ExperimentRunner:
                                      'tokens_used':self.state['tokens'],'cost_usd_equivalent':self.state['cost_usd']}),
                 'story_path':str(view.story_path(self.workspaces[key]/'.ouroboros/runs'/self.config.run)),
                 'summary_path':str(view.summary_path(self.workspaces[key]/'.ouroboros/runs'/self.config.run)),
-                'guidance':self.config.guidance.get(agent,'(baseline guidance)')}
+                'guidance':self.config.guidance.get(agent,'(baseline guidance)'),
+                'profile':publication.profile_text(self.config.profile,*PROFILE_ROLES.get(agent,())),
+                'publication':self._publication(agent,key)}
         # Single substitution pass: charter/report braces must never be treated as template slots.
         import re
         return re.sub(r'\{([a-z_]+)\}',lambda m:values.get(m[1],m[0]),self.template)
+
+    def _view(self,key):
+        return view.view_dir(self.workspaces[key]/'.ouroboros/runs'/self.config.run)
+
+    def _closing(self):
+        """The last stretch of the shared budget, or the scribe call after a critic's done:
+        the final consolidation happens inside these calls, so no arm gets an extra one."""
+        s=self.state;c=self.config
+        left=c.after_seconds-(self.now()-s['started_at'])
+        return (s['done_pending'] or c.max_calls-s['calls']<=len(self.schedule)
+                or c.max_cycles-s['cycle']<=1 or left<=2*c.timeout_seconds)
+
+    def _publish_due(self,agent):
+        c=self.config
+        if c.template=='notebook' or agent not in WRITERS:return False
+        every=c.publication.consolidate_every
+        if every and self.state['cycle']-self.state.get('published_cycle',0)>=every:return True
+        return c.publication.final and self._closing()
+
+    def _publication(self,agent,key):
+        """The report rules for this call. Empty for a notebook, so a control arm's prompt is unchanged."""
+        c=self.config
+        if c.template=='notebook':return ''
+        if agent not in WRITERS:
+            return ('The publication is kept by the memory writer: save each plot, screenshot or table you make '
+                    'in the workspace with the script and data behind it, and name the files in your report.')
+        parts=[publication.story_rules(c)]
+        if self._publish_due(agent):
+            parts.append(publication.pass_rules(c))
+        elif agent in GENERALISTS and c.publication.final:
+            parts.append('If you will set done to true in this turn, first rewrite the publication as a whole:\n\n'
+                         +publication.pass_rules(c))
+        if self.state.get('publication_problem'):
+            parts.append('Fix these in the publication first.\n'+self.state['publication_problem'])
+        vd=self._view(key)
+        return publication.fill('\n\n'.join(parts),view_dir=str(vd),story_path=str(vd/'story.html'),
+                                assets_dir=str(vd/'assets'),summary_path=str(vd/'summary.txt'))
+
+    def _check_publication(self,receipt):
+        """Deterministic, host-side: no model call. Findings reach the next writer."""
+        s=self.state;agent=receipt['agent']
+        if self.config.template=='notebook' or agent not in WRITERS:return
+        due=receipt.get('publish_due')
+        if due and receipt['ok']:s['published_cycle']=s['cycle']
+        if not (due or s.get('publication_problem')):return
+        try:problems=publication.check(self.config,self._view(receipt['workspace']))
+        except Exception as exc:
+            self.recorder.log(f'publication check raised {exc!r}');return
+        s['publication_problem']=publication.describe(problems)
+        self.recorder.step(iteration=s['cycle'],step='publish',call=receipt['call'],consolidated=bool(due) or None,
+                           problems=len(problems),problem=(s['publication_problem'] or '')[:300] or None)
 
     def _freeze_solver(self, agent, key):
         """Preserve first-pass changed files for synthesis; inputs stay in the packet.
@@ -327,7 +408,7 @@ class ExperimentRunner:
             self.state['stop_reason']='input_modified';self.save();return
         agent=self._stage();key=self._workspace(agent);call=self.state['calls']+1
         prompt=self._prompt(agent,key)
-        pending={'call':call,'agent':agent,'workspace':key,'started_at':self.now(),
+        pending={'call':call,'agent':agent,'workspace':key,'started_at':self.now(),'publish_due':self._publish_due(agent),
                  'head_before':self.guards[key].head(),'prompt_sha256':digest(prompt),'resume':self.state['sessions'].get(agent) if self._persistent(agent) else None}
         self.state['pending']=pending;self.save()
         self.recorder.transcript_path(call,agent).with_suffix('.prompt.txt').write_text(prompt)
@@ -402,6 +483,7 @@ class ExperimentRunner:
                 self._freeze_solver(agent,key)
             s['cursor']+=1
             if agent in ('scribe','researcher','peer_a','peer_b'):s['cycle']+=1
+            self._check_publication(receipt)
         else:
             s['failures']+=1
             if key=='shared':s['handoff']=f"Previous {agent} call failed or returned invalid JSON; recover. {receipt['error'] or ''}"
@@ -440,7 +522,7 @@ class ExperimentRunner:
                 self.recorder.log('publication symlink refused');continue
             if not file.is_file():continue
             relative=file.relative_to(source)
-            if str(relative) not in ('story.html','summary.txt') and relative.parts[0]!='assets':continue
+            if str(relative) not in ('story.html','summary.txt',publication.LEDGER) and relative.parts[0]!='assets':continue
             target=view.view_dir(self.control)/relative
             target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(file,target)
 

@@ -98,7 +98,7 @@ class Recorder:
         if self.needs_human_path.exists():
             self.needs_human_path.unlink()
 
-    def transcript_path(self, iteration: int, role: str, attempt: int = 0) -> Path:
+    def transcript_path(self, iteration: int, role: str, attempt: int | str = 0) -> Path:
         suffix = f"-{attempt}" if attempt else ""
         return self.run_dir / "transcripts" / f"{iteration:04d}-{role}{suffix}.json"
 

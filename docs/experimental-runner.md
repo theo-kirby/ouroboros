@@ -59,10 +59,25 @@ max_failures: 3
 memory_bytes: 8589934592
 confinement: landlock
 guidance: {}
+profile: research          # optional: research | development | freeform (default)
+publication:               # optional: production's keys, DESIGN.md section 23
+  template: auto
+  figures: { enabled: true, main_max: 5, panels: true, supplementary: true }
+  consolidate_every: 5     # cycles here
+  final: true
 ```
 
 These budgets are example calibration candidates, not a frozen campaign contract.
-Unknown fields are rejected. A before-every-actor planner uses topology: planner;
+Unknown fields are rejected, inside `publication` too. `profile` gives the actor
+its section of the `ouroboros-profile` skill, and the critic and planner the critic's
+section. Generalists (researcher, peers, solvers) get both. Under a `paper` or
+`product` template the writers (scribe, generalists) get the `ouroboros-publish`
+rules, and a host-side check of the publication feeds its findings to the next
+writer. The final consolidation happens inside existing calls: the scribe after a
+critic's done, writer calls when the calls, cycles or time left fall below one
+cycle or two call timeouts, and a generalist turn that claims done. It never adds a
+call. A notebook arm's prompt is unchanged by these keys. The fixed prompt leaves
+data gathering to the charter. A before-every-actor planner uses topology: planner;
 blind additionally uses blind_calls and --private-a/--private-b. Guidance is a map
 of identity to fixed appended instructions.
 

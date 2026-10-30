@@ -195,8 +195,8 @@ def load_template() -> str:
     return text
 
 
-def build_critic_prompt(*, goal_text: str, s: Signals, template: str | None = None) -> str:
-    tpl = template or load_template()
+def build_critic_prompt(*, goal_text: str, s: Signals, template: str | None = None, profile: str = "") -> str:
+    tpl = (template or load_template()).replace("{profile}", profile)
     hist = "\n".join(
         f"- #{h.get('iteration')}: {h.get('verdict')} — {_one_line(h.get('reason'), 400)}"
         f"\n  Direction: {_one_line(h.get('reply'), 1000)}"
@@ -268,9 +268,11 @@ class AgentCritic:
         rules: RulesCritic | None = None,
         retries: int = 1,
         name: str | None = None,
+        profile: str = "",
     ) -> None:
         self.harness = harness
         self.goal_text = goal_text
+        self.profile = profile   # the run profile's guidance for the critic; '' for freeform
         self.cwd = cwd
         self.timeout = timeout
         self.model = model
@@ -284,7 +286,7 @@ class AgentCritic:
         self.last_results: list[Result] = []   # every call of the last judge, for the run's token count
 
     def judge(self, s: Signals) -> Verdict:
-        prompt = build_critic_prompt(goal_text=self.goal_text, s=s)
+        prompt = build_critic_prompt(goal_text=self.goal_text, s=s, profile=self.profile)
         self.last_cost = 0.0
         self.last_usage = None
         self.last_results = []

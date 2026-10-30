@@ -175,6 +175,12 @@ letter-spacing:.06em;text-transform:uppercase;line-height:1.6;white-space:nowrap
 .story pre{background:var(--code);padding:10px;overflow-x:auto;font-size:.85rem}
 .story pre code{background:none;padding:0}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(320px,100%),1fr));gap:14px 32px;align-items:start}
+/* a paper's main figure: lettered panels behind one claim (publication.py) */
+.story figure.main{margin:8px 0 22px;padding-top:10px;border-top:1px solid var(--rule)}
+.story figure.main .panels{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(260px,100%),1fr));gap:12px 24px;align-items:start}
+.story .panel{position:relative;padding-top:20px}
+.story .panel[data-panel]::before{content:attr(data-panel);position:absolute;top:0;left:0;font:700 .95rem var(--sans);color:var(--ink)}
+.story figure.main figcaption{margin-top:10px}
 .story td.num,.story th.num,.num.r{text-align:right}
 
 /* the timeline */

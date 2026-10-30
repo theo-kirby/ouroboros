@@ -371,3 +371,67 @@ def test_new_run_refuses_dirty_historical_workspace(repo,tmp_path):
     with pytest.raises(ValueError,match='clean'):
         runner(repo,tmp_path)
     assert (repo/'old-untracked-analysis.py').read_bytes()==before
+
+
+# -- profiles and the publication (DESIGN.md section 23) ------------------------
+
+def prompts_of(h, r, agent):
+    return [c['prompt'] for c, x in zip(h.calls, r.state['receipts']) if x['agent'] == agent]
+
+
+def test_a_notebook_arm_prompt_carries_no_profile_or_publication(repo, tmp_path):
+    r, h = runner(repo, tmp_path, max_cycles=1)
+    r.run()
+    for c in h.calls:
+        assert "This run's profile" not in c['prompt'] and 'consolidation' not in c['prompt']
+        assert '{publication}' not in c['prompt'] and '{profile}' not in c['prompt']
+
+
+def test_research_roles_get_their_guidance_and_the_scribe_consolidates_on_cadence(repo, tmp_path):
+    r, h = runner(repo, tmp_path, max_cycles=4, profile='research', publication={'consolidate_every': 2})
+    r.run()
+    assert 'Every unit moves or tests the answer' in prompts_of(h, r, 'actor')[0]
+    assert 'independent check' in prompts_of(h, r, 'critic')[0]
+    assert 'The publication is kept by the memory writer' in prompts_of(h, r, 'actor')[0]
+    scribe = prompts_of(h, r, 'scribe')
+    assert all('Since the last update' in p for p in scribe)
+    assert ['A consolidation is due' in p for p in scribe] == [False, False, True, True]   # cadence, then the closing call
+    assert 'Fix these in the publication first' in scribe[3] and 'story.html is empty' in scribe[3]
+    assert not any('A consolidation is due' in p for p in prompts_of(h, r, 'actor'))
+    assert len(h.calls) == 12                                             # no extra call for the final pass
+
+
+def test_the_planner_reviews_with_the_critics_profile(repo, tmp_path):
+    r, h = runner(repo, tmp_path / 'p', 'planner', max_cycles=1, profile='research')
+    r.run()
+    planner = prompts_of(h, r, 'planner')[0]
+    assert 'independent check' in planner and 'Every unit moves' not in planner
+
+
+def test_the_scribe_after_a_critics_done_does_the_final_pass(repo, tmp_path):
+    r, h = runner(repo, tmp_path, profile='research', results=[answer(), answer(True), answer()])
+    assert r.run() == 'done_claimed'
+    assert 'A consolidation is due' in prompts_of(h, r, 'scribe')[0]
+
+
+def test_a_generalist_holds_both_profiles_and_consolidates_before_claiming_done(repo, tmp_path):
+    r, h = runner(repo, tmp_path, 'freeflow', max_cycles=6, profile='development', results=[answer(), answer(True)])
+    r.run()
+    first = h.calls[0]['prompt']
+    assert 'Use it as a user would' in first and 'demonstrated by running the product' in first
+    assert 'If you will set done to true in this turn' in first and '`what`' in first
+
+
+def test_unknown_publication_keys_are_refused():
+    with pytest.raises(ValueError):
+        ExperimentConfig(model='t', publication={'figures': {'main_maximum': 3}})
+    assert ExperimentConfig(model='t', profile='research').template == 'paper'
+
+
+def test_the_figure_ledger_reaches_the_dashboard(repo, tmp_path):
+    r, h = runner(repo, tmp_path, max_cycles=1, profile='research')
+    source = repo / '.ouroboros/runs/experiment/view'
+    source.mkdir(parents=True, exist_ok=True)
+    (source / 'figures.json').write_text('[]')
+    r.run()
+    assert (tmp_path / 'control/view/figures.json').read_text() == '[]'

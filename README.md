@@ -112,7 +112,15 @@ waiting run.
 Every run keeps a live page at `.ouroboros/runs/<run>/view/index.html`: the
 loop as a dial, the key figures, gauges for time, usage and progress toward
 done, the criteria, open problems, the memory graph, the scribe's findings and
-a timeline of every iteration. `ouroboros view --host 0.0.0.0` serves it to a
+a timeline of every iteration.
+
+`profile: research` makes the findings a paper: an answer up front, at most five
+numbered figures of lettered panels, negative results, limitations and methods.
+`profile: development` makes them a product report: what it does, with
+screenshots, status against the criteria, known bugs and how to run it. The
+scribe rewrites either one every five worked iterations and once more when the
+run stops; `publication:` in the config tunes the template, the figures and the
+cadence (DESIGN.md section 23). `ouroboros view --host 0.0.0.0` serves the page to a
 phone, for example over Tailscale. A repo can bring its own template at
 `.ouroboros/view/template.html`. [borris.dev](https://borris.dev) is a page in
 this style.
@@ -162,3 +170,6 @@ uv run pytest -q
 Role prompts are skills in `src/ouroboros/skills/`. [AGENTS.md](AGENTS.md) is
 the contract for changes to this repo, and [DESIGN.md](DESIGN.md) holds the
 design, the decisions and the lessons from real runs.
+
+Research-system evaluation plans and lessons: [roadmap](docs/research-evaluation-roadmap.md)
+and [nanoGPT benchmark design](docs/nanogpt-benchmark.md).

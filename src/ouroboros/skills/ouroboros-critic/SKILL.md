@@ -114,7 +114,7 @@ transcript. Nothing branches on them.
 Write both as a colleague would say them out loud. No JSON, no markdown, no
 role names, no "the actor". Never leave either empty.
 
-## The goal (the user's voice)
+{profile}## The goal (the user's voice)
 
 {goal}
 

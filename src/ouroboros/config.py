@@ -163,8 +163,36 @@ class ReportConfig(BaseModel):
         return parse_duration(self.poll) or 30.0
 
 
+class FiguresConfig(BaseModel):
+    """The figure contract of a paper or product publication (DESIGN.md section 23)."""
+    enabled: bool = True       # false: no numbered figures; the evidence is tables and inline charts
+    main_max: int = 5          # numbered main figures at most; everything else is supplementary
+    panels: bool = True        # each main figure gathers lettered panels (A, B, C...) behind one claim
+    supplementary: bool = True # plots that did not earn a main figure stay listed below the paper
+
+
+# What each profile publishes when `publication.template` is auto.
+PROFILE_TEMPLATE = {"research": "paper", "development": "product", "freeform": "notebook"}
+
+
+class PublicationConfig(BaseModel):
+    """The run's report: what the scribe keeps in the view, and when it consolidates it.
+
+    `notebook` is the live findings feed the scribe curates every iteration. `paper` and
+    `product` are a structured publication the scribe rebuilds in a consolidation pass:
+    every `consolidate_every` worked iterations, and once more when the run stops.
+    """
+    template: Literal["auto", "notebook", "paper", "product"] = "auto"
+    figures: FiguresConfig = Field(default_factory=FiguresConfig)
+    consolidate_every: int | None = 5   # worked iterations between passes; null: only the final pass
+    final: bool = True                   # one more pass when the run stops (not on an interrupt or a spend cap)
+
+
 class Config(BaseModel):
     run: str = "run"
+    # What kind of run this is. It sets the guidance the actor and the critic get
+    # and, through publication.template: auto, the shape of the report.
+    profile: Literal["research", "development", "freeform"] = "freeform"
     goal: str = ".ouroboros/goal.md"
     # governor: a Flywheel graph; files: the same model as markdown in `.ouroboros/graph/`.
     # auto: governor when the repo has one, else files. `handoff` is the old name of files.
@@ -200,6 +228,7 @@ class Config(BaseModel):
     limits: LimitConfig = Field(default_factory=LimitConfig)
     loop: LoopConfig = Field(default_factory=LoopConfig)
     report: ReportConfig = Field(default_factory=ReportConfig)
+    publication: PublicationConfig = Field(default_factory=PublicationConfig)
 
     @field_validator("memory", mode="before")
     @classmethod
@@ -209,6 +238,12 @@ class Config(BaseModel):
     @property
     def branch(self) -> str:
         return self.git.branch or f"ouroboros/{self.run}"
+
+    @property
+    def template(self) -> str:
+        """The publication template in force: the configured one, or the profile's."""
+        t = self.publication.template
+        return PROFILE_TEMPLATE[self.profile] if t == "auto" else t
 
     def role(self, name: str) -> RoleConfig:
         return self.roles.get(name) or RoleConfig()

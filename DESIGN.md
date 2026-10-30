@@ -677,9 +677,11 @@ the actor chain names first, by skill name when installed and inline otherwise.
 | `ouroboros-launch` | Starting one (built). Reads `RUNS.md` and the last digest's notes before anything else, pushes back on a charter criterion no single run can tick, runs `ouroboros preflight`, names the run and its stops, launches, and says what to watch. Most of what wastes a run is decided in the twenty minutes before it starts. |
 | `ouroboros-actor` | Internal. The role prompt for WORK and REPORT. Includes `ouroboros-orient`, the memory as the actor reads it. |
 | `ouroboros-critic` | Internal. The role prompt for CRITIC: the reviewer and the sleeping user. Returns strict JSON (section 8). |
-| `ouroboros-scribe` | Internal. The role prompt for SCRIBE: fix, fold when due, record, check, write the story. |
+| `ouroboros-scribe` | Internal. The role prompt for SCRIBE: fix, fold when due, record, check, write the story, consolidate when due. |
 | `ouroboros-fold` | Internal. The fold procedure, put into the scribe's prompt when a fold is due. |
 | `ouroboros-orient` | Internal. The memory as the actor reads it, put into the actor's prompt. |
+| `ouroboros-profile` | Internal. The research and development guidance for the actor and the critic, put into their prompts when `profile` is set (section 23). |
+| `ouroboros-publish` | Internal. The publication: the notebook, the paper and product templates, the figure contract and the final pass, put into the scribe's prompt (section 23). |
 | `ouroboros-reporter` | Internal. The digest prompt for the reporter, `ouroboros watch` (section 15). |
 
 Role prompts live as skills, not as Python strings, so you can edit them
@@ -1008,6 +1010,7 @@ skill, editable by hand. Every key with its default:
 
 ```yaml
 run: run                    # branch ouroboros/<run>, run dir .ouroboros/runs/<run>
+profile: freeform           # research | development | freeform: role guidance and the report's template (section 23)
 goal: .ouroboros/goal.md    # the charter
 memory: auto                # auto | governor | files  (handoff = files)
 backend: headless           # headless | tmux (one window per harness call)
@@ -1055,6 +1058,15 @@ report:                     # the reporter, `ouroboros watch` (section 15)
   silent_after: 2h          # status.json this stale while the run says it is working
   poll: 30s
   max_chars: 1000           # one push notification; Pushover takes 1024
+publication:                # the run's report in the view (section 23)
+  template: auto            # auto | notebook | paper | product; auto: paper for research, product for development, else notebook
+  figures:
+    enabled: true           # false: no numbered figures, evidence as tables and inline charts
+    main_max: 5             # numbered main figures at most
+    panels: true            # each main figure gathers lettered panels (A, B, C...) behind one claim
+    supplementary: true     # unused plots listed as Figure S1, S2...
+  consolidate_every: 5      # worked iterations between consolidation passes; null: only the final pass
+  final: true               # one more pass when the run stops (not on an interrupt or a spend cap)
 ```
 
 A fallback is `{ harness: codex, model: null }`; the chain is the role's own
@@ -1093,6 +1105,7 @@ ouroboros/
     usage.py                # subscription windows: readings, the run's ledger, reserves
     loops.py                # motion-without-progress counters and the ladder (section 6b)
     criteria.py             # charter criteria against claims: what is met, and criteria.json
+    publication.py          # the report's template, the scribe's publication rules, the deterministic check (section 23)
     banner.py               # the ASCII serpent printed before the menu
     recorder.py             # jsonl, status.json, loop.log, NEEDS_HUMAN.md
     watch.py                # the reporter: triggers off the run directory, digests since the last one
@@ -1464,3 +1477,69 @@ production retries. Landlock confines subprocess/tool filesystem access and defa
 to empty identity homes without exposing host credentials. Whole-run aggregate
 resources remain the outer cgroup's responsibility. Credential-free fixture validation
 is distinct from an authenticated real-model smoke test and a scientific pilot.
+
+## 23. Profiles and the publication (2026-10-30)
+
+Theo's runs are research ("is there a link between X and Y") or development ("work
+on this product until it does X"), and after 24 to 72 hours he reads one report. The
+report is the deliverable, and it should read like a paper, not a log. The 24h
+troodontid run showed what the notebook alone produces: 149 SVGs, 18 single-plot
+sections in rough time order, most headed by a hedge, and a summary that led with
+"2.296820 times MOR's muscle-area–lever-arm product". Journals force the opposite
+discipline: a few numbered figures, each gathering lettered panels behind one claim,
+which makes the author choose the story. Both changes below are config, so the
+evaluation screens can treat them as factors.
+
+**`profile`** (`research | development | freeform`, default freeform) inlines the
+matching sections of the `ouroboros-profile` skill into the actor's and the critic's
+prompts (`publication.profile_text`). Research asks for a stated expectation before
+every experiment, numbers with scale, definitions as tested code, independent
+checks, and negative results kept as findings. Its critic checks meaning as well as
+arithmetic, which is the failure the first evaluation campaign hit with an ambiguous
+quantile. It also may not accept done until the publication states the answer.
+Development asks for a product runnable from a clean checkout, used as a user would
+with saved screenshots, and measured. Freeform adds nothing, so existing runs are
+unchanged.
+
+**`publication.template`** is what the scribe keeps in `view/story.html`. `notebook`
+is the curated findings feed of section 20, unchanged. `paper` (research's default)
+and `product` (development's) split the work:
+
+- every iteration, the scribe keeps a `latest` section of at most three new results
+  and appends each new plot to the figure ledger `view/figures.json` (file, claim,
+  source, record, iteration);
+- every `consolidate_every` worked iterations (kept, changed, not reverted), the
+  scribe's prompt carries a consolidation pass: rewrite the whole publication around
+  one story, in fixed sections (paper: answer, findings, results, negative,
+  limitations, methods; product: what, demo, status, negative, known, run);
+- when the run stops, one more scribe call does a final pass and rewrites the summary.
+  It is skipped when the operator interrupted the run or a spend cap stopped it, so a
+  cap is never overshot by design. It is one bounded call in a `try`, after the loop,
+  and its transcript is `<n>-scribe-final.json`.
+
+The figure contract (`publication.figures`): at most `main_max` main figures,
+`<figure class="main" data-panels="A B C">`, captions beginning "Figure N.", a source
+line, every panel cited in the text as `Fig. 1A`, and the plots that did not make a
+main figure listed as supplementary. `figures.enabled: false` keeps the templates and
+drops numbered figures.
+
+The consolidation is a mode of the scribe, like the fold, not a fourth role: the
+three-role rule of section 20 stands. It is the most writing-heavy call in the loop,
+so a paper run should give the scribe a strong model.
+
+`publication.check` reads the publication back deterministically: sections present
+and in order, figure count, panels, captions, citations, sources, links to missing
+assets, and the ledger. What it finds reaches the next scribe as fix-first, the same
+way the memory check's complaints do, and is logged as a `publish` step. It never
+blocks the loop. The checker enforces form, not quality: whether the story is the
+right one is for the critic and, finally, the reader.
+
+The experiment adapter (section 22) reads the same `profile` and `publication` keys,
+with stricter rules (`docs/experimental-runner.md`). Unknown keys are refused, and
+`consolidate_every` counts cycles. The final pass is never an extra call: it is
+folded into the scribe call after a critic's done, any writer call in the last
+stretch of the shared budget, and a generalist's turn that claims done. That keeps
+every arm's total budget the same. A notebook arm's prompt carries neither, so a
+control stays comparable. The adapter's fixed prompt no longer forbids gathering
+data: what an agent may fetch is the charter's to say, because the new benchmarks
+start agents from a bare question.

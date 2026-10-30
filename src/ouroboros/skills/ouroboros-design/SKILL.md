@@ -64,7 +64,15 @@ the user to correct it. Never accept a vague answer; ask for the concrete versio
    anyway.
 7. **Quality bar.** What the critic grades against: gates, commit shape, record
    node rules, doc-with-code rules.
-8. **Run shape.** Duration (`stop.after`), harness chain and fallbacks for the
+8. **Profile and report.** Ask what the run is: `research` (a question to
+   answer: the report is a paper with an answer, numbered multi-panel figures,
+   negative results and methods), `development` (a product to build: the report
+   shows what it does, with screenshots, status against the criteria, known bugs
+   and how to run it), or `freeform` (neither: the live findings notebook). Ask
+   whether they want numbered figures, and how many main figures at most. A research
+   charter's done criteria name the question's answer and its check; a development
+   charter's name what a user can do.
+9. **Run shape.** Duration (`stop.after`), harness chain and fallbacks for the
    actor, the critic and the scribe (the only three roles), memory (`auto` picks governor when
    the repo has a `.flywheel/` graph and `governor` is on PATH, else `files`: the same records and
    claims as markdown under `.ouroboros/graph/`).
@@ -80,6 +88,8 @@ the user to correct it. Never accept a vague answer; ask for the concrete versio
 
 ```yaml
 run: nt2
+profile: research        # research | development | freeform
+publication: { figures: { main_max: 5 }, consolidate_every: 5 }
 memory: auto
 critic: agent            # rules: no model behind the critic
 roles:
