@@ -304,6 +304,26 @@ def test_stuck_verdicts_slow_down(repo):
     assert [s for s in sleeps if s >= 60] == [60, 120, 300, 600]
 
 
+def test_a_stuck_run_without_accepted_done_is_told_not_to_exit(repo):
+    # home-advantage pilot, 2026-10-30: the actor read report_done as leave to give up on
+    # an open criterion and idled for seventy minutes. From the second stuck verdict in a
+    # row, the engine itself says the run does not end on an agent's decision.
+    h = FakeHarness([], default=nothing())
+    eng = make_engine(repo, h, max_iterations=6, sleeps=[])
+    eng.run()
+    told = [i for i, p in enumerate(h.prompts) if "does not end on an agent's decision" in p]
+    assert told and told[0] == 4          # stuck from iteration 3; the 2nd stuck verdict is iteration 4
+    assert "Nothing has changed for 2 iterations" in h.prompts[4]
+
+
+def test_no_early_exit_reply_is_skipped_once_done_was_accepted(repo):
+    h = FakeHarness([], default=nothing())
+    eng = make_engine(repo, h, max_iterations=6, sleeps=[])
+    eng.done_accepted_seen = True
+    eng.run()
+    assert not any("does not end on an agent's decision" in p for p in h.prompts)
+
+
 def test_a_change_clears_the_stuck_streak(repo):
     h = FakeHarness([nothing(), nothing(), nothing(), nothing(), works("out")])
     sleeps = []

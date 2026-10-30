@@ -64,9 +64,9 @@ DONE_REPLY = (
     "horizon ladder and do one unit of it."
 )
 STUCK_REPLY = (
-    "The last iterations changed nothing. Apply the exhaustion policy from the goal: "
-    "pick a rung of the horizon ladder that still has items, or propose three new "
-    "directions in your report, pick one, and do one unit of it now."
+    "The last iterations changed nothing. Pick an open done criterion or a rung of the "
+    "horizon ladder that still has items, or propose three new directions in your "
+    "report, pick one, and do one unit of it now."
 )
 LOOPING_REPLY = (
     "The last iterations changed files but moved nothing. Writing about the work is "

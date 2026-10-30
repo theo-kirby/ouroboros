@@ -65,6 +65,18 @@ REPORT_DONE_REPLY = (
     "The done criteria are met. Exhaustion policy: report_done. Do one light maintenance pass "
     "(tests green, docs accurate), record it, and stop."
 )
+# Said by the engine, not a model, when a run that never had its done criteria accepted
+# stops changing anything. The pilot that taught it (home-advantage, 2026-10-30) read
+# "Exhaustion policy: report_done" as leave to give up on an open criterion; its critic
+# agreed, and the loop idled for seventy minutes of a two-hour run on "no change" turns.
+NO_EARLY_EXIT_REPLY = (
+    "Nothing has changed for {n} iterations, and the done criteria have not been accepted. "
+    "This run does not end on an agent's decision: the exhaustion policy applies only after "
+    "the critic accepts every done criterion, and stopping is the stop rules' job. A source "
+    "or route that ran dry is a reason to try the next one, not to stop. Pick one open "
+    "criterion, name a route not yet tried (another source, period, measure or method), "
+    "and do one unit of it now."
+)
 _EXHAUST = re.compile(r"##\s*Exhaustion policy\s*\n+\s*\**(creative|maintain|report_done)\**", re.IGNORECASE)
 
 
@@ -112,6 +124,7 @@ class Engine:
     session_uses: int = 0
     failed_iterations: int = 0
     stuck_iterations: int = 0
+    done_accepted_seen: bool = False  # the critic has accepted the done criteria at least once
     loops: LoopDetector = None   # type: ignore[assignment]  # built in __post_init__
     scribe: Scribe | None = None     # None: the loop writes each record itself (the rules scribe)
     check_problem: str | None = None  # the memory checker's last complaint, for the next scribe and critic
@@ -240,6 +253,7 @@ class Engine:
 
         idle = False
         if verdict.verdict == "done_accepted":
+            self.done_accepted_seen = True
             policy = exhaustion_policy(self.goal_text)
             nudge = {"creative": CREATIVE_REPLY, "maintain": MAINTAIN_REPLY}.get(policy, REPORT_DONE_REPLY)
             verdict.reply = f"{nudge}\n\n{verdict.reply}".strip()
@@ -276,6 +290,8 @@ class Engine:
         if result.error and verdict.verdict == "continue":
             note = f"The previous iteration ended with an error: {result.error[:500]}. Recover and continue."
             verdict.reply = f"{note}\n\n{verdict.reply}".strip()
+        if verdict.verdict == "stuck" and not self.done_accepted_seen and self.stuck_iterations >= 1:
+            verdict.reply = f"{NO_EARLY_EXIT_REPLY.format(n=self.stuck_iterations + 1)}\n\n{verdict.reply}".strip()
         self.injected = verdict.reply or None
 
         # The scribe writes down what happened -- after the verdict and after any

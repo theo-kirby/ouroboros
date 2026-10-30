@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import tempfile
 import time
 from pathlib import Path
@@ -70,8 +71,12 @@ class CodexHarness:
             cmd += ["resume", resume]
         cmd += ["--json", "--skip-git-repo-check"]
         if tools in ("none", "readonly"):
+            # The sandbox is the read-only guarantee, so nothing may approve a way out of it: a
+            # user config with `approvals_reviewer = "auto_review"` let a critic escalate every
+            # command when bwrap could not start, and its "read-only" reviews ran unsandboxed.
+            cmd += ["-c", 'approval_policy="never"']
             if not resume:
-                cmd += ["-s", "read-only"]     # exec never asks for approval; read-only sandbox stops writes
+                cmd += ["-s", "read-only"]     # read-only sandbox stops writes
         else:
             cmd += ["--dangerously-bypass-approvals-and-sandbox"]
         if not resume:
@@ -82,6 +87,24 @@ class CodexHarness:
             cmd += ["--output-schema", str(schema_path)]
         cmd.append("-")   # prompt on stdin
         return cmd
+
+    def sandbox_problem(self, timeout: float = 30.0) -> str | None:
+        """Why codex's sandbox cannot run a command here, or None if it can. Costs no model call.
+
+        On Ubuntu with kernel.apparmor_restrict_unprivileged_userns=1, bwrap gets a user
+        namespace without the rights to bring up its loopback, and every sandboxed
+        command fails with `bwrap: loopback: Failed RTM_NEWADDR`. A read-only role then
+        reviews blind.
+        """
+        try:
+            p = subprocess.run([self.binary, "sandbox", "--", "true"], capture_output=True, text=True,
+                               timeout=timeout, stdin=subprocess.DEVNULL)
+        except (OSError, subprocess.SubprocessError) as exc:
+            return f"`codex sandbox -- true` could not run: {exc}"
+        if p.returncode == 0:
+            return None
+        out = (p.stderr or p.stdout or "").strip().splitlines()
+        return f"`codex sandbox -- true` failed: {out[-1] if out else f'exit {p.returncode}'}"
 
     def run(
         self,

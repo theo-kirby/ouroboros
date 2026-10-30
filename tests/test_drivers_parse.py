@@ -93,6 +93,22 @@ def test_codex_cmd_shapes(tmp_path):
     assert res[1:4] == ["exec", "resume", "abc"] and "-C" not in res and "-s" not in res
     ro = h.build_cmd(cwd=tmp_path, resume=None, model=None, tools="readonly")
     assert "-s" in ro and "--dangerously-bypass-approvals-and-sandbox" not in ro
+    # nothing may approve a read-only role out of its sandbox, resumed or not
+    for cmd in (ro, res):
+        assert cmd[cmd.index("-c") + 1] == 'approval_policy="never"'
+    assert 'approval_policy="never"' not in new
+
+
+def test_codex_sandbox_probe(tmp_path):
+    ok = tmp_path / "ok"
+    ok.write_text("#!/bin/sh\n[ \"$1 $2 $3\" = \"sandbox -- true\" ] || exit 9\nexit 0\n")
+    bad = tmp_path / "bad"
+    bad.write_text("#!/bin/sh\necho 'bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted' >&2\nexit 1\n")
+    for f in (ok, bad):
+        f.chmod(0o755)
+    assert CodexHarness(binary=str(ok)).sandbox_problem() is None
+    assert "RTM_NEWADDR" in CodexHarness(binary=str(bad)).sandbox_problem()
+    assert "could not run" in CodexHarness(binary=str(tmp_path / "missing")).sandbox_problem()
 
 
 # ---- pi

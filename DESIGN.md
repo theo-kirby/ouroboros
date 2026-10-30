@@ -359,7 +359,7 @@ Triggers, in order:
 | The diff has a real defect against the quality bar | `reject`. The loop reverts this iteration's commits (when `git.revert_on_reject` is on; else the commit stays and gets no ok tag) and `reply` says what to fix. Style is not a defect; a wrong reject throws away good work. |
 | Ends with a question | `answer` it using the goal doc's **question policy**. Inject the answer. |
 | Claims "done" or "complete" | Check against the frontier. Usually `done_rejected` + "here is what is still open". |
-| No file changes for 3 iterations | `stuck`. Inject a nudge from the **exhaustion policy**. |
+| No file changes for 3 iterations | `stuck`. Redirect to an open criterion or a rung of the ladder. From the second `stuck` in a row, while no `done_accepted` has been seen, the engine prepends its own no-early-exit reply (section 21, pilots of 2026-10-30). |
 | Files change but nothing moves (section 6b) | `looping`. Name the loop with its evidence, then change the model. |
 | Same error 3 times in a row | `reject`: "that path is dead, record it as a dead end". |
 | Anything else | `continue`, with `reply` naming the next unit when it is not obvious. |
@@ -385,6 +385,9 @@ The loop never waits on the critic either.
 **Done is never trusted from the actor.** Only the critic can say
 `done_accepted`, and only when the goal doc's done criteria are met. Even then,
 the goal doc's **exhaustion policy** decides what happens next (section 13).
+The policy applies only then. Nothing an agent says ends a run, and an open
+criterion is never "exhausted": a route that ran dry is a reason to take the next
+one. The critic, actor and research profile skills say so; the stop rules end runs.
 
 ## 9. Harness drivers
 
@@ -536,6 +539,14 @@ read-only sandbox for Codex, `read,grep,find,ls` for Pi), returns strict JSON,
 and fails to rules, never open: a critic that crashes or returns garbage twice
 is replaced by the deterministic one for that iteration.
 
+For Codex the sandbox *is* the read-only guarantee, so a read-only call also passes
+`-c approval_policy="never"`: a user config with `approvals_reviewer = "auto_review"`
+otherwise approves `require_escalated` commands and runs them outside the sandbox.
+Preflight runs `codex sandbox -- true` (no model call) for a Codex critic and refuses
+the run when it fails, because a critic that cannot run a command grades blind. On
+Ubuntu that failure is `bwrap: loopback: Failed RTM_NEWADDR`; docs/sandbox.md has the
+AppArmor fix.
+
 ```yaml
 critic: agent
 scribe: agent
@@ -649,7 +660,7 @@ through an interview. Its sections are fixed; `goal.py` parses them:
                         granularity, not time. the critic steers from it.
 ## Constraints        — never do X. always keep Y green. stay inside dir Z.
 ## Question policy    — how to decide for me. e.g. "prefer the reversible option".
-## Exhaustion policy  — creative | maintain | report_done
+## Exhaustion policy  — creative | maintain | report_done; applies only after done_accepted
    - creative:  the actor is told to propose three directions, pick one, continue
    - maintain:  tests, flakes, docs, refactors, forever
    - report_done: the critic may accept done; loop idles and polls every idle_interval
@@ -1390,6 +1401,16 @@ Facts from the run, and what changed because of each.
 | The actor reconciled itself once in a work iteration. | An explicit forbidden-verbs list in the orient prompt; the reconcile skill (then `ouroboros-maintainer`) forbade the plan view in turn. |
 | Edited goal on restart was not recorded. | One directive per charter hash, parented on the previous one, declaring only the criteria it adds and naming the ones it drops. |
 | Outcome: 22 productive iterations, 14 record nodes, ADR-186..198, ~$81 API-equivalent, merged with a merge commit (173 commits, 132 of them empty). | The empty commits are why "no change, no commit" is a rule now. |
+
+### Benchmark pilots (2026-10-30)
+
+Two 2-hour production pilots on new benchmarks (a research question and a
+development build), codex for every role.
+
+| Observed | Change |
+|---|---|
+| The research critic endorsed "report_done under the exhaustion policy" at minute 48 with a criterion still open, after an inconclusive result on a narrow slice of the data; the actor then made eleven no-change turns, backing off up to 10 minutes each, for the last seventy minutes. The critic skill's own wording ("the finite exhaustion policy" as a steer, `stuck` redirecting "from the exhaustion policy") invited it. | The exhaustion policy applies only after `done_accepted` (critic, actor and research-profile skills). From the second `stuck` in a row with no `done_accepted` seen, the engine prepends a fixed no-early-exit reply. No new stop path: a run still ends on its stop rules, as section 12 requires. |
+| Codex's read-only sandbox never worked on the host: every sandboxed command failed with `bwrap: loopback: Failed RTM_NEWADDR` (Ubuntu's `apparmor_restrict_unprivileged_userns`). Early critics escalated each command and the user's auto-review approved it, so "read-only" reviews ran unsandboxed; later critics stopped escalating and graded eight iterations without reading anything. | Read-only codex calls pass `approval_policy="never"`; preflight probes `codex sandbox -- true` for a codex critic and refuses the run with the fix (docs/sandbox.md). |
 
 ### Operator account refresh (2026-09-16)
 

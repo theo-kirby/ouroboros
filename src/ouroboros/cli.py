@@ -197,6 +197,21 @@ def preflight(cfg: Config, repo: Path) -> str | None:
         print(f"  {note}", file=sys.stderr)
     if errors:
         return "not logged in: " + " | ".join(errors)
+    return readonly_sandbox_problem(cfg)
+
+
+def readonly_sandbox_problem(cfg: Config) -> str | None:
+    """The critic's read-only guarantee is its harness's sandbox; a sandbox that cannot run a
+    command leaves it grading blind, so refuse the run while a human is still watching."""
+    if "critic" not in cfg.active_roles:
+        return None
+    for harness_name, _model in cfg.role("critic").chain:
+        probe = getattr(make_harness(harness_name), "sandbox_problem", None)
+        problem = probe() if probe else None
+        if problem:
+            return (f"critic: {harness_name}'s read-only sandbox cannot run commands here ({problem}). "
+                    "On Ubuntu, let bwrap use user namespaces with an AppArmor profile "
+                    "(docs/sandbox.md), or give the critic another harness")
     return None
 
 

@@ -32,6 +32,11 @@ leave behind a report a non-specialist can follow. Work like a scientist.
   that made it, labelled axes with units and a title that says what it shows.
   The scribe gathers them into the report's figures; it cannot draw what you did
   not save.
+- **Inconclusive on a narrow slice is not an answer.** Before you call the
+  question unanswerable, use the design a specialist would reach for first: the
+  standard comparison, the widest public data, the outcome measure the field
+  uses. A source with a gap is a reason to find another source or a design that
+  does not need the missing piece, not to stop.
 - When the answer is supported and checked, say so in your report and spend the
   next unit on the strongest remaining doubt, not on more of the same.
 
@@ -46,6 +51,11 @@ This is a **research** run. Grade it as a demanding reviewer would.
   that re-runs the same code on the same assumption is not independent.
 - Name the result that would overturn the current answer, and steer the next unit
   at it when it is cheap enough to run.
+- Treat "the data cannot answer this" as a claim to test, not a finding. Ask what
+  design a specialist would use first, and whether a wider slice of the data (more
+  periods, leagues, sites, years) or another public source answers it without the
+  missing piece. An inconclusive interval on a small slice, while a larger one sits
+  untried, is a steer, never an endpoint.
 - Reject overclaims. Also push back on reflexive hedging that buries an answer the
   evidence does support.
 - `done_accepted` needs three things: the answer is supported, it has an

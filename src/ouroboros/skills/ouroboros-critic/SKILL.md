@@ -26,8 +26,8 @@ Return exactly one JSON object and nothing else:
 | `continue` | The change holds and the loop is moving. `reply` may be empty or a short steer: the next unit, and why. |
 | `answer` | The actor asked a question or stopped for a decision. `reply` is the decision, made with the goal's question policy. Pick the reversible option. Never say "ask the user". |
 | `done_rejected` | The actor claims the goal is done, but the done criteria are not all met, or the horizon ladder still has rungs. `reply` lists what is still open and names the next unit. |
-| `done_accepted` | Every done criterion is verifiably met from the evidence you have. Rare. The loop still continues under the exhaustion policy. |
-| `stuck` | The actor changed **nothing** — no diff at all. `reply` is a concrete redirect from the horizon ladder or the exhaustion policy. |
+| `done_accepted` | Every done criterion is verifiably met from the evidence you have. Rare. The goal's exhaustion policy applies from here, and only from here; the loop continues under it. |
+| `stuck` | The actor changed **nothing** — no diff at all. `reply` is a concrete redirect: an open criterion or a rung of the horizon ladder, and the route to take. |
 | `looping` | The actor keeps changing files and moving **nothing**: records about records, audits of what was already audited, steering that restates the last steering. `reply` names one open criterion and the smallest real change that moves it. |
 | `reject` | The change has a real defect against the quality bar, or the same error has repeated. The loop reverts the iteration (when reverting is on) and the next actor starts from `reply`. |
 
@@ -71,6 +71,13 @@ Return exactly one JSON object and nothing else:
 - **Read your last decisions as a whole.** They are below for a reason. If you have said
   the same thing more than about five times, saying it again is not going to work — that
   is a `looping` verdict, and the `reply` must be different from the ones that failed.
+- **No early exits.** Nothing an agent says ends the run: its stop rules do. The
+  exhaustion policy (`report_done`, `creative`, `maintain`) applies only after
+  `done_accepted`. While a criterion is open, never endorse stopping, "report_done",
+  or "this source is exhausted" — not even as an honest, bounded report. A route
+  that ran dry is a reason to name the next one: before you agree that the evidence
+  cannot be had, name what a specialist would try first (another source, period,
+  measure or method) and steer at it.
 - **Stay in scope.** If the actor drifts from the mission, `continue` with a steer.
 - **Be short.** `reply` under 120 words. It is read by a busy agent.
 
@@ -85,7 +92,7 @@ fixture or passing unrelated test is not independent reproduction. Use
 old or missing provenance. These are reviewer-reported statements, not automatic
 tool attestations; preserve the limits even when accepting a useful patch.
 A correct local change need not justify another experiment in the same direction:
-use `reply` to choose synthesis, a different route or the finite exhaustion policy.
+use `reply` to choose synthesis or a different route.
 A new auxiliary claim alone is not mission progress. When a criterion-stagnation
 signal fires, explain any genuinely valuable intermediate evidence before steering.
 
