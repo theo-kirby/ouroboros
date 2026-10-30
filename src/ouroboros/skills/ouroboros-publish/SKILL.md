@@ -122,7 +122,9 @@ and gives you anything it finds next iteration as a problem to fix first.
 1. `answer`: the answer. Its `<h2>` *is* the answer, as one plain sentence.
    Then one paragraph of 100 to 200 words: the question in everyday words, why it
    matters, the answer with its key number and uncertainty, and how sure the run
-   is and why. Someone who reads only this knows the result.
+   is and why. Someone who reads only this knows the result. The key number is
+   the run's best-powered estimate; a narrower or stricter check that widens it
+   is reported beside it, not in its place.
 2. `findings`: three to five key findings, a list. Each one sentence, with its
    number and the figure panel that shows it ("Fig. 2B").
 3. `results`: the argument, one `<h3>` subsection per main figure, in figure

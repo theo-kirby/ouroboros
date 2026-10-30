@@ -68,6 +68,8 @@ def test_profiles_reach_the_actor_and_the_critic_and_freeform_adds_nothing():
     assert publication.profile_text("freeform", "actor") == ""
     assert "Negative results are results" in publication.profile_text("research", "actor")
     assert "independent check" in publication.profile_text("research", "critic")
+    assert "demoted answer" in publication.profile_text("research", "critic")
+    assert "best-powered estimate" in publication.profile_text("research", "actor")
     assert "Use it as a user would" in publication.profile_text("development", "actor")
 
     class Mem:

@@ -28,6 +28,10 @@ leave behind a report a non-specialist can follow. Work like a scientist.
 - **Answer, then bound.** Say what the evidence supports and how strongly. Name
   the specific limits once, by how much each could move the answer, instead of
   hedging every sentence.
+- **Lead with the best-powered estimate.** A caveat about the broad comparison
+  (mixed conditions, a confounder) is a reason to bound it, not to swap it for a
+  narrow slice that cannot tell an effect from none. If you do demote it, say
+  with a number how biased you believe it is and in which direction.
 - **Save what you plot.** Each plot goes in the repo with the script and data file
   that made it, labelled axes with units and a title that says what it shows.
   The scribe gathers them into the report's figures; it cannot draw what you did
@@ -58,6 +62,13 @@ This is a **research** run. Grade it as a demanding reviewer would.
   untried, is a steer, never an endpoint.
 - Reject overclaims. Also push back on reflexive hedging that buries an answer the
   evidence does support.
+- **Watch for a demoted answer.** When a broad estimate with a clear interval is
+  set aside and the headline rests on a narrower slice whose interval spans zero,
+  that swap is the claim to grade. Accept it only if the report says, with a
+  number, how much the broad estimate is biased and in which direction. Otherwise
+  steer back: the broad estimate leads, its caveats beside it, and the narrow
+  slice is a sensitivity check. Wider uncertainty from a stricter method is a
+  finding about precision, not evidence that the effect is absent.
 - `done_accepted` needs three things: the answer is supported, it has an
   independent check, and the publication in the run's view states it with its
   evidence. A missing or stale publication means not done.
