@@ -542,7 +542,10 @@ is replaced by the deterministic one for that iteration.
 For Codex the sandbox *is* the read-only guarantee. A read-only call runs under a
 permission profile that reads everything and writes only a private `TMPDIR` made for
 the call and removed after it (plain `-s read-only` froze `/tmp` too, so a critic
-could not run any test that makes a temporary file). It also passes
+could not run any test that makes a temporary file). The profile turns the network on,
+so a critic can start the repository's server and request a page; codex has no
+loopback-only mode, and the filesystem, not the network, is what keeps the critic
+read-only. It also passes
 `-c approval_policy="never"`: a user config with `approvals_reviewer = "auto_review"`
 otherwise approves `require_escalated` commands and runs them outside the sandbox.
 Preflight runs `codex sandbox -- true` (no model call) for a Codex critic and refuses
@@ -1415,6 +1418,7 @@ development build), codex for every role.
 | The research critic endorsed "report_done under the exhaustion policy" at minute 48 with a criterion still open, after an inconclusive result on a narrow slice of the data; the actor then made eleven no-change turns, backing off up to 10 minutes each, for the last seventy minutes. The critic skill's own wording ("the finite exhaustion policy" as a steer, `stuck` redirecting "from the exhaustion policy") invited it. | The exhaustion policy applies only after `done_accepted` (critic, actor and research-profile skills). From the second `stuck` in a row with no `done_accepted` seen, the engine prepends a fixed no-early-exit reply. No new stop path: a run still ends on its stop rules, as section 12 requires. |
 | Codex's read-only sandbox never worked on the host: every sandboxed command failed with `bwrap: loopback: Failed RTM_NEWADDR` (Ubuntu's `apparmor_restrict_unprivileged_userns`). Early critics escalated each command and the user's auto-review approved it, so "read-only" reviews ran unsandboxed; later critics stopped escalating and graded eight iterations without reading anything. | Read-only codex calls pass `approval_policy="never"`; preflight probes `codex sandbox -- true` for a codex critic and refuses the run with the fix (docs/sandbox.md). |
 | With the sandbox fixed (second pilots), the transit critic still logged `verification=unavailable` on 9 of 21 reviews: `-s read-only` leaves no writable temporary directory, and the planner's tests make one. | Read-only codex calls use a permission profile with a private writable `TMPDIR`; the repository stays read-only. |
+| In the third transit pilot every critic review ran the tests, but 3 of 14 could not exercise `./serve`: the read-only sandbox had no sockets at all, loopback included. | The read-only profile enables the network (codex offers no loopback-only setting); the filesystem stays read-only. |
 | The second home-advantage pilot found the right whole-season estimate in its first iteration (−0.19 goals/match, interval clear of zero), demoted it for mixed admission rules, and headlined a narrow window whose interval spanned zero: "the decline is uncertain". The critic accepted. | Research profile: lead with the best-powered estimate; a demotion needs a numeric, signed bias argument, and the critic grades the swap itself. The paper's answer section carries the best-powered estimate. |
 
 ### Operator account refresh (2026-09-16)

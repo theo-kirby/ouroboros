@@ -58,7 +58,11 @@ def strict_schema(schema: dict) -> dict:
 # The read-only sandbox, as a permission profile: everything readable, nothing writable but
 # the call's own TMPDIR. Plain `-s read-only` also froze /tmp, so a critic could not run a
 # test that makes a temporary file and graded on reading alone (transit pilot 2, 2026-10-30).
+# Network is on so a critic can start the repo's server and hit it: codex has no
+# loopback-only mode (allow_local_binding without enabled leaves no socket at all), and
+# without it the transit critic could not exercise `./serve` (pilot 3).
 READONLY_PROFILE = ["-c", 'permissions.ouroboros_readonly.filesystem={":root"="read",":tmpdir"="write"}',
+                    "-c", 'permissions.ouroboros_readonly.network={enabled=true,allow_local_binding=true}',
                     "-c", 'default_permissions="ouroboros_readonly"']
 
 

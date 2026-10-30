@@ -98,6 +98,7 @@ def test_codex_cmd_shapes(tmp_path):
     for cmd in (ro, res):
         assert 'default_permissions="ouroboros_readonly"' in cmd
         assert any('":root"="read"' in a and '":tmpdir"="write"' in a for a in cmd)
+        assert any("network={enabled=true" in a for a in cmd)  # so a critic can test a server
     # nothing may approve a read-only role out of its sandbox, resumed or not
     for cmd in (ro, res):
         assert cmd[cmd.index("-c") + 1] == 'approval_policy="never"'
