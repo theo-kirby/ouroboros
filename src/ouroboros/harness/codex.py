@@ -55,6 +55,13 @@ def strict_schema(schema: dict) -> dict:
     return walk(schema)
 
 
+# The read-only sandbox, as a permission profile: everything readable, nothing writable but
+# the call's own TMPDIR. Plain `-s read-only` also froze /tmp, so a critic could not run a
+# test that makes a temporary file and graded on reading alone (transit pilot 2, 2026-10-30).
+READONLY_PROFILE = ["-c", 'permissions.ouroboros_readonly.filesystem={":root"="read",":tmpdir"="write"}',
+                    "-c", 'default_permissions="ouroboros_readonly"']
+
+
 class CodexHarness:
     name = "codex"
 
@@ -74,9 +81,7 @@ class CodexHarness:
             # The sandbox is the read-only guarantee, so nothing may approve a way out of it: a
             # user config with `approvals_reviewer = "auto_review"` let a critic escalate every
             # command when bwrap could not start, and its "read-only" reviews ran unsandboxed.
-            cmd += ["-c", 'approval_policy="never"']
-            if not resume:
-                cmd += ["-s", "read-only"]     # read-only sandbox stops writes
+            cmd += ["-c", 'approval_policy="never"', *READONLY_PROFILE]
         else:
             cmd += ["--dangerously-bypass-approvals-and-sandbox"]
         if not resume:
@@ -97,7 +102,7 @@ class CodexHarness:
         reviews blind.
         """
         try:
-            p = subprocess.run([self.binary, "sandbox", "--", "true"], capture_output=True, text=True,
+            p = subprocess.run([self.binary, "sandbox", *READONLY_PROFILE, "--", "true"], capture_output=True, text=True,
                                timeout=timeout, stdin=subprocess.DEVNULL)
         except (OSError, subprocess.SubprocessError) as exc:
             return f"`codex sandbox -- true` could not run: {exc}"
@@ -128,12 +133,16 @@ class CodexHarness:
             with os.fdopen(fd, "w") as f:
                 json.dump(strict_schema(json_schema), f)
             schema_path = Path(name)
+        scratch = tempfile.mkdtemp(prefix="ouroboros-ro-") if tools in ("none", "readonly") else None
         try:
             cmd = self.build_cmd(cwd=cwd, resume=resume, model=model, tools=tools, schema_path=schema_path)
-            proc = backend.run(cmd, cwd=cwd, timeout=timeout, stdin_text=prompt, log_path=log_path)
+            proc = backend.run(cmd, cwd=cwd, timeout=timeout, stdin_text=prompt, log_path=log_path,
+                               env={"TMPDIR": scratch} if scratch else None)
         finally:
             if schema_path:
                 schema_path.unlink(missing_ok=True)
+            if scratch:
+                shutil.rmtree(scratch, ignore_errors=True)
         result = self.parse(proc.stdout, proc.stderr, proc.exit_code, proc.timed_out, log_path)
         result.usage = self.usage_for(result.session_id)
         result.model = model_from_rollout(find_codex_rollout(self.home, result.session_id or "")) or model

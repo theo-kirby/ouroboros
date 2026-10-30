@@ -8,7 +8,7 @@ every sandboxed command fails with
 
     bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted
 
-`ouroboros preflight` and `ouroboros run` check this with `codex sandbox -- true`
+`ouroboros preflight` and `ouroboros run` check this with `codex sandbox -- true` (under the same profile the critic uses)
 (no model call) and refuse a run whose Codex critic would grade blind.
 
 ## The fix

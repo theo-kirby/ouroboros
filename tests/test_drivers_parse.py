@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from pathlib import Path
 from datetime import datetime, timezone
 
 from ouroboros.harness.base import parse_reset_time
@@ -92,7 +93,11 @@ def test_codex_cmd_shapes(tmp_path):
     res = h.build_cmd(cwd=tmp_path, resume="abc", model=None, tools="readonly")
     assert res[1:4] == ["exec", "resume", "abc"] and "-C" not in res and "-s" not in res
     ro = h.build_cmd(cwd=tmp_path, resume=None, model=None, tools="readonly")
-    assert "-s" in ro and "--dangerously-bypass-approvals-and-sandbox" not in ro
+    assert "--dangerously-bypass-approvals-and-sandbox" not in ro
+    # read everything, write only the call's TMPDIR -- on a resume too
+    for cmd in (ro, res):
+        assert 'default_permissions="ouroboros_readonly"' in cmd
+        assert any('":root"="read"' in a and '":tmpdir"="write"' in a for a in cmd)
     # nothing may approve a read-only role out of its sandbox, resumed or not
     for cmd in (ro, res):
         assert cmd[cmd.index("-c") + 1] == 'approval_policy="never"'
@@ -101,7 +106,7 @@ def test_codex_cmd_shapes(tmp_path):
 
 def test_codex_sandbox_probe(tmp_path):
     ok = tmp_path / "ok"
-    ok.write_text("#!/bin/sh\n[ \"$1 $2 $3\" = \"sandbox -- true\" ] || exit 9\nexit 0\n")
+    ok.write_text("#!/bin/sh\n[ \"$1\" = sandbox ] && case \"$*\" in *ouroboros_readonly*\" -- true\") exit 0;; esac\nexit 9\n")
     bad = tmp_path / "bad"
     bad.write_text("#!/bin/sh\necho 'bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted' >&2\nexit 1\n")
     for f in (ok, bad):
@@ -184,3 +189,20 @@ def test_codex_strict_schema_adds_what_openai_requires():
     s = strict_schema(nested)
     assert s["properties"]["a"]["additionalProperties"] is False and s["properties"]["a"]["required"] == ["b"]
     assert s["properties"]["c"]["items"]["required"] == ["d"]
+
+
+def test_codex_readonly_call_gets_a_private_tmpdir(tmp_path, monkeypatch):
+    from ouroboros.harness import codex as codex_mod
+    seen = {}
+
+    def fake_run(cmd, *, cwd, timeout, stdin_text=None, log_path=None, env=None):
+        seen["env"] = env
+        seen["existed"] = bool(env) and Path(env["TMPDIR"]).is_dir()
+        return codex_mod.backend.ProcResult(stdout="", stderr="", exit_code=0, timed_out=False)
+
+    monkeypatch.setattr(codex_mod.backend, "run", fake_run)
+    h = CodexHarness(binary="codex", home=tmp_path)
+    h.run("p", cwd=tmp_path, timeout=5, tools="readonly")
+    assert seen["existed"] and not Path(seen["env"]["TMPDIR"]).exists()   # made for the call, then removed
+    h.run("p", cwd=tmp_path, timeout=5, tools=None)
+    assert seen["env"] is None                                             # the actor keeps the host's TMPDIR

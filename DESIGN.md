@@ -539,7 +539,10 @@ read-only sandbox for Codex, `read,grep,find,ls` for Pi), returns strict JSON,
 and fails to rules, never open: a critic that crashes or returns garbage twice
 is replaced by the deterministic one for that iteration.
 
-For Codex the sandbox *is* the read-only guarantee, so a read-only call also passes
+For Codex the sandbox *is* the read-only guarantee. A read-only call runs under a
+permission profile that reads everything and writes only a private `TMPDIR` made for
+the call and removed after it (plain `-s read-only` froze `/tmp` too, so a critic
+could not run any test that makes a temporary file). It also passes
 `-c approval_policy="never"`: a user config with `approvals_reviewer = "auto_review"`
 otherwise approves `require_escalated` commands and runs them outside the sandbox.
 Preflight runs `codex sandbox -- true` (no model call) for a Codex critic and refuses
@@ -1411,6 +1414,7 @@ development build), codex for every role.
 |---|---|
 | The research critic endorsed "report_done under the exhaustion policy" at minute 48 with a criterion still open, after an inconclusive result on a narrow slice of the data; the actor then made eleven no-change turns, backing off up to 10 minutes each, for the last seventy minutes. The critic skill's own wording ("the finite exhaustion policy" as a steer, `stuck` redirecting "from the exhaustion policy") invited it. | The exhaustion policy applies only after `done_accepted` (critic, actor and research-profile skills). From the second `stuck` in a row with no `done_accepted` seen, the engine prepends a fixed no-early-exit reply. No new stop path: a run still ends on its stop rules, as section 12 requires. |
 | Codex's read-only sandbox never worked on the host: every sandboxed command failed with `bwrap: loopback: Failed RTM_NEWADDR` (Ubuntu's `apparmor_restrict_unprivileged_userns`). Early critics escalated each command and the user's auto-review approved it, so "read-only" reviews ran unsandboxed; later critics stopped escalating and graded eight iterations without reading anything. | Read-only codex calls pass `approval_policy="never"`; preflight probes `codex sandbox -- true` for a codex critic and refuses the run with the fix (docs/sandbox.md). |
+| With the sandbox fixed (second pilots), the transit critic still logged `verification=unavailable` on 9 of 21 reviews: `-s read-only` leaves no writable temporary directory, and the planner's tests make one. | Read-only codex calls use a permission profile with a private writable `TMPDIR`; the repository stays read-only. |
 
 ### Operator account refresh (2026-09-16)
 
