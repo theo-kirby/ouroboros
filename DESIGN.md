@@ -694,7 +694,7 @@ the actor chain names first, by skill name when installed and inline otherwise.
 | `ouroboros-launch` | Starting one (built). Reads `RUNS.md` and the last digest's notes before anything else, pushes back on a charter criterion no single run can tick, runs `ouroboros preflight`, names the run and its stops, launches, and says what to watch. Most of what wastes a run is decided in the twenty minutes before it starts. |
 | `ouroboros-actor` | Internal. The role prompt for WORK and REPORT. Includes `ouroboros-orient`, the memory as the actor reads it. |
 | `ouroboros-critic` | Internal. The role prompt for CRITIC: the reviewer and the sleeping user. Returns strict JSON (section 8). |
-| `ouroboros-scribe` | Internal. The role prompt for SCRIBE: fix, fold when due, record, check, write the story, consolidate when due. |
+| `ouroboros-scribe` | Internal. The role prompt for SCRIBE: fix, fold when due, record, check, keep the notebook, write the report when due. |
 | `ouroboros-fold` | Internal. The fold procedure, put into the scribe's prompt when a fold is due. |
 | `ouroboros-orient` | Internal. The memory as the actor reads it, put into the actor's prompt. |
 | `ouroboros-profile` | Internal. The research and development guidance for the actor and the critic, put into their prompts when `profile` is set (section 23). |
@@ -718,7 +718,7 @@ without touching code and so a harness can load them natively.
   status.json                # state, iteration, harness, usage windows, elapsed, last verdict, limit blocks
   transcripts/NNNN-<role>[-attempt].json   # raw harness output (+ .stderr); roles: actor, critic, scribe (older runs: housekeeping, maintainer, planner)
   reverted/NNNN.patch        # what a revert threw away
-  view/index.html            # the run's live page; live.json, graph.html, summary.txt + story.html (the scribe's), assets/
+  view/index.html            # the run's live page; live.json, graph.html, summary.txt + story.html (the scribe's notebook) + paper.html (its report), assets/
   criteria.json              # the charter criteria met at the start and now (section 21)
   refresh.request            # left by `ouroboros refresh` until the loop takes it
   NEEDS_HUMAN.md             # only exists while something needs you (auth failure)
@@ -1076,14 +1076,14 @@ report:                     # the reporter, `ouroboros watch` (section 15)
   poll: 30s
   max_chars: 1000           # one push notification; Pushover takes 1024
 publication:                # the run's report in the view (section 23)
-  template: auto            # auto | notebook | paper | product; auto: paper for research, product for development, else notebook
+  template: auto            # the report written at the end (view/paper.html): auto | notebook | paper | product; auto: paper for research, product for development, else notebook (no report)
   figures:
     enabled: true           # false: no numbered figures, evidence as tables and inline charts
     main_max: 5             # numbered main figures at most
     panels: true            # each main figure gathers lettered panels (A, B, C...) behind one claim
     supplementary: true     # unused plots listed as Figure S1, S2...
-  consolidate_every: 5      # worked iterations between consolidation passes; null: only the final pass
-  final: true               # one more pass when the run stops (not on an interrupt or a spend cap)
+  consolidate_every: null   # worked iterations between mid-run drafts of the report; null: only the final pass
+  final: true               # write the report when the run stops (not on an interrupt or a spend cap)
 ```
 
 A fallback is `{ harness: codex, model: null }`; the chain is the role's own
@@ -1531,21 +1531,35 @@ Development asks for a product runnable from a clean checkout, used as a user wo
 with saved screenshots, and measured. Freeform adds nothing, so existing runs are
 unchanged.
 
-**`publication.template`** is what the scribe keeps in `view/story.html`. `notebook`
-is the curated findings feed of section 20, unchanged. `paper` (research's default)
-and `product` (development's) split the work:
+**The notebook and the paper (2026-10-31).** Theo's review of the first topology
+screen: the run page works, but the scribe's text on it should read as a run book
+of cheap notes, and the paper should be written once, at the end, not kept polished
+through the run. Keeping it current cost too much (scribe calls were 40% of the
+planner arm's tokens) and tangled the critic's done with page freshness (the
+standard arm's critic rejected done four times, each time over a stale page, never
+over the science). So the two are separate files on one page:
 
-- every iteration, the scribe keeps a `latest` section of at most three new results
-  and appends each new plot to the figure ledger `view/figures.json` (file, claim,
-  source, record, iteration);
-- every `consolidate_every` worked iterations (kept, changed, not reverted), the
-  scribe's prompt carries a consolidation pass: rewrite the whole publication around
-  one story, in fixed sections (paper: answer, findings, results, negative,
-  limitations, methods; product: what, demo, status, negative, known, run);
-- when the run stops, one more scribe call does a final pass and rewrites the summary.
-  It is skipped when the operator interrupted the run or a spend cap stopped it, so a
-  cap is never overshot by design. It is one bounded call in a `try`, after the loop,
-  and its transcript is `<n>-scribe-final.json`.
+- **`view/story.html`, the notebook**, every iteration, whatever the template: the
+  current findings, each a sentence heading with terse notes, its number and its
+  plot, and a `tried` section of approaches that failed. Curated, not appended.
+- **`view/paper.html`, the report**, under `publication.template` (`paper`,
+  research's default; `product`, development's; `notebook` writes none). When a
+  template is set, the scribe also keeps the figure ledger `view/figures.json`
+  (file, claim, source, record, iteration) every iteration, so the report can find
+  every plot.
+- **When the report is written:** when the run stops, one more scribe call
+  (`final`) writes paper.html from the notebook, the ledger, the memory and the
+  repo, and rewrites the summary. It is skipped when the operator interrupted the
+  run or a spend cap stopped it, so a cap is never overshot by design. It is one
+  bounded call in a `try`, after the loop, and its transcript is
+  `<n>-scribe-final.json`. `consolidate_every` (default null) adds mid-run drafts
+  every N worked iterations, for long runs that should have a paper before they end.
+- **The page:** one HTML file with a Run / Paper toggle at the top, shown once
+  paper.html exists. It opens on the run while the run is live and on the paper
+  once it has stopped; a click overrides that for the tab.
+- **The critic** judges done on the science and the notebook. The research and
+  development profiles say so: the report comes after the run, and a missing or
+  stale report never withholds done.
 
 The figure contract (`publication.figures`): at most `main_max` main figures,
 `<figure class="main" data-panels="A B C">`, captions beginning "Figure N.", a source
@@ -1553,20 +1567,21 @@ line, every panel cited in the text as `Fig. 1A`, and the plots that did not mak
 main figure listed as supplementary. `figures.enabled: false` keeps the templates and
 drops numbered figures.
 
-The consolidation is a mode of the scribe, like the fold, not a fourth role: the
+The report pass is a mode of the scribe, like the fold, not a fourth role: the
 three-role rule of section 20 stands. It is the most writing-heavy call in the loop,
 so a paper run should give the scribe a strong model.
 
-`publication.check` reads the publication back deterministically: sections present
-and in order, figure count, panels, captions, citations, sources, links to missing
-assets, and the ledger. What it finds reaches the next scribe as fix-first, the same
-way the memory check's complaints do, and is logged as a `publish` step. It never
+`publication.check` reads paper.html back deterministically after each report pass:
+sections present and in order, figure count, panels, captions, citations, sources,
+links to missing assets, and the ledger. What it finds reaches the next report pass
+(a draft's problems reach the final pass) as fix-first, and is logged as a `publish`
+step; the notebook updates in between never see it. It never
 blocks the loop. The checker enforces form, not quality: whether the story is the
 right one is for the critic and, finally, the reader.
 
 The experiment adapter (section 22) reads the same `profile` and `publication` keys,
 with stricter rules (`docs/experimental-runner.md`). Unknown keys are refused, and
-`consolidate_every` counts cycles. The final pass is never an extra call: it is
+`consolidate_every` counts cycles. The report pass is never an extra call: it is
 folded into the scribe call after a critic's done, any writer call in the last
 stretch of the shared budget, and a generalist's turn that claims done. That keeps
 every arm's total budget the same. A notebook arm's prompt carries neither, so a

@@ -39,11 +39,11 @@ def build_scribe_prompt(*, iteration: int, goal_text: str, where: str, report: s
                         view_dir: str, story_path: str, assets_dir: str, summary_path: str = "",
                         story: str | None = None, publish: str | None = None) -> str:
     """`story` is what to do with story.html every iteration (publication.story_rules; the
-    notebook's when None), `publish` the consolidation pass when one is due."""
+    notebook's when None), `publish` the report pass when a mid-run draft is due."""
     text = (
         skill("ouroboros-scribe")
         .replace("{story}", story if story is not None else section(skill("ouroboros-publish"), "notebook"))
-        .replace("{publish}", publish or "No consolidation is due this iteration. Do not rewrite the publication.")
+        .replace("{publish}", publish or "No report is due this iteration. Do not write the report.")
     )
     text = publication.fill(text, view_dir=view_dir, story_path=story_path, assets_dir=assets_dir,
                             summary_path=summary_path or f"{view_dir}/summary.txt")

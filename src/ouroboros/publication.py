@@ -1,11 +1,12 @@
-"""The run's publication: its template, the scribe's instructions for it, and its check.
+"""The run's publication: the notebook, the report, the scribe's instructions, the check.
 
-The scribe keeps the publication (DESIGN.md section 23). Under `notebook` it curates
-the findings feed every iteration. Under `paper` and `product` it keeps a latest
-section and a figure ledger every iteration, and rewrites the whole report in a
-consolidation pass every `publication.consolidate_every` worked iterations and once
-more when the run stops. `check` is deterministic: it reads story.html back against
-the contract, and what it finds reaches the next scribe as something to fix first.
+The scribe keeps two things (DESIGN.md section 23). Every iteration it curates the
+notebook, `view/story.html`: the run book of findings and failed approaches. Under
+`paper` and `product` it also keeps a figure ledger, and writes the report,
+`view/paper.html`, once when the run stops (and as a mid-run draft every
+`publication.consolidate_every` worked iterations when that is set). The run page
+shows both, behind a Run / Paper toggle. `check` is deterministic: it reads
+paper.html back against the contract, and what it finds reaches the next pass.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from .config import Config
 from .memory.graph import section, skill
 
 LEDGER = "figures.json"
+PAPER = "paper.html"
 
 # The top-level <section id> each template must have, in order; the skill names them.
 REQUIRED = {
@@ -44,15 +46,16 @@ def profile_text(profile: str, *roles: str) -> str:
 
 
 def story_rules(config: Config) -> str:
-    """What the scribe does with story.html every iteration."""
+    """What the scribe does with the notebook (story.html) every iteration: the same for
+    every template, plus the figure ledger when the run will end in a report."""
     s = skill("ouroboros-publish")
     if config.template == "notebook":
         return section(s, "notebook")
-    return section(s, f"{config.template} live").replace("{ledger_rules}", section(s, "ledger"))
+    return section(s, "notebook") + "\n\n" + section(s, "notebook ledger").replace("{ledger_rules}", section(s, "ledger"))
 
 
 def pass_rules(config: Config) -> str:
-    """The consolidation pass: rewrite the publication under its template and figure contract."""
+    """The report pass: write paper.html under its template and figure contract."""
     s = skill("ouroboros-publish")
     f = config.publication.figures
     if f.enabled:
@@ -84,6 +87,7 @@ def final_due(config: Config, reason: str) -> bool:
 
 def fill(text: str, *, view_dir: str, story_path: str, assets_dir: str, summary_path: str) -> str:
     return (text.replace("{story_path}", story_path)
+            .replace("{paper_path}", f"{view_dir}/{PAPER}")
             .replace("{assets_dir}", assets_dir)
             .replace("{ledger_path}", f"{view_dir}/{LEDGER}")
             .replace("{summary_path}", summary_path)
@@ -169,7 +173,7 @@ def _cited(text: str) -> dict[int, set[str]]:
 
 
 def check(config: Config, view_dir: Path, story_html: str | None = None) -> list[str]:
-    """What the publication gets wrong against its template and figure contract. [] is clean.
+    """What the report (paper.html) gets wrong against its template and figure contract. [] is clean.
 
     Only `paper` and `product` have a contract; a notebook is never checked.
     """
@@ -178,10 +182,10 @@ def check(config: Config, view_dir: Path, story_html: str | None = None) -> list
         return []
     view_dir = Path(view_dir)
     if story_html is None:
-        p = view_dir / "story.html"
+        p = view_dir / PAPER
         story_html = p.read_text(encoding="utf-8", errors="replace") if p.exists() else ""
     if not story_html.strip():
-        return ["story.html is empty: the publication has not been written."]
+        return [f"{PAPER} is empty: the report has not been written."]
     r = _Reader()
     r.feed(story_html)
     r.close()

@@ -325,6 +325,21 @@ def test_the_story_goes_in_raw_and_a_placeholder_shows_without_it(run_dir, repo,
     assert "The scribe has not written" not in html
 
 
+def test_the_paper_sits_behind_a_toggle_and_opens_once_the_run_stops(run_dir, repo, graph):
+    view.render(run_dir, repo, goal_text=GOAL, graph=graph)
+    html = page(run_dir)
+    assert 'data-mode="run"' in html and 'class="modes"' not in html            # no paper, no toggle
+    view.paper_path(run_dir).write_text('<section id="answer"><h2>Yes, by four per cent</h2></section>')
+    view.render(run_dir, repo, goal_text=GOAL, graph=graph)
+    html = page(run_dir)
+    assert 'class="modes"' in html and 'data-mode="run"' in html                # live: the run page first
+    assert '<article class="paper story" aria-label="Paper"><section id="answer"><h2>Yes, by four per cent' in html
+    status = json.loads((run_dir / "status.json").read_text())
+    (run_dir / "status.json").write_text(json.dumps({**status, "state": "stopped"}))
+    view.render(run_dir, repo, goal_text=GOAL, graph=graph)
+    assert 'data-mode="paper"' in page(run_dir)                                  # stopped: the paper first
+
+
 def test_a_repo_template_overrides_the_default(run_dir, repo):
     t = repo / ".ouroboros" / "view" / "template.html"
     t.parent.mkdir(parents=True)

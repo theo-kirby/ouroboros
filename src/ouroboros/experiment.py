@@ -41,7 +41,7 @@ class ExperimentFigures(FiguresConfig):
 
 class ExperimentPublication(PublicationConfig):
     """Production's publication keys (DESIGN.md section 23). Here consolidate_every counts
-    cycles, and the final pass is folded into the closing writer calls, never an extra call."""
+    cycles, and the report pass is folded into the closing writer calls, never an extra call."""
     model_config = ConfigDict(extra='forbid', frozen=True)
     figures: ExperimentFigures = Field(default_factory=ExperimentFigures)
 
@@ -304,11 +304,11 @@ class ExperimentRunner:
         parts=[publication.story_rules(c)]
         if self._publish_due(agent):
             parts.append(publication.pass_rules(c))
+            if self.state.get('publication_problem'):
+                parts.append('Fix these in the report first.\n'+self.state['publication_problem'])
         elif agent in GENERALISTS and c.publication.final:
-            parts.append('If you will set done to true in this turn, first rewrite the publication as a whole:\n\n'
+            parts.append('If you will set done to true in this turn, first write the report:\n\n'
                          +publication.pass_rules(c))
-        if self.state.get('publication_problem'):
-            parts.append('Fix these in the publication first.\n'+self.state['publication_problem'])
         vd=self._view(key)
         return publication.fill('\n\n'.join(parts),view_dir=str(vd),story_path=str(vd/'story.html'),
                                 assets_dir=str(vd/'assets'),summary_path=str(vd/'summary.txt'))
@@ -319,7 +319,7 @@ class ExperimentRunner:
         if self.config.template=='notebook' or agent not in WRITERS:return
         due=receipt.get('publish_due')
         if due and receipt['ok']:s['published_cycle']=s['cycle']
-        if not (due or s.get('publication_problem')):return
+        if not due:return
         try:problems=publication.check(self.config,self._view(receipt['workspace']))
         except Exception as exc:
             self.recorder.log(f'publication check raised {exc!r}');return
@@ -522,7 +522,7 @@ class ExperimentRunner:
                 self.recorder.log('publication symlink refused');continue
             if not file.is_file():continue
             relative=file.relative_to(source)
-            if str(relative) not in ('story.html','summary.txt',publication.LEDGER) and relative.parts[0]!='assets':continue
+            if str(relative) not in ('story.html',publication.PAPER,'summary.txt',publication.LEDGER) and relative.parts[0]!='assets':continue
             target=view.view_dir(self.control)/relative
             target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(file,target)
 

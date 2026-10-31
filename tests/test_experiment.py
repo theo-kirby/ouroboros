@@ -394,10 +394,10 @@ def test_research_roles_get_their_guidance_and_the_scribe_consolidates_on_cadenc
     assert 'independent check' in prompts_of(h, r, 'critic')[0]
     assert 'The publication is kept by the memory writer' in prompts_of(h, r, 'actor')[0]
     scribe = prompts_of(h, r, 'scribe')
-    assert all('Since the last update' in p for p in scribe)
-    assert ['A consolidation is due' in p for p in scribe] == [False, False, True, True]   # cadence, then the closing call
-    assert 'Fix these in the publication first' in scribe[3] and 'story.html is empty' in scribe[3]
-    assert not any('A consolidation is due' in p for p in prompts_of(h, r, 'actor'))
+    assert all('the notebook.**' in p and 'figures.json' in p for p in scribe)
+    assert ['The report is due' in p for p in scribe] == [False, False, True, True]   # cadence, then the closing call
+    assert 'Fix these in the report first' in scribe[3] and 'paper.html is empty' in scribe[3]
+    assert not any('The report is due' in p for p in prompts_of(h, r, 'actor'))
     assert len(h.calls) == 12                                             # no extra call for the final pass
 
 
@@ -411,7 +411,7 @@ def test_the_planner_reviews_with_the_critics_profile(repo, tmp_path):
 def test_the_scribe_after_a_critics_done_does_the_final_pass(repo, tmp_path):
     r, h = runner(repo, tmp_path, profile='research', results=[answer(), answer(True), answer()])
     assert r.run() == 'done_claimed'
-    assert 'A consolidation is due' in prompts_of(h, r, 'scribe')[0]
+    assert 'The report is due' in prompts_of(h, r, 'scribe')[0]
 
 
 def test_a_generalist_holds_both_profiles_and_consolidates_before_claiming_done(repo, tmp_path):

@@ -128,8 +128,8 @@ class Engine:
     loops: LoopDetector = None   # type: ignore[assignment]  # built in __post_init__
     scribe: Scribe | None = None     # None: the loop writes each record itself (the rules scribe)
     check_problem: str | None = None  # the memory checker's last complaint, for the next scribe and critic
-    worked_since_publish: int = 0     # kept, changed iterations since the last consolidation pass
-    publication_problem: str | None = None  # the publication check's last findings, for the next scribe
+    worked_since_publish: int = 0     # kept, changed iterations since the last report pass
+    publication_problem: str | None = None  # the report check's last findings, for the next report pass
     last_primary_role: str | None = None
     stage: tuple[str, float] | None = None   # (state, when it began): the view's "on the critic for 2 min"
     outcomes: list[IterationOutcome] = field(default_factory=list)
@@ -349,8 +349,10 @@ class Engine:
         except Exception as exc:
             self.recorder.log(f"[{n}] memory unreadable before the scribe: {exc!r}")
             before, folded_before, due, fold = set(), 0, False, None
-        fix_first = "\n".join(x for x in (verdict.fix_first, self.check_problem, self.publication_problem) if x)
         publish_due = self.scribe is not None and publication.publish_due(self.config, self.worked_since_publish)
+        # The report check's findings are for the next report pass, not for every notebook update.
+        fix_first = "\n".join(x for x in (verdict.fix_first, self.check_problem,
+                                           self.publication_problem if publish_due else None) if x)
         res: Result | None = None
         if self.scribe is not None:
             vd = view.view_dir(self.recorder.run_dir)
@@ -399,8 +401,8 @@ class Engine:
             self.recorder.step(iteration=n, step="check", problem=self.check_problem[:300])
         if publish_due and res is not None and res.ok:
             self.worked_since_publish = 0
-        if publish_due or self.publication_problem:
-            self._check_publication(n, consolidated=publish_due and res is not None and res.ok)
+        if publish_due:
+            self._check_publication(n, consolidated=res is not None and res.ok)
         return recorded
 
     def _check_publication(self, n: int, *, consolidated: bool) -> None:
@@ -415,7 +417,7 @@ class Engine:
                            problems=len(problems), problem=(self.publication_problem or "")[:300] or None)
 
     def _publish_final(self, reason: str) -> None:
-        """The last consolidation, after the loop has stopped. One bounded scribe call; never raises."""
+        """The report, after the loop has stopped. One bounded scribe call; never raises."""
         if self.scribe is None or not publication.final_due(self.config, reason):
             return
         try:

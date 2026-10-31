@@ -176,16 +176,16 @@ PROFILE_TEMPLATE = {"research": "paper", "development": "product", "freeform": "
 
 
 class PublicationConfig(BaseModel):
-    """The run's report: what the scribe keeps in the view, and when it consolidates it.
-
-    `notebook` is the live findings feed the scribe curates every iteration. `paper` and
-    `product` are a structured publication the scribe rebuilds in a consolidation pass:
-    every `consolidate_every` worked iterations, and once more when the run stops.
+    """The run's report. The scribe keeps the notebook (story.html, the run book) every
+    iteration whatever the template. `paper` and `product` add a written report
+    (paper.html) shown behind the run page's Paper toggle: one pass when the run stops
+    (`final`), and a mid-run draft every `consolidate_every` worked iterations when set.
+    `notebook` writes no report.
     """
     template: Literal["auto", "notebook", "paper", "product"] = "auto"
     figures: FiguresConfig = Field(default_factory=FiguresConfig)
-    consolidate_every: int | None = 5   # worked iterations between passes; null: only the final pass
-    final: bool = True                   # one more pass when the run stops (not on an interrupt or a spend cap)
+    consolidate_every: int | None = None  # worked iterations between mid-run drafts of the report; null: none
+    final: bool = True                     # write the report when the run stops (not on an interrupt or a spend cap)
 
 
 class Config(BaseModel):

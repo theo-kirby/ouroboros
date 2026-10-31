@@ -70,8 +70,8 @@ This is a **research** run. Grade it as a demanding reviewer would.
   slice is a sensitivity check. Wider uncertainty from a stricter method is a
   finding about precision, not evidence that the effect is absent.
 - `done_accepted` needs three things: the answer is supported, it has an
-  independent check, and the publication in the run's view states it with its
-  evidence. A missing or stale publication means not done.
+  independent check, and the run's notebook states it with its evidence. The
+  written report comes after the run: never withhold done because of it.
 
 ## development actor
 
@@ -99,4 +99,5 @@ This is a **development** run. Grade it as a demanding user would.
   a product that no longer starts from a clean checkout.
 - Steer at the charter's edge cases before polish.
 - `done_accepted` needs every done criterion demonstrated by running the product,
-  and the publication in the run's view showing it.
+  and the run's notebook showing it. The written report comes after the run: never
+  withhold done because of it.

@@ -79,14 +79,14 @@ the second. Nothing else is markup.
 
 {story}
 
-## 6. Consolidate, when a pass is due
+## 6. The report, when a draft is due
 
 {publish}
 
 ## 7. Stop
 
 Your final message is one line: the record id you wrote, and whether you folded or
-changed the summary or the story, and whether you consolidated.
+changed the summary or the notebook, and whether you wrote the report.
 
 ## The critic's verdict
 

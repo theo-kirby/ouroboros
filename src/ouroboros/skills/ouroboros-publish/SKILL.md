@@ -1,26 +1,33 @@
 ---
 name: ouroboros-publish
-description: How an Ouroboros scribe keeps the run's publication - the live findings notebook, or a paper / product report it consolidates every few iterations and once more at the stop, with numbered multi-panel figures. Included in the scribe's prompt by `publication.py`; the template comes from config.yml.
+description: How an Ouroboros scribe keeps the run's notebook (the run book of findings, every iteration) and writes the paper or product report at the end, with numbered multi-panel figures. Included in the scribe's prompt by `publication.py`; the template comes from config.yml.
 ---
 
-`publication.py` inlines these sections into the scribe's prompt. `notebook`,
-`paper live` or `product live` every iteration; `pass` with `paper` or `product`
-and `figures` or `no figures` when a consolidation is due; `final` when the run
-has stopped. Placeholders are filled by the loop.
+`publication.py` inlines these sections into the scribe's prompt. `notebook`
+every iteration, with `notebook ledger` when the run will end in a paper or
+product report; `pass` with `paper` or `product` and `figures` or `no figures`
+when the report is written (once when the run stops, and as a mid-run draft every
+`consolidate_every` worked iterations when that is set); `final` when the run has
+stopped. Placeholders are filled by the loop.
 
 ## notebook
 
-**`{story_path}`: the findings.** An HTML fragment that shows what the run has
-achieved and found.
+**`{story_path}`: the notebook.** An HTML fragment, the run book of what the run
+has found and tried. It is notes, not prose: a reader checking in mid-run sees the
+current findings, the evidence behind them, and what did not work. The polished
+report is written separately at the end; do not write one here.
 
 - Update it when this iteration produced something worth seeing: a number that
-  moved, a result table, a figure, a render, a milestone, a decision that changes
-  direction. When nothing new came out, leave it as it is.
+  moved, a result table, a plot, a render, a milestone, a decision that changes
+  direction, an approach that failed. When nothing new came out, leave it as it is.
 - Curate, do not append: it is the current picture, newest and most important first.
   Replace a stale section instead of adding another one. Keep it under about 40 KB.
 - Each `<section>` starts with an `<h2>` that states the finding as a sentence
-  ("Looking ahead beats the simple bots by six times"), then one plain paragraph,
-  then the evidence: a figure, a table.
+  ("Looking ahead beats the simple bots by six times"), then a few terse lines or
+  bullets (the number, how it was measured, the caveat), then the evidence: a plot,
+  a table. Short notes are better than polished paragraphs.
+- Keep one `<section id="tried">` near the end: a short list of approaches that did
+  not work, each with its number and why it was dropped.
 - A fragment only: no `<html>`, `<head>`, `<body>`, `<style>` or `<script>`. Use
   `<section>`, tables, `<figure>` with `<figcaption>`, and inline `<svg>` for small
   charts. Classes you may use: `grid` (figures side by side), `chip`, `ok`, `warn`,
@@ -32,38 +39,10 @@ achieved and found.
 - Say where each number comes from, in a `<p class="src">` under it: the command,
   the file, the record id.
 
-## paper live
+## notebook ledger
 
-**`{story_path}`: the publication.** This run publishes a paper. Every few
-iterations a consolidation pass rewrites it as a whole, with numbered figures.
-Between passes you keep two things current and leave the rest alone:
-
-- **The latest results.** One `<section id="latest">` at the very top, `<h2>`
-  "Since the last update", holding at most three new results from iterations since
-  the last pass, newest first: one sentence each with its number, a small plot or
-  table when there is one, and a `<p class="src">` naming the command, file and
-  record id. Replace items rather than adding a fourth. The pass folds them into
-  the paper and empties this section.
-- **The figure ledger.** {ledger_rules}
-
-Do not renumber, rewrite or reorder the paper's other sections between passes,
-and do not add main figures: those are the pass's job.
-
-## product live
-
-**`{story_path}`: the product report.** This run publishes a product report.
-Every few iterations a consolidation pass rewrites it as a whole. Between passes
-you keep two things current and leave the rest alone:
-
-- **The latest changes.** One `<section id="latest">` at the very top, `<h2>`
-  "Since the last update", holding at most three things a user would notice since
-  the last pass, newest first: one sentence each, a screenshot, transcript or
-  number when there is one, and a `<p class="src">` naming the command, file and
-  record id. Replace items rather than adding a fourth. The pass folds them in and
-  empties this section.
-- **The figure ledger.** {ledger_rules}
-
-Do not rewrite the report's other sections between passes: that is the pass's job.
+**The figure ledger.** This run ends with a written report built from the
+notebook and the ledger, so keep every plot findable. {ledger_rules}
 
 ## ledger
 
@@ -77,10 +56,11 @@ missing.
 
 ## pass
 
-### A consolidation is due: rewrite the publication
+### The report is due: write it
 
-After you have recorded, rewrite `{story_path}` as a whole, from the memory, the
-figure ledger at `{ledger_path}`, the latest section and the evidence in the repo.
+After you have recorded, write `{paper_path}` as a whole, from the notebook at
+`{story_path}`, the memory, the figure ledger at `{ledger_path}` and the evidence
+in the repo. The notebook stays as it is: it is the run book, this is the report.
 This is the most important thing you write. A person who comes back after the run,
 who is clever but not in this field, reads it once. They must come away knowing
 what was found, how sure it is, how it was found, what did not work, and what
@@ -109,11 +89,11 @@ keep the script there.
 `<script>`. Each required part is a top-level `<section>` with the `id` given
 above, opening with an `<h2>`. Tables use the class `num` on numeric cells. Inline
 SVG takes a `viewBox` about 600 wide, 11 to 13 px text, and `currentColor` for
-marks. Images live in `{assets_dir}/` as `assets/<name>`. Empty the `latest`
-section. Keep the whole file under about 60 KB.
+marks. Images live in `{assets_dir}/` as `assets/<name>`. Keep the whole file
+under about 60 KB.
 
-After you have written it, the loop checks the publication against this contract
-and gives you anything it finds next iteration as a problem to fix first.
+After you have written it, the loop checks the report against this contract; a
+later pass gets what it finds as a problem to fix first.
 
 ## paper
 
@@ -161,7 +141,7 @@ and gives you anything it finds next iteration as a problem to fix first.
 
 ## figures
 
-**Figures, as a journal would print them.** The publication has at most
+**Figures, as a journal would print them.** The report has at most
 **{main_max} main figures**, numbered in the order the text first cites them.
 Each main figure carries one claim and gathers the panels that prove it. Choose
 the panels by asking which plots, side by side, make one sentence undeniable:
@@ -198,16 +178,16 @@ picture is needed, one small inline chart in the section it supports. Do not use
 
 ## final
 
-# The run has stopped: the final consolidation
+# The run has stopped: write the report
 
 An Ouroboros run on this repository has stopped ({reason}). You are its scribe.
-This is your last call: there is no iteration to record and no fold to do. Bring
-the publication up to date for the person who will read it now. Do not edit
+This is your last call: there is no iteration to record and no fold to do. Write
+the report for the person who will read it now. Do not edit
 source, tests, the charter or the memory, and do not run git: the loop commits
 what you write.
 
 Read the memory (`ouroboros mem orient`, then `show` what you need) in {where},
-the figure ledger, the latest section and the evidence in the repo. The run's
+the notebook, the figure ledger and the evidence in the repo. The run's
 view is `{view_dir}/`.
 
 {pass}

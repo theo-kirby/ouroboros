@@ -44,11 +44,11 @@ def test_the_profile_picks_the_template_unless_the_config_names_one():
         cfg(profile="essay")
 
 
-def test_a_pass_is_due_by_worked_iterations_and_never_for_a_notebook():
+def test_mid_run_drafts_are_opt_in_and_never_for_a_notebook():
     assert not publication.publish_due(cfg(), 99)
-    assert not publication.publish_due(cfg(profile="research"), 4)
-    assert publication.publish_due(cfg(profile="research"), 5)
-    assert not publication.publish_due(cfg(profile="research", publication={"consolidate_every": None}), 99)
+    assert not publication.publish_due(cfg(profile="research"), 99)              # by default: only at the end
+    every5 = cfg(profile="research", publication={"consolidate_every": 5})
+    assert not publication.publish_due(every5, 4) and publication.publish_due(every5, 5)
 
 
 def test_the_final_pass_skips_interrupts_and_spend_caps():
@@ -89,10 +89,11 @@ def scribe_prompt(c: Config, due: bool) -> str:
                                story=publication.story_rules(c), publish=publication.pass_rules(c) if due else None)
 
 
-def test_the_notebook_scribe_keeps_the_findings_feed():
+def test_the_notebook_scribe_keeps_the_run_book():
     text = scribe_prompt(cfg(), due=False)
-    assert "**`v/story.html`: the findings.**" in text and "Curate, do not append" in text
-    assert "No consolidation is due" in text and not leftovers(text)
+    assert "**`v/story.html`: the notebook.**" in text and "Curate, do not append" in text
+    assert 'section id="tried"' in text and "figures.json" not in text
+    assert "No report is due" in text and not leftovers(text)
 
 
 @pytest.mark.parametrize("profile,parts", [("research", publication.REQUIRED["paper"]),
@@ -100,9 +101,10 @@ def test_the_notebook_scribe_keeps_the_findings_feed():
 def test_a_due_pass_carries_the_template_and_the_figure_contract(profile, parts):
     c = cfg(profile=profile, publication={"figures": {"main_max": 4}})
     live = scribe_prompt(c, due=False)
-    assert 'section id="latest"' in live and "v/figures.json" in live and "No consolidation is due" in live
+    assert "the notebook.**" in live and "v/figures.json" in live and "No report is due" in live
+    assert "The report is due" not in live
     text = scribe_prompt(c, due=True)
-    assert "A consolidation is due" in text and "**4 main figures**" in text
+    assert "The report is due" in text and "write `v/paper.html`" in text and "**4 main figures**" in text
     assert 'data-panels="A B C"' in text and "Each main figure has at least two panels." in text
     for part in parts:
         assert f"`{part}`" in text, part
@@ -120,7 +122,7 @@ def test_the_final_prompt_is_complete():
                                     view_dir="v", story_path="v/story.html", assets_dir="v/assets",
                                     summary_path="v/summary.txt")
     assert "has stopped (wall clock: 2h elapsed)" in text and "Figure 1 is never cited" in text
-    assert "A consolidation is due" in text and "# Goal: x" in text and not leftovers(text)
+    assert "The report is due" in text and "v/paper.html" in text and "# Goal: x" in text and not leftovers(text)
 
 
 # -- the check ------------------------------------------------------------------
@@ -135,7 +137,7 @@ def figure(n: int, panels: str = "A B", caption: str | None = None, src: bool = 
 def paper(*figs: str, cites: str = "Fig. 1A and Fig. 1B", order=publication.REQUIRED["paper"]) -> str:
     body = {s: f"<section id=\"{s}\"><h2>{s}</h2><p>text</p></section>" for s in order}
     body["results"] = f'<section id="results"><h2>Results</h2><p>As {cites} show.</p>{"".join(figs)}</section>'
-    return '<section id="latest"><h2>Since the last update</h2></section>' + "".join(body[s] for s in order)
+    return "".join(body[s] for s in order)
 
 
 @pytest.fixture
@@ -183,7 +185,7 @@ def test_order_links_ledger_and_figures_off(view):
     off = cfg(profile="research", publication={"figures": {"enabled": False}})
     assert publication.check(off, view, paper(cites="")) == []
     assert any("figures are off" in p for p in publication.check(off, view, paper(figure(1))))
-    assert publication.check(c, view, "") == ["story.html is empty: the publication has not been written."]
+    assert publication.check(c, view, "") == ["paper.html is empty: the report has not been written."]
 
 
 def test_citations_read_ranges_lists_and_whole_figures():
@@ -208,24 +210,24 @@ def publishes(cwd: Path, prompt: str) -> Result:
     """A scribe that records, and writes a clean paper whenever a pass is due or the run has stopped."""
     if "has stopped" not in prompt:
         scribes()(cwd, prompt)
-    if "A consolidation is due" in prompt:
+    if "The report is due" in prompt:
         vd = cwd / re.search(r"`([^`]*)/story\.html`", prompt).group(1)
         (vd / "assets").mkdir(parents=True, exist_ok=True)
         for p in "AB":
             (vd / "assets" / f"f1{p}.svg").write_text("<svg/>")
         (vd / "figures.json").write_text("[]")
-        (vd / "story.html").write_text(paper(figure(1)))
+        (vd / "paper.html").write_text(paper(figure(1)))
     return Result(text="ok", cost_usd=0.1)
 
 
-def test_a_research_run_consolidates_on_schedule_and_once_more_at_the_stop(repo: Path):
+def test_a_research_run_drafts_on_schedule_and_writes_the_report_at_the_stop(repo: Path):
     config = cfg(profile="research", stop={"max_iterations": 4}, publication={"consolidate_every": 2})
     actor, scribe = FakeHarness([], default=works()), FakeHarness([], default=publishes)
     eng = make_engine(repo, actor, scribe, config)
     reason = eng.run()
     assert "max_iterations" in reason
     assert all("profile: research" in p for p in actor.prompts)
-    due = ["A consolidation is due" in p for p in scribe.prompts]
+    due = ["The report is due" in p for p in scribe.prompts]
     assert due == [False, True, False, True, True]          # every 2nd worked iteration, then the final pass
     assert "has stopped (max_iterations 4 reached)" in scribe.prompts[-1]
     steps = eng.recorder.read_jsonl(eng.recorder.iterations)
@@ -242,7 +244,7 @@ def test_publication_problems_reach_the_next_scribe_until_fixed(repo: Path):
         res = publishes(cwd, prompt)
         if calls["n"] == 1:   # the first pass forgets to cite its figure
             vd = cwd / re.search(r"`([^`]*)/story\.html`", prompt).group(1)
-            (vd / "story.html").write_text(paper(figure(1), cites="the plot"))
+            (vd / "paper.html").write_text(paper(figure(1), cites="the plot"))
         return res
     scribe = FakeHarness([], default=sloppy_then_clean)
     eng = make_engine(repo, FakeHarness([], default=works()), scribe, config)
@@ -259,7 +261,7 @@ def test_a_freeform_run_never_consolidates(repo: Path):
     actor, scribe = FakeHarness([], default=works()), FakeHarness([], default=publishes)
     eng = make_engine(repo, actor, scribe, config)
     eng.run()
-    assert len(scribe.prompts) == 2 and not any("A consolidation is due" in p for p in scribe.prompts)
+    assert len(scribe.prompts) == 2 and not any("The report is due" in p for p in scribe.prompts)
     assert not any("profile:" in p for p in actor.prompts)
     assert not any(s.get("step", "").startswith("publish") for s in eng.recorder.read_jsonl(eng.recorder.iterations))
 

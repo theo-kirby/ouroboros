@@ -63,7 +63,7 @@ profile: research          # optional: research | development | freeform (defaul
 publication:               # optional: production's keys, DESIGN.md section 23
   template: auto
   figures: { enabled: true, main_max: 5, panels: true, supplementary: true }
-  consolidate_every: 5     # cycles here
+  consolidate_every: null  # cycles between mid-run report drafts here; null: only the closing pass
   final: true
 ```
 
@@ -71,9 +71,10 @@ These budgets are example calibration candidates, not a frozen campaign contract
 Unknown fields are rejected, inside `publication` too. `profile` gives the actor
 its section of the `ouroboros-profile` skill, and the critic and planner the critic's
 section. Generalists (researcher, peers, solvers) get both. Under a `paper` or
-`product` template the writers (scribe, generalists) get the `ouroboros-publish`
-rules, and a host-side check of the publication feeds its findings to the next
-writer. The final consolidation happens inside existing calls: the scribe after a
+`product` template the writers (scribe, generalists) keep the notebook
+(story.html) and the figure ledger every call, and write the report (paper.html)
+under the `ouroboros-publish` rules; a host-side check of the report feeds its
+findings to the next report pass. The report pass happens inside existing calls: the scribe after a
 critic's done, writer calls when the calls, cycles or time left fall below one
 cycle or two call timeouts, and a generalist turn that claims done. It never adds a
 call. A notebook arm's prompt is unchanged by these keys. The fixed prompt leaves
@@ -113,7 +114,7 @@ execution, so process confinement cannot silently disappear in another backend.
 The control directory holds a configuration/charter/prompt/source fingerprint,
 atomic checkpoint, prompts, raw driver transcripts, durable result receipts,
 identity sessions, all-agent accounting, native status and view/index.html. Agents
-author story.html, summary.txt and figures in their workspace's run-view directory;
+author story.html (the notebook), paper.html (the report), summary.txt and figures in their workspace's run-view directory;
 the host copies these to the dashboard without an extra model call. Unknown token
 and cost reports are counted explicitly; if an active cap needs a missing meter,
 the run stops instead of treating unknown spending as zero.

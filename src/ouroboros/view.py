@@ -5,8 +5,10 @@ when a repo gives its own) filled with two kinds of content:
 
 - facts that need no model: status.json, critic.jsonl, iterations.jsonl, the
   charter and the memory graph. `render` writes these, every time, the same way.
-- the story: `view/story.html`, a fragment the scribe writes with its own images
-  under `view/assets/`. It goes into the page raw (the run's own agent wrote it).
+- the story: `view/story.html`, the notebook the scribe keeps with its own images
+  under `view/assets/`, and the paper: `view/paper.html`, the report it writes at
+  the end, behind a Run / Paper toggle. Both go into the page raw (the run's own
+  agent wrote them).
 
 Everything else that goes into the page is HTML-escaped.
 
@@ -86,6 +88,10 @@ def view_dir(run_dir: Path) -> Path:
 
 def story_path(run_dir: Path) -> Path:
     return view_dir(run_dir) / "story.html"
+
+
+def paper_path(run_dir: Path) -> Path:
+    return view_dir(run_dir) / "paper.html"
 
 
 def summary_path(run_dir: Path) -> Path:
@@ -1112,6 +1118,23 @@ def _story(run_dir: Path) -> str:
     return _findings(text)
 
 
+def _paper(run_dir: Path) -> str:
+    """The written report (publication.py), shown behind the page's Paper toggle; '' when none."""
+    text = _read_text(paper_path(run_dir))
+    return text if text.strip() else ""
+
+
+def _modes(has_paper: bool, live: bool) -> tuple[str, str]:
+    """The Run / Paper toggle and the mode the page opens in: the paper once the run has
+    stopped and written one, else the run. No paper, no toggle."""
+    if not has_paper:
+        return "", "run"
+    toggle = ('<nav class="modes" aria-label="View">'
+              '<button type="button" data-mode="run">Run</button>'
+              '<button type="button" data-mode="paper">Paper</button></nav>')
+    return toggle, "run" if live else "paper"
+
+
 def _template(repo: Path | None) -> str:
     if repo is not None:
         custom = _read_text(Path(repo) / REPO_TEMPLATE)
@@ -1208,15 +1231,17 @@ def render(run_dir: Path, repo: Path, *, goal_text: str, graph=None, now: float 
             "criteria": part(_criteria, graph, goal_text or ""),
             "frontier": part(_frontier, graph),
             "story": part(_story, run_dir),
+            "paper": part(_paper, run_dir),
             "decisions": part(_decisions, decisions),
             "timeline": part(_timeline, graph),
             "generated": "",
             "version": "",
         }
+        live = str(status.get("state")) in LIVE_STATES
+        parts["modes"], parts["mode"] = _modes(bool(parts["paper"].strip()), live)
         template = _template(repo)
         version = hashlib.sha256(_fill(template, parts).encode()).hexdigest()[:16]
         epoch = now if alive else _float(status.get("epoch"))
-        live = str(status.get("state")) in LIVE_STATES
         stamp = datetime.fromtimestamp(now, timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
         parts["generated"] = f"Page written {_e(stamp)} by Ouroboros."
         parts["version"] = version
@@ -1234,7 +1259,7 @@ def render(run_dir: Path, repo: Path, *, goal_text: str, graph=None, now: float 
 
 # -- the server ----------------------------------------------------------------
 
-NO_STORE = {"index.html", "live.json", "story.html", "summary.txt", GRAPH_PAGE}
+NO_STORE = {"index.html", "live.json", "story.html", "paper.html", "summary.txt", GRAPH_PAGE}
 _TYPES = {".svg": "image/svg+xml", ".json": "application/json", ".html": "text/html; charset=utf-8",
           ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".webp": "image/webp",
           ".txt": "text/plain; charset=utf-8", ".csv": "text/plain; charset=utf-8", ".md": "text/plain; charset=utf-8"}

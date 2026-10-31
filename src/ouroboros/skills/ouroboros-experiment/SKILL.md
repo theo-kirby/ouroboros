@@ -26,11 +26,11 @@ Remaining shared allowance:
 
 Every agent's calls count against the same allowance. False completion is recorded
 and evaluated externally; spending the whole allowance is not a goal. If scientific
-work is complete, ensure the actual reader-facing report exists before claiming it.
-The report is the publication: plain-language answer, evidence, an explanatory
-figure when useful, numerical scale, limitations and reproducible linked methods.
-Write the narrative as HTML in {story_path} and a short plain-text answer in
-{summary_path}; the host renders the surrounding dashboard without another agent.
+work is complete, ensure the reader-facing record exists before claiming it.
+Keep the run's notebook as HTML in {story_path}: the findings with their numbers
+and scale, the evidence and figures behind them, the approaches that failed,
+limitations, and reproducible linked methods. Keep a short plain-text answer in
+{summary_path}. The host renders the surrounding dashboard without another agent.
 
 {publication}
 
