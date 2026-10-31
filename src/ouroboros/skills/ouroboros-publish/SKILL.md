@@ -170,6 +170,42 @@ Figure 1 is the answer at a glance.
   thing. Label axes with units. Mark the comparison the claim rests on.
 - {supplementary}
 
+**Show the data, not only the estimates.** A row of estimates with intervals tells
+a reader what to believe; a panel of the underlying data shows them why. Lead with
+that.
+
+- Figure 1 contains at least one panel drawn from the row-level data (every
+  species, every match, every request), with the groups or moments that carry the
+  argument in colour and labelled on the panel, the rest in light grey: an annotated
+  scatter, a real tree or map with values on it, small multiples of one simple view.
+- When the question is about change (before and after, a shock, a trend), Figure
+  1 leads with a time series of the outcome itself at a fine grain (by month, round
+  or week), the periods that matter shaded and labelled, not counts or tiles of rows.
+- Explain a mechanism or a method with a drawing built from the real data: real
+  groups, real values, real examples named. No cartoon silhouettes or toy diagrams.
+- Estimates with intervals support; they are never Figure 1's largest panel, and
+  never a whole figure of near-identical rows. Show the few that settle the question.
+- Panels differ in size and kind, composed on one canvas (matplotlib gridspec or
+  subfigures, or your tools' equivalent) in the order of the argument, with bold
+  panel letters at the top left. Label groups and lines directly instead of using
+  legends. Text at least 7 pt at a print width of 180 mm. No chart junk.
+- **Colours: only this palette**, plus black, white and greys for text, axes and
+  rules, and the same group in the same colour everywhere. Warm: rose pink
+  `#D46A8C`, brick red `#B5473A`, mustard `#E0B04A`, amber orange `#EE9F4F`. Cool:
+  sky blue `#6FA8C9`, teal `#4E9A8F`, periwinkle `#8C9FD1`, sage green `#88B98A`,
+  pale blue `#A3C4D9`, slate blue `#5F7FA8`, medium blue `#3D6FB0`. Other and
+  background: light grey `#DCDCDC`. No built-in colormaps unless built from these.
+
+**Plan, draw, check, look, revise.** Before plotting, write each figure's claim,
+its reader's question, and each panel's role and form. Draw each main figure with
+a script in `{assets_dir}/src/` that reads the run's data. Before every look, have
+the script list any text whose rendered box overlaps other text, a data mark or an
+axis line, or leaves the canvas, and fix what it finds. Then render the PNG and look
+at the picture itself with your image viewer, not at pixel statistics: is the claim
+visible in five seconds, where does the eye go first, is anything crowded, clipped
+or ambiguous, does every panel earn its place? Revise at least once after the first
+look, and stop when another round would not change what the reader takes away.
+
 ## no figures
 
 **No numbered figures in this run.** Show the evidence as tables and, where a

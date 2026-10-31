@@ -233,6 +233,15 @@ def test_a_research_run_drafts_on_schedule_and_writes_the_report_at_the_stop(rep
     steps = eng.recorder.read_jsonl(eng.recorder.iterations)
     assert [s.get("problems") for s in steps if s.get("step") == "publish"] == [0, 0, 0]
     assert any(s.get("step") == "publish_final" for s in steps)
+    timeouts = [c["timeout"] for c in scribe.calls]
+    assert timeouts[-1] == 2700.0 and set(timeouts[:-1]) == {1200.0}   # the final pass gets final_timeout
+
+
+def test_the_figure_contract_asks_for_the_data_the_palette_and_a_look():
+    text = scribe_prompt(cfg(profile="research"), due=True)
+    assert "Show the data, not only the estimates." in text and "time series" in text
+    assert "`#D46A8C`" in text and "`#DCDCDC`" in text and "No built-in colormaps" in text
+    assert "with your image viewer" in text and "overlaps other text" in text and not leftovers(text)
 
 
 def test_publication_problems_reach_the_next_scribe_until_fixed(repo: Path):

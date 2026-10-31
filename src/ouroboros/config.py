@@ -186,6 +186,11 @@ class PublicationConfig(BaseModel):
     figures: FiguresConfig = Field(default_factory=FiguresConfig)
     consolidate_every: int | None = None  # worked iterations between mid-run drafts of the report; null: none
     final: bool = True                     # write the report when the run stops (not on an interrupt or a spend cap)
+    final_timeout: str = "45m"             # the final pass's own time limit: it draws, looks at and revises the figures
+
+    @property
+    def final_timeout_seconds(self) -> float:
+        return parse_duration(self.final_timeout) or 2700.0
 
 
 class Config(BaseModel):

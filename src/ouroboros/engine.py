@@ -433,7 +433,8 @@ class Engine:
             )
             self._refresh_limits("scribe")
             with role_env("scribe"), self._heartbeat():
-                res = self.scribe.run(prompt, self.iteration, "final")
+                res = self.scribe.run(prompt, self.iteration, "final",
+                                      timeout=self.config.publication.final_timeout_seconds)
             self.budget.add(cost=res.cost_usd, usage=res.usage, harness=res.extra.get("harness"))
             self.budget.count(res, "scribe", _harness_of(self.scribe))
             self.recorder.step(iteration=self.iteration, step="publish_final", exit=res.exit_code,

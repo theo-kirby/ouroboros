@@ -1084,6 +1084,7 @@ publication:                # the run's report in the view (section 23)
     supplementary: true     # unused plots listed as Figure S1, S2...
   consolidate_every: null   # worked iterations between mid-run drafts of the report; null: only the final pass
   final: true               # write the report when the run stops (not on an interrupt or a spend cap)
+  final_timeout: 45m        # the final pass's own limit (the scribe's usual one is 20m): it draws and revises figures
 ```
 
 A fallback is `{ harness: codex, model: null }`; the chain is the role's own
@@ -1551,8 +1552,9 @@ over the science). So the two are separate files on one page:
   (`final`) writes paper.html from the notebook, the ledger, the memory and the
   repo, and rewrites the summary. It is skipped when the operator interrupted the
   run or a spend cap stopped it, so a cap is never overshot by design. It is one
-  bounded call in a `try`, after the loop, and its transcript is
-  `<n>-scribe-final.json`. `consolidate_every` (default null) adds mid-run drafts
+  bounded call in a `try`, after the loop, with its own time limit
+  (`final_timeout`, default 45m, because it draws, looks at and revises the
+  figures), and its transcript is `<n>-scribe-final.json`. `consolidate_every` (default null) adds mid-run drafts
   every N worked iterations, for long runs that should have a paper before they end.
 - **The page:** one HTML file with a Run / Paper toggle at the top, shown once
   paper.html exists. It opens on the run while the run is live and on the paper
@@ -1565,7 +1567,13 @@ The figure contract (`publication.figures`): at most `main_max` main figures,
 `<figure class="main" data-panels="A B C">`, captions beginning "Figure N.", a source
 line, every panel cited in the text as `Fig. 1A`, and the plots that did not make a
 main figure listed as supplementary. `figures.enabled: false` keeps the templates and
-drops numbered figures.
+drops numbered figures. How to draw them comes from the figure lab
+(`research-projects/figure-lab`, 2026-10-31: one frozen data packet, one agent, one
+set of instructions per trial): figures that lead with the row-level data, the
+groups that matter coloured and labelled, beat rows of estimates and cartoon
+schematics. The `figures` section of the skill carries that, Theo's colour palette,
+and a plan, draw, overlap-check, look, revise loop; `final_timeout` gives the final
+pass the time for it.
 
 The report pass is a mode of the scribe, like the fold, not a fourth role: the
 three-role rule of section 20 stands. It is the most writing-heavy call in the loop,

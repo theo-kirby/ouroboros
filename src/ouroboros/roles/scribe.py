@@ -74,9 +74,9 @@ class Scribe:
         self.transcript_path = transcript_path or (lambda n, attempt: None)
         self.log = log or (lambda line: None)
 
-    def run(self, prompt: str, iteration: int, attempt: int | str = 0) -> Result:
+    def run(self, prompt: str, iteration: int, attempt: int | str = 0, *, timeout: float | None = None) -> Result:
         try:
-            return self.harness.run(prompt, cwd=self.cwd, timeout=self.timeout, model=self.model,
+            return self.harness.run(prompt, cwd=self.cwd, timeout=timeout or self.timeout, model=self.model,
                                     log_path=self.transcript_path(iteration, attempt), max_turns=SCRIBE_MAX_TURNS)
         except Exception as exc:   # the engine writes a fallback record; the loop goes on
             self.log(f"scribe harness raised {exc!r}")
