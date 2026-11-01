@@ -684,7 +684,12 @@ Installed by `ouroboros skills install`. Plain `SKILL.md` folders in the format
 all three harnesses read: Claude Code invokes one as `/name`, Codex as `$name`,
 Pi by discovery or `--skill <dir>`. `--user` copies them into every harness home
 that exists (`~/.claude/skills`, `~/.codex/skills`, `~/.pi/agent/skills`) plus
-`~/.agents/skills`. `ouroboros design` opens the interview in whichever harness
+`~/.agents/skills`. Only the three user skills (design, checkup, launch) are
+installed, and any other `ouroboros-*` folder in a target is removed: the
+internal role prompts are inlined into every call, and the orientation study
+(2026-11-01) found production actors and critics reading a month-old installed
+copy of their own role skill in every turn, 22% and 56% of what they read
+before starting work. `ouroboros design` opens the interview in whichever harness
 the actor chain names first, by skill name when installed and inline otherwise.
 
 | Skill | What it does |
@@ -1137,7 +1142,7 @@ ouroboros/
     launch.py               # where the loop lives: auto/tmux/tern/systemd/foreground, notes for `stop`
     tmux.py                 # the run session: launch, kill
     tui/                    # the status TUI: theme, widgets, layout (from vllmtop), state (run-dir reader), panels, app
-    skills/                 # packaged with the wheel; `ouroboros skills install` copies them out
+    skills/                 # packaged with the wheel; `ouroboros skills install` copies the user skills out
       ouroboros-actor/  ouroboros-orient/  ouroboros-critic/  ouroboros-scribe/  ouroboros-fold/
       ouroboros-reporter/  ouroboros-design/  ouroboros-launch/  ouroboros-checkup/   (each SKILL.md)
   tests/                    # ~470 tests; fake_harness.py scripts actors, critics and scribes
@@ -1189,8 +1194,9 @@ harness depends on skill discovery.
 2. **Reject means revert.** Decided: on (`git.revert_on_reject`). A critic
    reject reverts the iteration and the next actor starts from the `reply`.
 3. **Skills for Codex and Pi.** Decided: the role prompt text is inlined in
-   every loop call; `skills install` copies the same folders into each
-   harness's skill directory for interactive use, and `ouroboros design` runs
+   every loop call; `skills install` copies the user skills (design, checkup,
+   launch) into each harness's skill directory for interactive use, never the
+   role prompts (section 14), and `ouroboros design` runs
    the interview in any of the three.
 
 Still open:

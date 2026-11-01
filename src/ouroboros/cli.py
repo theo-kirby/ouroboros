@@ -949,19 +949,39 @@ def skill_targets(*, user: bool, home: Path | None = None) -> list[Path]:
     return out
 
 
-def cmd_skills(args: argparse.Namespace) -> int:
+# The skills a person invokes. Every other ouroboros-* skill is a role prompt the loop
+# inlines into its calls; an installed copy only goes stale, and agents found and read
+# one every turn (orientation study, 2026-11-01), so those are never installed.
+USER_SKILLS = ("ouroboros-checkup", "ouroboros-design", "ouroboros-launch")
+
+
+def install_skills(target: Path) -> tuple[list[Path], list[Path]]:
+    """Copy the user skills into `target`; remove every other ouroboros-* folder there. (installed, removed)"""
     src = resources.files("ouroboros.skills")
+    target.mkdir(parents=True, exist_ok=True)
+    removed = []
+    for old in sorted(target.glob("ouroboros-*")):
+        if old.is_dir() and old.name not in USER_SKILLS:
+            shutil.rmtree(old)
+            removed.append(old)
+    installed = []
+    for name in USER_SKILLS:
+        dest = target / name
+        if dest.exists():
+            shutil.rmtree(dest)
+        shutil.copytree(str(src.joinpath(name)), dest)
+        installed.append(dest)
+    return installed, removed
+
+
+def cmd_skills(args: argparse.Namespace) -> int:
     targets = [Path(args.target)] if args.target else skill_targets(user=args.user)
     for t in targets:
-        t.mkdir(parents=True, exist_ok=True)
-        for skill in src.iterdir():
-            if not skill.is_dir():
-                continue
-            dest = t / skill.name
-            if dest.exists():
-                shutil.rmtree(dest)
-            shutil.copytree(str(skill), dest)
-            print(f"installed {dest}")
+        installed, removed = install_skills(t)
+        for p in removed:
+            print(f"removed {p}")
+        for p in installed:
+            print(f"installed {p}")
     return 0
 
 
@@ -1038,7 +1058,7 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--harness", choices=["claude", "codex", "pi"])
     d.set_defaults(fn=cmd_design)
 
-    sk = sub.add_parser("skills", help="install the ouroboros-* skills for claude, codex, and pi")
+    sk = sub.add_parser("skills", help="install the user skills (checkup, design, launch) for claude, codex, and pi; remove stale role-prompt copies")
     sk.add_argument("action", choices=["install"])
     sk.add_argument("--user", action="store_true", help="install to ~/.claude, ~/.codex, ~/.pi/agent, ~/.agents skill dirs")
     sk.add_argument("--target")
