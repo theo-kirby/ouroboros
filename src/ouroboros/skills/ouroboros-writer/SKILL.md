@@ -152,11 +152,15 @@ next prompt.
    fold as step 3 (or fold again). That claim is your reply's `target`.
 6. **Check.** `ouroboros mem check` must exit 0. Fix a violation with another record
    or fold.
-7. **Write the prose step the handoff asks for**, if any, then reply.
+7. **Update the findings and their visuals** (the section below) when the turn
+   changed what the run knows.
+8. **Write the prose step the handoff asks for**, if any, then reply.
 
 {fix_first}
 
 {fold}
+
+{findings_section}
 
 ## handoff both
 

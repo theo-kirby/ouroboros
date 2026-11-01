@@ -19,6 +19,8 @@ from .critic import _one_line
 from .scribe import Scribe
 
 SKILL = "ouroboros-writer"
+FINDINGS_SKILL = "ouroboros-findings"
+FINDINGS_LIMIT = 16000   # the findings file as the writer sees it; the page has it whole
 TURNS = ("ok", "failed", "stuck")
 # What a turn means to the rest of the loop (stop rules, backoff, the view): the
 # verdict vocabulary the standard loop's critic uses. A failed turn reads as a
@@ -89,14 +91,24 @@ def build_writer_prompt(*, iteration: int, handoff: str, where: str, goal_text: 
                         fold: str, zero: bool = False, orient: str = "", fix_first: str = "",
                         signals: str = "", previous_prompt: str = "", report: str = "", commit: str = "",
                         diff_stat: str = "", diff: str = "", touched: str = "", frontier: str = "",
-                        history: str = "", previous_target: str = "") -> str:
+                        history: str = "", previous_target: str = "", findings_path: str = "",
+                        assets_dir: str = "", findings: str = "", findings_problems: str = "") -> str:
     """Turn 0 (`zero`) seeds the memory; every other turn reviews `iteration`'s worker turn."""
     s = skill(SKILL)
     if zero:
         task = section(s, "turn zero")
         context = section(s, "context zero").replace("{orient}", orient.strip() or "(empty)")
     else:
+        block = ""
+        if findings_path:
+            block = (section(skill(FINDINGS_SKILL), "writer")
+                     .replace("{findings_path}", findings_path).replace("{assets_dir}", assets_dir or "assets")
+                     .replace("{summary_path}", str(__import__("pathlib").Path(findings_path).parent / "summary.txt"))
+                     .replace("{problems}", findings_problems.strip() or "none.")
+                     .replace("{findings}", f"```json\n{findings.strip()[:FINDINGS_LIMIT]}\n```" if findings.strip()
+                              else "(no findings yet: the file does not exist; write it when the run first knows something)"))
         task = (section(s, "review")
+                .replace("{findings_section}", block)
                 .replace("{fix_first}", f"**Fix first** (the memory's own check failed after the last turn):\n\n{fix_first.strip()}"
                          if fix_first.strip() else ""))
         context = (section(s, "context review")

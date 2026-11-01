@@ -770,7 +770,7 @@ without touching code and so a harness can load them natively.
   transcripts/NNNN-<role>[-attempt].json   # raw harness output (+ .stderr); roles: actor, critic, scribe; worker, writer (older runs: housekeeping, maintainer, planner)
   transcripts/NNNN-<role>[-attempt].prompt.txt   # the exact prompt that call was sent (the pool writes it before the call)
   reverted/NNNN.patch        # what a revert threw away
-  view/index.html            # the run's live page; live.json, graph.html, summary.txt + story.html (the scribe's notebook) + paper.html (its report), assets/
+  view/index.html            # the run's live page; live.json, graph.html, summary.txt + findings.json (the writer's) + story.html (the scribe's notebook) + paper.html (its report), assets/
   criteria.json              # the charter criteria met at the start and now (section 21)
   refresh.request            # left by `ouroboros refresh` until the loop takes it
   NEEDS_HUMAN.md             # only exists while something needs you (auth failure)
@@ -1811,9 +1811,10 @@ the brief and picks from the frontier, and writer failures in a row back off on 
 usual table. Turn 0 failing leaves the first worker the brief. None of it stops the
 loop.
 
-**Publication.** The notebook and the figure ledger are not a per-turn writer job:
-the run page renders the memory graph and the facts, and figures are the worker's
-work when a prompt asks for them. The final report pass when the run stops
+**Publication.** The notebook and the figure ledger are not a per-turn writer job;
+the findings are (section 25): the writer keeps `view/findings.json` and
+`view/summary.txt`, and makes each finding's visuals with `ouroboros plot` or
+`ouroboros shot`. The final report pass when the run stops
 (section 23) is run by the writer, with the scribe's final prompt and time limit,
 as `NNNN-writer-final.json`.
 
@@ -1832,3 +1833,63 @@ as `NNNN-writer-final.json`.
   worker-writer}`; detector settings sit beside `kind`.
 - *The writer's tools*: full tools like the scribe (it writes the memory and may run
   a quick check); the skill forbids editing anything else, and it never runs git.
+
+## 25. Findings, and the page as one picture (2026-11-01)
+
+Theo: when he comes back after twelve or fifteen hours the page must be full and
+tell the run's story, and the graph should run through all of it, not sit in its
+own section. A finding is not an iteration: most turns change no finding, and one
+finding may rest on three turns or fifteen.
+
+**The findings ledger** (`findings.py`, the `ouroboros-findings` skill). The writer
+keeps `view/findings.json` in the run directory: per finding an `id`, a `title`
+(under a sentence, the finding itself), a `summary` (at most three sentences), a
+`status` (`holds`, `revised`, `retracted`; never deleted), the `claims` and
+`records` of the memory it rests on, `visuals` (`{file: assets/..., caption}`) and
+`notes` (markdown, shown folded). The writer adds one when a claim became `working`
+with evidence or a hypothesis was rejected with a number, and updates one when a
+turn changed it; the list's order is the page's. It also keeps `view/summary.txt`,
+the page's opening paragraph. After every writer the loop checks the file
+(`findings.check`: it parses, ids are unique kebab-case, the summary is short, every
+claim and record is in the memory, every visual exists and is captioned) and the
+next writer gets what it found; nothing stops the loop.
+
+**Visuals for every run** (`figstyle.py`, `figures.py`). A finding without a visual
+is not finished. Ouroboros ships matplotlib, seaborn, pandas and numpy, so a run on
+any project can plot: `ouroboros plot fig.py` runs a script with Ouroboros's own
+Python after `figstyle.apply()` (Theo's palette as the seaborn and matplotlib
+default, palette colormaps, seaborn's faded bar colours turned off), and
+`figstyle.save(fig, name)` writes `<assets>/<name>.png` and `.svg`, then prints any
+text that overlaps other text and any colour outside the palette. `ouroboros shot
+<url-or-file> <name>` screenshots a page with a headless Chromium (on PATH, else
+Playwright's cache). `run` sets `OUROBOROS_ASSETS` to the run's `view/assets/` for
+both. The worker saves the raw numbers of what it measures and may draw; the writer
+draws a finding's figure from those files, after the figure rules of section 23 in
+short: one message per figure, data first, only the palette, labels on the plot,
+look at the picture.
+
+**The page, in order**: the live status (summary, dial, gauges, right now), progress
+toward done and open problems, **Findings**, then **Memory graph and timeline**, then
+the paper behind its toggle. Each finding shows its title and status, its summary,
+its part of the graph, its visuals and its notes. Its part of the graph is an
+evidence diagram drawn in Python (`_evidence_svg`): the finding's claims as rows,
+the tree indented, everything under them included (a rejected hypothesis struck
+through), the records that changed or are cited by them as columns in order with
+the iteration under each, a dot where a record changed a claim and a ring where the
+claim only cites it, and the records' lineage as arcs on top, so a record that
+rests on two others shows it.
+
+The graph and the timeline are one section and one picture. The page carries a map
+(`run-map`): per iteration its records and the claims they touched, per finding its
+nodes, per node its iterations. A timeline column, an iteration's "Show in the
+graph", a finding's diagram or its "Show in the graph" posts `governor:focus` with
+those node ids to the embed, which fades the rest; a node clicked in the graph posts
+`governor:pick` back and the page marks the iterations that wrote or changed it.
+That channel is new in Governor's report embed (governor `feat/report-focus`,
+vendored at governor `10cb417`); the embed takes no
+other message. The graph keeps its own top-level section so a live refresh never
+reloads its frame; the timeline follows it as `#timeline`, unnumbered.
+
+The standard loop is unchanged: without a findings file, the Findings section shows
+the scribe's notebook as before.
+

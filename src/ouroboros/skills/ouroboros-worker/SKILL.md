@@ -106,6 +106,13 @@ starts after you from what you leave. {orient}
 - **No giving up and no "done".** A route that ran dry is a reason to take the next
   one. Whether the goal is done is not yours to decide: say in `result` what you
   think is met.
+- **Keep the numbers and the pictures.** When the unit measures something, write the
+  raw numbers to a CSV or JSON file in the repo (where the project keeps such things,
+  else `evidence/`) and name it in `evidence`. When a picture shows the result better
+  than words, make it: `ouroboros plot fig.py` runs a script with matplotlib, seaborn
+  and pandas in the run's palette (`from ouroboros.figstyle import save`;
+  `save(fig, "<name>")` writes `{assets_dir}/<name>.png`), and `ouroboros shot
+  <url-or-file> <name>` screenshots a page or a render. List them in `visuals`.
 - **Say what the work opened.** A sub-problem you found, a hypothesis worth testing,
   a question you could not settle: one `claims` item each, `NEW <kebab-name>` with
   one line. The writer decides where it hangs in the claim tree.
@@ -115,5 +122,5 @@ starts after you from what you leave. {orient}
   even for a turn that failed:
 
 ```json
-{"did": "<one line: what landed, or what you tried>", "files": ["<paths you changed, and the ones the next turn should open first>"], "result": "<what is true now, with the numbers you measured>", "evidence": "<the commands you ran and what they showed>", "target": "<the claim id you worked on>", "claims": [{"claim": "<a claim id, or NEW kebab-name for a sub-problem, hypothesis or question the work opened>", "change": "<what is now true>"}], "failed": "<what did not work and why; empty if nothing>", "blocked": "<what this host would not let you do; empty if nothing>", "assumed": "<decisions you made for the user; empty if none>", "next": "<the unit you would do next>"}
+{"did": "<one line: what landed, or what you tried>", "files": ["<paths you changed, and the ones the next turn should open first>"], "result": "<what is true now, with the numbers you measured>", "evidence": "<the commands you ran and what they showed>", "target": "<the claim id you worked on>", "claims": [{"claim": "<a claim id, or NEW kebab-name for a sub-problem, hypothesis or question the work opened>", "change": "<what is now true>"}], "visuals": ["<assets/<name>.png you made; empty if none>"], "failed": "<what did not work and why; empty if nothing>", "blocked": "<what this host would not let you do; empty if nothing>", "assumed": "<decisions you made for the user; empty if none>", "next": "<the unit you would do next>"}
 ```
