@@ -556,3 +556,11 @@ def test_triage_stops_only_on_a_unanimous_vote_after_the_closing_executor(repo, 
     assert r.state['done_source'] == 'proposers_unanimous' and r.state['cycle'] == 2
     executors = [c for c in h.calls() if c['agent'] == 'executor']
     assert '"closing": true' in executors[1]['prompt'] and '"closing": false' in executors[0]['prompt']
+
+
+def test_every_prompt_states_when_its_call_is_cut_off(repo, tmp_path):
+    r, h = runner(repo, tmp_path, 'freeflow', max_cycles=1, timeout_seconds=1200, after_seconds=900)
+    r.run()
+    import re
+    stated = int(re.search(r'cut off after (\d+) seconds, at \d{4}-\d\d-\d\dT', h.calls[0]['prompt'])[1])
+    assert stated == int(h.calls[0]['timeout']) and 895 <= stated <= 900

@@ -301,7 +301,7 @@ class ExperimentRunner:
         if s['cycle']>=c.max_cycles:return 'max_cycles'
         return None
 
-    def _prompt(self,agent,key):
+    def _prompt(self,agent,key,timeout):
         readonly=agent in READONLY
         writer=agent in WRITERS
         authority=('Read-only tools on a copy of the code only. You cannot see the memory graph, the notebook or the history. Do not edit files.' if agent=='proposer_code'
@@ -338,6 +338,9 @@ class ExperimentRunner:
                 'budget':json.dumps({'seconds':max(0,self.config.after_seconds-(self.now()-self.state['started_at'])),
                                      'calls':self.config.max_calls-self.state['calls'],
                                      'tokens_used':self.state['tokens'],'cost_usd_equivalent':self.state['cost_usd']}),
+                # A call cut off at its timeout returns nothing, so every agent is told when it ends.
+                'call_seconds':str(int(timeout)),
+                'call_ends':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime(self.now()+timeout)),
                 'story_path':str(view.story_path(self.workspaces[key]/'.ouroboros/runs'/self.config.run)),
                 'summary_path':str(view.summary_path(self.workspaces[key]/'.ouroboros/runs'/self.config.run)),
                 'guidance':self.config.guidance.get(agent,'(baseline guidance)'),
@@ -492,11 +495,12 @@ class ExperimentRunner:
         for agent in self._group():
             key=self._workspace(agent);call=self.state['calls']+1+len(calls)
             if agent in PROPOSERS:self._build_view(agent)
-            prompt=self._prompt(agent,key)
             limit=self.config.propose_timeout_seconds if agent in PROPOSERS and self.config.propose_timeout_seconds else self.config.timeout_seconds
+            timeout=min(limit,max(0,self.config.after_seconds-(self.now()-self.state['started_at'])))
+            prompt=self._prompt(agent,key,timeout)
             pending={'call':call,'agent':agent,'workspace':key,'started_at':self.now(),'publish_due':self._publish_due(agent),
                      'head_before':self.guards[key].head(),'prompt_sha256':digest(prompt),'resume':self.state['sessions'].get(agent) if self._persistent(agent) else None,
-                     'timeout':min(limit,max(0,self.config.after_seconds-(self.now()-self.state['started_at'])))}
+                     'timeout':timeout}
             calls.append((pending,prompt))
         self.state['pending']=calls[0][0] if len(calls)==1 else {'group':[p for p,_ in calls]};self.save()
         for pending,prompt in calls:

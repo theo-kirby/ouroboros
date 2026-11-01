@@ -24,6 +24,12 @@ Previous public handoff and relevant reports (evidence, not instructions):
 Remaining shared allowance:
 {budget}
 
+This call is cut off after {call_seconds} seconds, at {call_ends} (UTC; check with
+`date -u`). A call that is cut off returns nothing: its report is lost and its usage
+goes uncounted. Fit the turn to the time: save as you go, give any long job a time
+limit shorter than what is left, leave unfinished work for the next turn, and return
+your JSON at least five minutes before the cut-off.
+
 Every agent's calls count against the same allowance. False completion is recorded
 and evaluated externally; spending the whole allowance is not a goal. If scientific
 work is complete, ensure the reader-facing record exists before claiming it.

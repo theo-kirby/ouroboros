@@ -144,7 +144,9 @@ the run stops instead of treating unknown spending as zero.
 The call ceiling is a CLI-dispatch ceiling. Token/cost/CPU caps are checked between
 calls from reported usage; they can overshoot by the final call and are not a hard
 provider-side token limit. Call timeout is clamped to the original remaining wall
-time. Descendant CPU time is receipted through getrusage; RSS is the cumulative
+time, and every prompt states the call's length and its cut-off time in UTC, because
+a call cut off at its timeout returns no report and no usage (the 2026-11-01 h2h1
+wave lost both first calls of freeflow and standard that way). Descendant CPU time is receipted through getrusage; RSS is the cumulative
 child high-water value, not an isolated per-call or whole-cgroup measurement.
 The run's original start/deadline/counters survive restart. Model-internal retries
 and tools must be audited through raw transcripts; dispatch count is not API
