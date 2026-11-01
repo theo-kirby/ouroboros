@@ -27,10 +27,20 @@ Start from the next step at the top. The brief after it is the memory's summary,
 so you need not read the whole memory before you begin; `ouroboros mem show <id>`
 opens a claim the step or the brief names.
 
+Check the step before you start: if this host cannot carry it out (see the brief's
+environment), or it repeats something the brief lists as ruled out, do not try it
+"to see". Say so in your report's `blocked` or `failed`, then take an open item from
+the brief's frontier instead, as if no step had been written.
+
 ## orient prompt
 
 Start from the next step at the top. The memory is there if you need it; you are
 not asked to orient from it.
+
+Check the step before you start: if this host cannot carry it out, or the step
+itself says it was ruled out, do not try it "to see". Say so in your report's
+`blocked` or `failed`, then do the nearest unit that moves the same criterion and
+that this host can carry out.
 
 ## orient graph
 
@@ -40,7 +50,7 @@ your report which and why, and do it.
 
 ## orient none
 
-The writer could not write your next step this turn. Choose one item from the
+No next step was written for you this turn. Choose one item from the
 brief's frontier (a broken or blocked item before an open one, nothing it lists as
 ruled out), say in your report which and why, and do it.
 
