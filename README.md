@@ -103,14 +103,16 @@ memory: auto
 
 **The default loop, `loop: worker-writer`**: a worker does each unit from a
 fresh context, and a writer (also fresh every turn, and the only memory writer)
-reviews it against the charter, records it, and writes the next prompt. Nothing is
-reverted; a failed turn is recorded and fixed forward. `handoff: both | prompt |
-graph` says whether the worker starts from the writer's prompt, the memory's brief,
-or both:
+reviews it against the charter, records it, grows the memory's claim tree, and
+names the claim the next unit works on. Nothing is reverted; a failed turn is
+recorded and fixed forward. The worker always gets that target claim whole;
+`handoff: graph | both | prompt` says what comes with it: the memory's brief
+(`graph`, the default: the claim's `Next:` line is the step), a prose step as well
+(`both`), or the prose step without the brief (`prompt`):
 
 ```yaml
 loop: worker-writer        # the default; `loop: standard` is actor, critic, scribe
-handoff: both
+handoff: graph
 roles:
   worker: { harness: claude, model: claude-opus-5-5, timeout: 45m, fallback: [{ harness: codex }] }
   writer: { harness: claude, model: claude-opus-5-5, timeout: 20m, fallback: [{ harness: codex }] }
@@ -148,29 +150,28 @@ hours to [Pushover](https://pushover.net): put `PO_USER` and `PO_TOKEN` in
 
 ## Memory
 
-Records are append-only, and each says what it changes. State is a set of
-claims that cite records; only the scribe's fold writes state. The next actor
-reads the state and the records not folded yet. Agents reach it through one
-command, `ouroboros mem orient | show | record | fold | check | render`, and
-each role may use only its own verbs.
+Records are append-only, and each says what it changes and which records it
+follows from (one or several). State is a tree of claims that cite records: each
+done criterion's gap at the top, and under it the sub-problems, hypotheses and
+questions the work opens. Only the memory writer's fold writes state. The frontier
+is the tree's open leaves, and the next step is one of them. Agents reach it
+through one command, `ouroboros mem brief | tree | orient | show | record | fold |
+check | render`, and each role may use only its own verbs.
 
-By default the memory is markdown under `.ouroboros/graph/`, committed with the
-code on the run branch. It needs nothing else installed.
+### Governor, the standard store
 
-### Optional: Governor
+[Governor](https://github.com/theo-kirby/governor) keeps the records and claims
+as a graph in a local [Flywheel](https://docs.flywheel.paradigma.inc) repository
+(`.flywheel/`, outside git; only STATE.md is committed). It needs Node, the
+`flywheel` CLI and `governor` on `PATH`. With both installed, `memory: auto`
+creates the graph when a run starts (`flywheel repo:init`, then `governor init`
+with the charter's title) and uses it; Flywheel keeps its bootstrap lock in a
+`.flywheel-runtime-locks/` folder beside the checkout. A repo whose runs already
+use the files store keeps it.
 
-[Governor](https://github.com/theo-kirby/governor) keeps the same records and
-claims as a graph in [Flywheel](https://docs.flywheel.paradigma.inc), Paradigma's
-research graph, with its whole history in a local Flywheel repository that can
-sync to a hosted one. It needs Node and the `flywheel` CLI:
-
-```bash
-flywheel repo:init                    # at the checkout; gitignore .flywheel/ and .governor/
-governor init --title "My project"
-```
-
-With `.flywheel/db.sqlite` at the checkout and `governor` on `PATH`,
-`memory: auto` picks it; `--memory files|governor` forces one. Every memory
+Without them, the fallback is the same model as markdown under
+`.ouroboros/graph/`, committed with the code on the run branch, which needs
+nothing else installed. `--memory files|governor` forces one. Every memory
 write is then a Flywheel commit, so merge the run branch with a merge commit:
 records cite commit IDs that a squash or rebase would change.
 

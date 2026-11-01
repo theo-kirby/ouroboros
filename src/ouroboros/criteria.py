@@ -12,6 +12,21 @@ from pathlib import Path
 from . import goal
 
 MARKER = re.compile(r'<!-- ouroboros-criterion: (gap-[a-z0-9-]+) -->')
+# The claims the brief reads by name. A files claim's id is its name; Governor mints a
+# slug instead, so a fold marks these, as it marks criteria, to keep their identity.
+NAMED = ('environment', 'constraints')
+NAME_MARKER = re.compile(r'<!-- ouroboros-claim: ([a-z0-9-]+) -->\n?')
+
+
+def name_of(node: dict | None) -> str | None:
+    """The fixed name of a claim the loop reads by name (`environment`, `constraints`), or None."""
+    if not node:
+        return None
+    match = NAME_MARKER.search(node.get('content') or '')
+    if match:
+        return match[1]
+    slug = node.get('slug') or node.get('id') or ''
+    return slug if slug in NAMED else None
 
 
 def identity(node: dict) -> str | None:
@@ -36,6 +51,10 @@ def tag_fold(plan: dict, graph) -> dict:
         if isinstance(key, str) and re.fullmatch(r'gap-[a-z0-9-]+', key) and isinstance(claim.get('current', ''), str):
             current = MARKER.sub('', claim.get('current') or '').strip()
             claim['current'] = f'<!-- ouroboros-criterion: {key} -->\n{current}'
+        name = name_of(node) if node else claim.get('new')
+        if name in NAMED and isinstance(claim.get('current', ''), str):
+            current = NAME_MARKER.sub('', claim.get('current') or '').strip()
+            claim['current'] = f'<!-- ouroboros-claim: {name} -->\n{current}'
     return plan
 
 

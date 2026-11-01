@@ -36,9 +36,10 @@ WRITER_SCHEMA = {
         "reason": {"type": "string"},
         "did": {"type": "string"},
         "doing": {"type": "string"},
+        "target": {"type": "string"},
         "prompt": {"type": "string"},
     },
-    "required": ["turn", "done", "reason", "did", "doing", "prompt"],
+    "required": ["turn", "done", "reason", "did", "doing", "target", "prompt"],
 }
 
 
@@ -50,6 +51,7 @@ class WriterReply:
     did: str = ""
     doing: str = ""
     prompt: str = ""
+    target: str = ""   # the claim id the next unit works on; "" lets the worker pick from the frontier
 
     @property
     def verdict(self) -> str:
@@ -78,7 +80,8 @@ def parse_reply(text: str) -> WriterReply | None:
             continue
         return WriterReply(turn=turn, done=done, reason=_one_line(data.get("reason"), 400),
                            did=_one_line(data.get("did")), doing=_one_line(data.get("doing")),
-                           prompt=str(data.get("prompt") or "").strip())
+                           prompt=str(data.get("prompt") or "").strip(),
+                           target=str(data.get("target") or "").strip().strip("`").removeprefix("NEW ").strip())
     return None
 
 
@@ -86,7 +89,7 @@ def build_writer_prompt(*, iteration: int, handoff: str, where: str, goal_text: 
                         fold: str, zero: bool = False, orient: str = "", fix_first: str = "",
                         signals: str = "", previous_prompt: str = "", report: str = "", commit: str = "",
                         diff_stat: str = "", diff: str = "", touched: str = "", frontier: str = "",
-                        history: str = "") -> str:
+                        history: str = "", previous_target: str = "") -> str:
     """Turn 0 (`zero`) seeds the memory; every other turn reviews `iteration`'s worker turn."""
     s = skill(SKILL)
     if zero:
@@ -98,18 +101,21 @@ def build_writer_prompt(*, iteration: int, handoff: str, where: str, goal_text: 
                          if fix_first.strip() else ""))
         context = (section(s, "context review")
                    .replace("{signals}", signals.strip() or "(none)")
-                   .replace("{previous_prompt}", previous_prompt.strip() or "(none: the worker chose from the memory's frontier)")
+                   .replace("{previous_prompt}", previous_prompt.strip() or "(no prose step: the claim below was the step, "
+                            "or the worker chose from the memory's frontier)")
+                   .replace("{previous_target}", f"`{previous_target}`" if previous_target else
+                            "(none: the worker chose from the frontier; its report says which)")
                    .replace("{report}", report.strip() or "(the worker wrote no report)")
                    .replace("{commit}", commit or "none")
                    .replace("{diff_stat}", diff_stat.strip()[:4000] or "(no change)")
                    .replace("{diff}", diff.strip()[:DIFF_LIMIT] or "(no diff)")
                    .replace("{touched}", touched.strip() or "(the report names no claim the memory holds)")
-                   .replace("{frontier}", frontier.strip() or "(empty: nothing open, broken or blocked)")
+                   .replace("{frontier}", frontier.strip() or "(no claims yet)")
                    .replace("{history}", history.strip() or "(none yet)"))
     task = task.replace("{fold}", fold.strip())
     return (section(s, "role")
             .replace("{task}", task)
-            .replace("{handoff}", section(s, f"handoff {handoff}"))
+            .replace("{handoff}", section(s, f"handoff {handoff}").replace("{check_the_step}", section(s, "check the step")))
             .replace("{context}", context)
             .replace("{where}", where)
             .replace("{worker_turn}", str(iteration))

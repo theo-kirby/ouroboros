@@ -37,27 +37,36 @@ def footer(*, iteration: int, charter_path: str, agents: str | None, orient: str
 
 
 def build_worker_prompt(*, iteration: int, handoff: str, prompt: str | None, brief: str, notes: str = "",
-                        charter_path: str, agents: str | None) -> str:
-    """notes, the next step (unless `graph`), the brief (unless `prompt`), the footer.
+                        charter_path: str, agents: str | None, target: str = "") -> str:
+    """notes, the target claim, the next step (unless `graph`), the brief (unless `prompt`), the footer.
 
-    With no next step from the writer (it failed, or `handoff: graph`), the brief is
-    always there and the worker is told to pick from its frontier."""
+    `target` is the claim the writer named for this unit, whole (`graph.target_text`):
+    under `graph` it is the step, its `Next:` line saying what to do. With neither a
+    target nor a written step (the writer failed, or named none), the brief is always
+    there and the worker is told to pick from its frontier."""
     s = skill(SKILL)
     has_prompt = handoff != "graph" and bool((prompt or "").strip())
+    has_target = bool((target or "").strip())
     parts = []
     if notes.strip():
         parts.append(section(s, "from the loop").replace("{notes}", notes.strip()))
+    if has_target:
+        parts.append(section(s, "target").replace("{target}", target.strip()))
     if has_prompt:
         parts.append(section(s, "next step").replace("{prompt}", (prompt or "").strip()))
     if handoff != "prompt" or not has_prompt:
         parts.append(brief.strip())
-    orient = ("orient both" if handoff == "both" else "orient prompt") if has_prompt else \
-             ("orient graph" if handoff == "graph" else "orient none")
+    if has_prompt:
+        orient = "orient both" if handoff == "both" else "orient prompt"
+    elif has_target:
+        orient = "orient target"
+    else:
+        orient = "orient graph" if handoff == "graph" else "orient none"
     parts.append(footer(iteration=iteration, charter_path=charter_path, agents=agents, orient=section(s, orient)))
     return "\n\n".join(p for p in parts if p) + "\n"
 
 
-REPORT_KEYS = ("did", "files", "result", "evidence", "claims", "failed", "blocked", "assumed", "next")
+REPORT_KEYS = ("did", "target", "files", "result", "evidence", "claims", "failed", "blocked", "assumed", "next")
 
 
 def parse_report(text: str) -> dict | None:
@@ -99,8 +108,12 @@ def report_for_writer(text: str, limit: int = 12000) -> str:
 
 def claimed_ids(text: str) -> list[str]:
     """The claim ids the report names in `claims`, `NEW` stripped, in order."""
+    report = parse_report(text) or {}
     out: list[str] = []
-    for item in (parse_report(text) or {}).get("claims") or []:
+    first = str(report.get("target") or "").strip().strip("`")
+    if first:
+        out.append(first)
+    for item in report.get("claims") or []:
         cid = item.get("claim") if isinstance(item, dict) else item
         cid = str(cid or "").strip().removeprefix("NEW ").strip().strip("`")
         if cid and cid not in out:

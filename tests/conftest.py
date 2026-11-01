@@ -24,6 +24,10 @@ def isolated_home(tmp_path_factory, monkeypatch):
     # a suite run from inside a launched loop must not inherit "already launched"
     monkeypatch.delenv("OUROBOROS_LAUNCHED", raising=False)
     monkeypatch.delenv("OUROBOROS_IN_TMUX", raising=False)
+    # `run` would create a real Flywheel repository whenever flywheel and governor are
+    # installed; only the tests of that bootstrap turn it back on.
+    import ouroboros.memory as memory
+    monkeypatch.setattr(memory, "can_bootstrap", lambda: False)
     return home
 
 

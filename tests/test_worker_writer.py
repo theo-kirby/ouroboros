@@ -102,7 +102,7 @@ def test_agents_md_is_named_when_the_repo_has_one(repo):
 
 
 @pytest.mark.parametrize("handoff,has_step,has_brief,orient", [
-    ("both", True, True, "Start from the next step at the top. The brief"),
+    ("both", True, True, "Start from the next step at the top; the target above it"),
     ("prompt", True, False, "you are\nnot asked to orient from it"),
     ("graph", False, True, "No next step was written for you"),
 ])
@@ -120,8 +120,7 @@ def test_the_three_handoffs(repo, handoff, has_step, has_brief, orient):
         # a written step is checked before it is tried (orientation lab round 2)
         assert ('do not try it "to see"' in " ".join(prompt.split())) is has_step
     assert section(skill("ouroboros-writer"), f"handoff {handoff}")[:60] in writer.prompts[1]
-    if handoff == "both":
-        assert "is worse than no step" in writer.prompts[1], "the writer checks its step, or writes none"
+    assert "is worse than no step" in writer.prompts[1], "the writer checks its step, or writes none"
 
 
 def test_the_worker_only_reads_and_the_writer_is_the_only_writer(repo, monkeypatch):

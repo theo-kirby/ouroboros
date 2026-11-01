@@ -29,6 +29,7 @@ from .harness.backend_headless import kill_active
 from .harness.pool import LimitBoard, PooledHarness
 from . import memcli
 from .memory import ENV as MEMORY_ENV, FilesStore, make_memory
+from .memory import bootstrap as memory_bootstrap
 from . import notify, operator
 from .recorder import Recorder
 from . import watch as watcher
@@ -304,6 +305,15 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"git: {exc}", file=sys.stderr)
         return 2
 
+    try:
+        goal_file = repo / cfg.goal
+        title = next((ln[2:] for ln in (goal_file.read_text().splitlines() if goal_file.exists() else [])
+                      if ln.startswith("# ")), cfg.run)
+        made = memory_bootstrap(cfg.memory, repo, title=title)
+        if made:
+            print(f"ouroboros: {made}")
+    except Exception as exc:   # a failed bootstrap leaves auto on the files store
+        print(f"ouroboros: memory bootstrap raised {exc!r}; using what is there", file=sys.stderr)
     try:
         memory = make_memory(
             cfg.memory, repo, **cfg.graph.model_dump(),

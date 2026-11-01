@@ -22,12 +22,14 @@ from .config import parse_duration
 from .engine import (CREATIVE_REPLY, MAINTAIN_REPLY, NO_EARLY_EXIT_REPLY, REPORT_DONE_REPLY, Engine,
                      IterationOutcome, _harness_of, exhaustion_policy, role_env)
 from .harness.base import Result
+from .memory.graph import target_claim, target_text, tree_text
 from .roles.critic import RulesCritic, Signals, Verdict, _one_line
 from .roles.worker import (agents_path, build_worker_prompt, claimed_ids, parse_report, report_for_writer,
                            report_summary)
 from .roles.writer import Writer, WriterReply, build_writer_prompt, parse_reply, touched_claims
 
 NEXT_PROMPT = "next-prompt.md"   # the writer's last prompt, in the run directory, so a restart picks it up
+NEXT_TARGET = "next-target.txt"  # the claim the writer named for the next unit, beside it
 HISTORY = 5                       # past decisions the writer sees; the memory holds the rest
 
 
@@ -35,6 +37,7 @@ HISTORY = 5                       # past decisions the writer sees; the memory h
 class WorkerWriterEngine(Engine):
     writer: Writer | None = None
     next_prompt: str | None = None   # the writer's prompt for the next worker; None: the worker picks from the brief
+    next_target: str | None = None   # the claim id the next unit works on; None: the worker picks from the frontier
     writer_failures: int = 0         # writer calls in a row that gave no reply
 
     # -- hooks into the standard engine ------------------------------------
@@ -51,8 +54,13 @@ class WorkerWriterEngine(Engine):
     def _before_loop(self) -> None:
         """Turn 0 on a fresh run; on a continued run, the prompt the last writer left."""
         saved = self.recorder.run_dir / NEXT_PROMPT
-        if saved.exists():
-            self.next_prompt = saved.read_text(encoding="utf-8").strip() or None
+        target = self.recorder.run_dir / NEXT_TARGET
+        if saved.exists() or target.exists():
+            try:
+                self.next_prompt = (saved.read_text(encoding="utf-8").strip() or None) if saved.exists() else None
+                self.next_target = (target.read_text(encoding="utf-8").strip() or None) if target.exists() else None
+            except OSError as exc:
+                self.recorder.log(f"could not read the writer's saved step: {exc!r}")
             self.recorder.log("continuing with the writer's saved prompt")
             return
         if self.iteration > 0:
@@ -78,8 +86,25 @@ class WorkerWriterEngine(Engine):
     def _save_prompt(self) -> None:
         try:
             (self.recorder.run_dir / NEXT_PROMPT).write_text(self.next_prompt or "", encoding="utf-8")
+            (self.recorder.run_dir / NEXT_TARGET).write_text(self.next_target or "", encoding="utf-8")
         except OSError as exc:
             self.recorder.log(f"could not save the writer's prompt: {exc!r}")
+
+    def _target(self, n: int, graph) -> tuple[str | None, str]:
+        """(the target's id, its text for the worker), or (None, "") when the writer named
+        none, or a claim the memory does not hold or has superseded. Never raises."""
+        if not self.next_target or graph is None:
+            return None, ""
+        try:
+            c = target_claim(graph, self.next_target)
+            if c is None:
+                self.recorder.log(f"[{n}] the writer's target `{self.next_target}` is not a live claim; "
+                                  "the worker picks from the frontier")
+                return None, ""
+            return graph.label(c["id"]), target_text(graph, self.next_target)
+        except Exception as exc:
+            self.recorder.log(f"[{n}] target unreadable: {exc!r}")
+            return None, ""
 
     def _graph(self):
         try:
@@ -154,8 +179,9 @@ class WorkerWriterEngine(Engine):
         self._commit_memory("ouroboros #0: seed the memory from the charter")
         self._check(0)
         self.next_prompt = (reply.prompt or None) if reply else None
+        self.next_target = (reply.target or None) if reply else None
         self._save_prompt()
-        self.recorder.step(iteration=0, step="writer", turn=reply.turn if reply else None,
+        self.recorder.step(iteration=0, step="writer", turn=reply.turn if reply else None, target=self.next_target,
                            exit=res.exit_code if res else None, error=((res.error or None) and res.error[:200]) if res else None,
                            folded=folded or None, prompt=bool(self.next_prompt), cost=res.cost_usd if res else 0.0)
         if reply is None:
@@ -175,9 +201,10 @@ class WorkerWriterEngine(Engine):
         except Exception as exc:   # a memory bug costs the brief, not the turn
             self.recorder.log(f"[{n}] brief failed: {exc!r}")
             brief = f"# Brief\n\n(the memory could not be read: {exc!r}; try `ouroboros mem orient`)"
+        target, target_view = self._target(n, self._graph())
         prompt = build_worker_prompt(iteration=n, handoff=handoff, prompt=asked, brief=brief,
                                      notes=self.injected or "", charter_path=self._charter_path(),
-                                     agents=agents_path(self.repo))
+                                     agents=agents_path(self.repo), target=target_view)
         head_before = self.git.head()
         self._status("work", iteration=n)
         self._refresh_limits("worker")
@@ -222,30 +249,35 @@ class WorkerWriterEngine(Engine):
         before, folded_before, fold = self._memory_before(n)
         graph = self._graph()
         try:
-            frontier_text = self.memory.frontier_text(graph) if graph is not None else ""
+            frontier_text = tree_text(graph, mark=target) if graph is not None else ""
         except Exception as exc:
-            self.recorder.log(f"[{n}] frontier unreadable: {exc!r}")
+            self.recorder.log(f"[{n}] claim tree unreadable: {exc!r}")
             frontier_text = ""
         wprompt = build_writer_prompt(
             iteration=n, handoff=handoff, where=self._where(), goal_text=self.goal_text,
             charter_path=self._charter_path(), fold=fold, fix_first=self.check_problem or "",
-            signals=signals.describe(), previous_prompt=asked or "", report=report_for_writer(result.text),
+            signals=signals.describe(), previous_prompt=asked or "", previous_target=target or "", report=report_for_writer(result.text),
             commit=(commit or "")[:10] if changed else "", diff_stat=diff_stat, diff=signals.diff,
-            touched=touched_claims(graph, claimed_ids(result.text), result.text), frontier=frontier_text,
-            history="\n".join(f"- #{h.get('iteration')}: {h.get('verdict')} — {_one_line(h.get('reason'), 200)}; "
-                              f"next: {_one_line(h.get('doing'), 160)}" for h in signals.history),
+            touched=touched_claims(graph, ([target] if target else []) + claimed_ids(result.text), result.text),
+            frontier=frontier_text,
+            history="\n".join(f"- #{h.get('iteration')}: {h.get('verdict')}"
+                              + (f" on `{h['worked_on']}`" if h.get("worked_on") else "")
+                              + f" — {_one_line(h.get('reason'), 200)}; next: {_one_line(h.get('doing'), 160)}"
+                              + (f" (`{h['target']}`)" if h.get("target") else "") for h in signals.history),
         )
         res, reply = self._call_writer(wprompt, n)
         if reply is not None:
             verdict = Verdict(reply.verdict, "", reply.reason, source=f"writer:{_harness_of(self.writer) or 'agent'}",
                               did=reply.did, doing=reply.doing)
             next_prompt = reply.prompt or None
+            next_target = reply.target or None
             self.writer_failures = 0
         else:
             # No reply: the rules judge the turn, and the next worker picks from the brief.
             verdict = RulesCritic().judge(signals)
             verdict.reason = f"rules fallback (the writer gave no reply): {verdict.reason}"
             next_prompt = None
+            next_target = None
             self.writer_failures += 1
 
         if loop is not None:
@@ -264,6 +296,7 @@ class WorkerWriterEngine(Engine):
             verdict.reply = f"{NO_EARLY_EXIT_REPLY.format(n=self.stuck_iterations + 1)}\n\n{verdict.reply}".strip()
         self.injected = verdict.reply or None          # the loop's own words, above the writer's prompt
         self.next_prompt = next_prompt
+        self.next_target = next_target
         self._save_prompt()
 
         # -- the books: one record per iteration, the fold, the check, the commit --
@@ -281,11 +314,12 @@ class WorkerWriterEngine(Engine):
         # `prompt` (not the critic's `reply`) is the writer's next step; `notes` is what the loop adds above it.
         self.recorder.decision(iteration=n, verdict=verdict.verdict, reason=verdict.reason, did=verdict.did,
                                doing=verdict.doing, source=verdict.source, prompt=next_prompt or "",
+                               target=next_target or "", worked_on=target or "",
                                notes=verdict.reply or None)
         self.recorder.step(iteration=n, step="writer", verdict=verdict.verdict, source=verdict.source,
                            turn=reply.turn if reply else None, done=reply.done if reply else None,
                            reason=verdict.reason[:300], recorded=recorded, fold_due=True, folded=folded or None,
-                           prompt=bool(next_prompt), exit=res.exit_code if res else None,
+                           prompt=bool(next_prompt), target=next_target, exit=res.exit_code if res else None,
                            error=((res.error or None) and res.error[:200]) if res else None,
                            cost=res.cost_usd if res else 0.0)
         self._commit_memory(f"ouroboros #{n}: record — {self._last_summary()}")
