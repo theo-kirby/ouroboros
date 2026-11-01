@@ -525,7 +525,7 @@ rules on every Codex call until this landed.
 
 ## 10. Roles
 
-Three roles run every iteration, in this order:
+Three roles run every iteration of the standard loop, in this order (`loop: worker-writer` has two instead, a worker and a writer: section 24):
 
 | Role | Runs | `ouroboros mem` verbs |
 |---|---|---|
@@ -721,6 +721,8 @@ the actor chain names first, by skill name when installed and inline otherwise.
 | `ouroboros-profile` | Internal. The research and development guidance for the actor and the critic, put into their prompts when `profile` is set (section 23). |
 | `ouroboros-publish` | Internal. The publication: the notebook, the paper and product templates, the figure contract and the final pass, put into the scribe's prompt (section 23). |
 | `ouroboros-reporter` | Internal. The digest prompt for the reporter, `ouroboros watch` (section 15). |
+| `ouroboros-worker` | Internal. The fixed parts of the worker's prompt in `loop: worker-writer`: the footer the engine appends to every worker prompt, and what to start from under each `handoff` (section 24). |
+| `ouroboros-writer` | Internal. The writer's role prompt in `loop: worker-writer`: turn 0 seeds the memory, every later turn reviews, records, folds and writes the next prompt; strict JSON reply (section 24). |
 
 Role prompts live as skills, not as Python strings, so you can edit them
 without touching code and so a harness can load them natively.
@@ -733,11 +735,12 @@ without touching code and so a harness can load them natively.
   pid                        # the loop's pid; status and stop read it
   loop.log                   # every step, backoff, harness switch, limit wait
   iterations.jsonl           # one line per step: actor | commit | critique | loop | revert | scribe | check | goal_reload | engine_error
+                             # (loop: worker-writer: worker | commit | writer | loop | check | ...; section 24)
                              # (older runs: reconcile, plan, and `housekeeping` on a commit)
   critic.jsonl               # every decision the critic made for you (verdict, reason, reply, did, doing, fix_first)
                              # (runs from before the merge have overseer.jsonl and an `oversee` step; readers accept both)
   status.json                # state, iteration, harness, usage windows, elapsed, last verdict, limit blocks
-  transcripts/NNNN-<role>[-attempt].json   # raw harness output (+ .stderr); roles: actor, critic, scribe (older runs: housekeeping, maintainer, planner)
+  transcripts/NNNN-<role>[-attempt].json   # raw harness output (+ .stderr); roles: actor, critic, scribe; worker, writer (older runs: housekeeping, maintainer, planner)
   transcripts/NNNN-<role>[-attempt].prompt.txt   # the exact prompt that call was sent (the pool writes it before the call)
   reverted/NNNN.patch        # what a revert threw away
   view/index.html            # the run's live page; live.json, graph.html, summary.txt + story.html (the scribe's notebook) + paper.html (its report), assets/
@@ -774,7 +777,7 @@ checked at its tip: a charter usually opens with boxes already checked, so the
 tip count flatters. cadex's nt3 tip reads 9 of 13 and nt3 closed none of them.
 The delta is measured against the charter at the merge base.
 
-`status.json` states: `starting`, `work`, `critique`, `scribe`, `backoff` (with
+`status.json` states: `starting`, `work`, `critique`, `scribe`, `write` (the worker-writer loop's writer), `backoff` (with
 `why` and `seconds`), `idle`, `refreshed`, `stopped`, `killed`. Older runs also wrote
 `oversee`, `reconcile` and `plan`, and `work` with `housekeeping`.
 
@@ -1058,11 +1061,14 @@ memory_max: null            # systemd only: MemoryMax on the run's unit, e.g. 40
 critic: agent               # agent | rules (rules: the deterministic fallback only, no model call)
 scribe: agent               # agent | rules (rules: the loop writes each record itself, no model call)
 idle_interval: 30m          # sleep after done_accepted under report_done
+handoff: both               # loop: worker-writer only: both | prompt | graph (section 24); refused on the standard loop
 roles:                      # each role: harness, model, timeout, resume_for, fallback
   actor:      { harness: claude, model: null, timeout: 45m, resume_for: 1, fallback: [{ harness: codex }] }
   critic:     { harness: claude, timeout: 10m }
   scribe:     { harness: claude, timeout: 20m, fallback: [{ harness: codex }] }
   reporter:   { harness: claude, timeout: 10m }   # writes the digests; not in the pipeline
+  worker:     { harness: claude, timeout: 45m, fallback: [{ harness: codex }] }   # loop: worker-writer; resume_for must stay 1
+  writer:     { harness: claude, timeout: 20m, fallback: [{ harness: codex }] }   # loop: worker-writer; resume_for must stay 1
 git:
   branch: null              # -> ouroboros/<run>
   tag_on_accept: true
@@ -1085,7 +1091,8 @@ limits:
   max_cooldown: 3h
   transient_strikes: 3      # 429/overloaded errors in a row that count as a limit
   reserve: {}               # harness -> 0..1: stop using it at this much of a long window
-loop:                       # motion-without-progress detection (section 6b)
+loop:                       # which loop, and motion-without-progress detection (section 6b)
+  kind: standard            # standard (actor, critic, scribe) | worker-writer (section 24); `loop: worker-writer` is short for this key
   product_after: 8          # iterations changing only bookkeeping; null turns it off
   frontier_after: 30        # iterations with the frontier digest unmoved
   escalate_every: 5         # iterations past the threshold per rung of the ladder
@@ -1112,6 +1119,12 @@ publication:                # the run's report in the view (section 23)
 A fallback is `{ harness: codex, model: null }`; the chain is the role's own
 harness first, then its fallbacks in order (section 9).
 
+A config the loop cannot run is refused in one line, at load and again in preflight
+(after the flags): an unknown `loop` or `handoff`, a `handoff` other than `both` on
+the standard loop, `critic: rules` or `scribe: rules` on worker-writer (it has
+neither role), and a `resume_for` other than 1 on the worker or the writer. Under
+worker-writer, `--harness` and `--model` set the worker.
+
 CLI flags override config: `--run-name --for --max-iterations --max-cost
 --max-usage --harness --model --allow-dirty --critic --scribe --memory
 --launcher --foreground` (and `--own-session` for tmux).
@@ -1124,6 +1137,7 @@ ouroboros/
   src/ouroboros/
     cli.py                  # init | design | preflight | run | stop | status | top | refresh | watch | report | archive | view | mem | skills install; menu; signals
     engine.py               # the state machine (section 6): step(), retry policy, critique, revert, scribe
+    worker_writer.py        # loop: worker-writer (section 24): turn 0, worker -> commit -> writer -> commit
     config.py               # pydantic models for config.yml (section 16)
     goal.py                 # the charter parser: sections, done criteria → gap names, ladder, policies, template check
     harness/
@@ -1140,6 +1154,7 @@ ouroboros/
     memcli.py               # `ouroboros mem`: the agent's only memory surface
     roles/
       actor.py  critic.py  scribe.py       # prompt assembly, JSON parsing, the rules critic, the scribe call
+      worker.py  writer.py                 # the worker-writer loop's prompts, the worker's report, the writer's reply
     gitguard.py             # branch, commit, tag, diff, revert_to
     budget.py               # BudgetClock, backoff table
     usage.py                # subscription windows: readings, the run's ledger, reserves
@@ -1161,12 +1176,14 @@ ouroboros/
     tui/                    # the status TUI: theme, widgets, layout (from vllmtop), state (run-dir reader), panels, app
     skills/                 # packaged with the wheel; `ouroboros skills install` copies the user skills out
       ouroboros-actor/  ouroboros-orient/  ouroboros-critic/  ouroboros-scribe/  ouroboros-fold/
-      ouroboros-reporter/  ouroboros-design/  ouroboros-launch/  ouroboros-checkup/   (each SKILL.md)
+      ouroboros-reporter/  ouroboros-design/  ouroboros-launch/  ouroboros-checkup/
+      ouroboros-worker/  ouroboros-writer/   (each SKILL.md)
   tests/                    # ~470 tests; fake_harness.py scripts actors, critics and scribes
     test_engine.py test_pool.py test_critic.py test_goal.py
     test_memory_files.py test_memory_governor.py (needs the governor and flywheel CLIs)
     test_claude_parse.py test_drivers_parse.py test_headless.py test_backend_tmux.py (needs tmux)
     test_gitguard.py test_recorder.py test_config.py test_history.py test_operator.py
+    test_worker_writer.py (the second loop)
     test_watch.py test_notify.py (the reporter and its channel) test_view.py (the run's page) test_viewdebug.py (its debug panel) test_activity.py (recorded samples in tests/samples)
   DESIGN.md                 # this file
   README.md  AGENTS.md
@@ -1604,6 +1621,8 @@ schematics. The `figures` section of the skill carries that, Theo's colour palet
 and a plan, draw, overlap-check, look, revise loop; `final_timeout` gives the final
 pass the time for it.
 
+Under `loop: worker-writer` the writer runs the final pass, and there is no per-turn notebook (section 24).
+
 The report pass is a mode of the scribe, like the fold, not a fourth role: the
 three-role rule of section 20 stands. It is the most writing-heavy call in the loop,
 so a paper run should give the scribe a strong model.
@@ -1625,3 +1644,115 @@ every arm's total budget the same. A notebook arm's prompt carries neither, so a
 control stays comparable. The adapter's fixed prompt no longer forbids gathering
 data: what an agent may fetch is the charter's to say, because the new benchmarks
 start agents from a bare question.
+
+## 24. The worker-writer loop (2026-11-01)
+
+A second production loop beside actor-critic-scribe, opt-in by `loop: worker-writer`
+(`worker_writer.py`). `loop: standard` stays the default and is unchanged. The why
+is `docs/worker-writer-loop.md`: Ouroboros exists to make long runs work across
+many fresh context windows, so the memory and the orientation of fresh agents are
+the core, and the role structure should be as small as it can be.
+
+**Two roles, both fresh every call** (no session is ever resumed; `resume_for`
+other than 1 is refused):
+
+| Role | Each turn | `ouroboros mem` verbs |
+|---|---|---|
+| worker | does one unit from the next-step prompt and the brief, commits, ends with a JSON report | `orient`, `show`, `brief` |
+| writer | reviews the worker's turn against the charter, records it, folds, checks, returns the next prompt and a done flag in strict JSON; the only memory writer | the scribe's: `orient`, `show`, `brief`, `record`, `fold`, `check`, `render` |
+
+```
+turn 0   writer   charter -> seed the memory (gaps open, constraints, environment) -> prompt 1
+turn 1   worker   prompt 1 + brief + footer -> orient -> work -> commit -> JSON report
+         writer   prompt 1 + report + diff + touched claims + frontier -> review -> record, fold, check -> prompt 2
+turn 2   worker   ...
+```
+
+One iteration is worker -> commit -> writer -> commit, and the steps it logs are
+`worker` (each attempt), `commit` (with `role: worker`) and `writer` (the verdict,
+`turn`, `done`, `recorded`, `folded`); turn 0 is a `writer` step at iteration 0.
+`status.json` says `loop: worker-writer` and the states are `work` (the worker) and
+`write` (the writer). Transcripts are `NNNN-worker` and `NNNN-writer`, each with its
+`.prompt.txt`. The writer's last prompt is kept in the run directory as
+`next-prompt.md`, so a continued run starts from it and skips turn 0.
+
+**The worker's prompt** is assembled by `roles/worker.py` from the
+`ouroboros-worker` skill, in this order: what the loop itself has to say (`# From
+the loop`: the loop detector's evidence, the exhaustion policy after a done, an
+error to recover from, the no-early-exit rule), the writer's next step (`# Your next
+step`), the brief (`ouroboros mem brief`, section 7a), and a footer the engine
+appends, never the writer: the charter's path (it is never inlined), where AGENTS.md
+is or that there is none, "this prompt is your whole role", the exact read verbs,
+the unit rules, commit your work, and the report shape. `handoff` chooses what comes
+before the footer:
+
+| `handoff` | the worker gets | why |
+|---|---|---|
+| `both` (default) | the next step, then the brief | the orientation lab's arm B: today's cost at 37% fewer prompt tokens |
+| `prompt` | the next step only | everything it needs must be in the prompt |
+| `graph` | the brief only; it picks a frontier item | is a written next step better than the graph? The writer returns an empty prompt and writes `Next:` into the frontier claims instead |
+
+When the writer gave no prompt (it failed, or under `graph`), the brief is always
+there and the worker is told to pick from its frontier.
+
+**The report** is one JSON object: `did`, `files`, `result`, `evidence`, `claims`
+(`[{claim, change}]`), `failed`, `blocked`, `assumed`, `next`. The commit subject is
+its `did`. A report that does not parse reaches the writer verbatim, as a fact about
+the turn.
+
+**The writer** (`roles/writer.py`, the `ouroboros-writer` skill) is handed what the
+orientation study found a fresh reviewer otherwise rebuilds at about 50k tokens: the
+previous prompt, the report, the diff stat and the diff (24k characters, paths in
+its headers), the claims the report names (and any claim id it mentions), whole
+with their negative knowledge, the frontier, the last five decisions, the loop's
+signals, and the charter. It records exactly one record (a failed turn titled
+`Failed: …`), **folds every turn, after recording**, so the next worker orients on a
+memory that already holds this turn (the standard scribe folds first and lags a
+turn), and keeps the two kinds of failure apart in negative knowledge: `ruled out:`
+(do not retry) and `fix and resubmit:` (the approach was right, the execution
+broke), which the brief shows in separate sections. Host facts go in an
+`environment` claim and the charter's constraints, short, in a `constraints` claim,
+which the brief shows apart from results. Its next prompt names the unit and its
+stopping rule, 2-5 files to start from, the expected observation, and what is
+blocked on this host. The call asks the harness for its JSON schema
+(`{turn: ok|failed|stuck, done, reason, did, doing, prompt}`).
+
+**What a turn means to the rest of the loop.** `ok` is `continue`, `failed` is
+`reject` (with nothing reverted: the standard loop's fix-forward case), `stuck` is
+`stuck`, and `done: true` is `done_accepted`. So the stop rules (`on_done_accepted`,
+`max_stuck`), the stuck backoff, the no-early-exit rule, the loop detector and its
+model rotation, the `ok` tags (not on a failed turn), the run page, the TUI and the
+reporter all work unchanged. **Nothing is reverted**: a failed turn stays on the
+branch, recorded as failed, and the next prompt fixes it forward (a revert switch
+may come back).
+
+**Failures.** A worker call goes through the actor's retry policy (limits,
+transients, one plain retry, then the iteration fails and the error rides into the
+next prompt). A writer call is not retried, because it may already have written the
+memory: a call that fails or returns no valid reply is judged by the rules critic,
+the loop writes the record itself when the writer did not, the next worker gets
+the brief and picks from the frontier, and writer failures in a row back off on the
+usual table. Turn 0 failing leaves the first worker the brief. None of it stops the
+loop.
+
+**Publication.** The notebook and the figure ledger are not a per-turn writer job:
+the run page renders the memory graph and the facts, and figures are the worker's
+work when a prompt asks for them. The final report pass when the run stops
+(section 23) is run by the writer, with the scribe's final prompt and time limit,
+as `NNNN-writer-final.json`.
+
+**The open questions of the design, and what was built:**
+
+- *Orientation*: the brief of section 7a, about 1.5-3k tokens and bounded, with the
+  files-to-start-from map the lab's round 1 found missing; the previous prompt is
+  the writer's, never re-sent to the worker.
+- *Turn length*: one bounded unit per worker turn, as in the standard loop.
+- *Done*: the writer's flag alone, no second opinion. The engine's no-early-exit
+  rule, the exhaustion policy and `stop.on_done_accepted` apply as in the standard
+  loop, so a wrong done costs a policy nudge, not the run.
+- *AGENTS.md*: "two loops, one memory writer either way".
+- *Config spelling*: `loop` already held the loop detector's settings, so the loop's
+  kind is `loop.kind`, and `loop: worker-writer` is short for `loop: {kind:
+  worker-writer}`; detector settings sit beside `kind`.
+- *The writer's tools*: full tools like the scribe (it writes the memory and may run
+  a quick check); the skill forbids editing anything else, and it never runs git.

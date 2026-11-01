@@ -300,7 +300,8 @@ def _seed_brief(store):
     """Two records and four claims: a result with a number, two frontier items, the host."""
     body = BODY.replace("x\n", "changed `src/sim.py` and `tests/test_sim.py`\n", 1)
     store.record(title="Measured the kernel", body=body, parent="root", impacts=[],
-                 news=[("gap-fast", "1.9 s"), ("gap-exact", "open"), ("decoder", "open"), ("environment", "facts")], none=None)
+                 news=[("gap-fast", "1.9 s"), ("gap-exact", "open"), ("decoder", "open"), ("environment", "facts"),
+                       ("constraints", "the charter's")], none=None)
     store.record(title="Failed: the decoder change broke two tests", body=BODY, parent="r-0001", impacts=[], news=[],
                  none="a failed unit")
     ok, msg = store.fold({"claims": [
@@ -314,6 +315,8 @@ def _seed_brief(store):
          "current": "- two tests fail [rec: r-0002]", "cites": ["r-0002"]},
         {"new": "environment", "parent": "root", "title": "This host", "status": "working",
          "current": "- no network in the shell [rec: r-0001]\n- Python 3.12, 4 GB cap [rec: r-0001]", "cites": ["r-0001"]},
+        {"new": "constraints", "parent": "root", "title": "Constraints", "status": "working",
+         "current": "- keep the tests green [rec: r-0001]", "cites": ["r-0001"]},
     ], "folded": ["r-0001", "r-0002"]})
     assert ok, msg
 
@@ -323,7 +326,9 @@ def test_the_brief_keeps_ruled_out_apart_from_fix_and_resubmit(store):
     text = store.brief(goal_text=GOAL, goal_path=".ouroboros/goal.md")
     sections = {s.split("\n", 1)[0]: s for s in text.split("\n## ")}
     assert "ship it." in sections["Goal"] and "`.ouroboros/goal.md`" in sections["Goal"]
-    assert "1.9 s" in sections["Best results so far"] and "This host" not in sections["Best results so far"]
+    best = sections["Best results so far"]
+    assert "1.9 s" in best and "This host" not in best and "Constraints" not in best
+    assert "keep the tests green" in sections["Constraints (short; the charter has them whole)"]
     frontier = sections["Frontier (open, broken, blocked)"]
     assert frontier.index("[broken]") < frontier.index("[open]"), "broken before open, as governor ranks it"
     assert "Next: diff the checksums" in frontier

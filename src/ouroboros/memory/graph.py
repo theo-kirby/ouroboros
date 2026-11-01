@@ -230,6 +230,8 @@ BRIEF_FIX = 5
 BRIEF_ENV = 5
 BRIEF_FILES = 6
 ENVIRONMENT_CLAIM = "environment"   # the claim the writer keeps host facts in
+CONSTRAINTS_CLAIM = "constraints"   # the charter's constraints, short, as the writer seeds them
+BRIEF_CONSTRAINTS = 5
 
 # Negative knowledge bullets the writer tags, so "do not retry" and "fix and resubmit"
 # never mean the same thing; an untagged bullet counts as ruled out only when it says so.
@@ -289,7 +291,11 @@ def brief_text(g: Graph, *, goal_text: str, goal_path: str, max_chars: int = BRI
         return "\n".join(out) + "\n"
     claims = g.claims("state")
     env_claim = next((c for c in claims if c.get("slug") == ENVIRONMENT_CLAIM), None)
-    work = [c for c in claims if c is not env_claim]
+    rules = next((c for c in claims if c.get("slug") == CONSTRAINTS_CLAIM), None)
+    work = [c for c in claims if c is not env_claim and c is not rules]
+    if rules is not None:
+        kept = [f"- {_clip(x, 200)}" for x in _bullets(section(rules.get("content", ""), "Current"))[:BRIEF_CONSTRAINTS]]
+        out += ["## Constraints (short; the charter has them whole)", "", *(kept or ["- (none recorded)"]), ""]
 
     # the best results: criteria first, then the newest claims, each by its newest number
     working = [c for c in work if c.get("status") == "working"]

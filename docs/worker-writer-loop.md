@@ -1,9 +1,11 @@
 # The worker-writer loop (design, 2026-11-01)
 
-Status: agreed with Theo, not built. A second production loop beside
-actor-critic-scribe, chosen by config, for day-to-day use and comparison. This
-file records the structure, the decisions and why we made them. When it is
-built, the matching DESIGN.md sections take over and this file points to them.
+Status: **built** (2026-11-01, branch `feat/worker-writer-loop`). DESIGN.md
+section 24 is now the description of the loop as built, including what was chosen
+for each open question below; section 7a has `ouroboros mem brief`, and section 16
+the config. This file keeps the structure, the decisions and why we made them.
+A second production loop beside actor-critic-scribe, chosen by config, for
+day-to-day use and comparison.
 
 ## Why a second loop
 

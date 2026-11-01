@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 _DUR = re.compile(r"(\d+(?:\.\d+)?)\s*([smhd]?)")
 _UNIT = {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}
@@ -33,6 +33,10 @@ def parse_duration(value: str | int | float | None) -> float | None:
     if pos != len(text):
         raise ValueError(f"bad duration: {value!r}")
     return total
+
+
+class ConfigError(ValueError):
+    """A config the loop cannot run, said in one line for the terminal."""
 
 
 class FallbackConfig(BaseModel):
@@ -114,8 +118,16 @@ class GraphConfig(BaseModel):
     budget_units: int = 1      # dispatch budget per iteration
 
 
+LOOPS = ("standard", "worker-writer")
+HANDOFFS = ("both", "prompt", "graph")
+
+
 class LoopConfig(BaseModel):
-    """Motion-without-progress detection (see loops.py).
+    """Which loop runs, and its motion-without-progress detection (see loops.py).
+
+    `kind` picks the loop: `standard` (actor, critic, scribe; the default) or
+    `worker-writer` (DESIGN.md section 24). `loop: worker-writer` in a config is
+    short for `loop: {kind: worker-writer}`; the detector's keys sit beside `kind`.
 
     Thresholds are counted in iterations and are deliberately generous: a real
     loop is sustained, and a signal that fires on a slow afternoon is a signal
@@ -124,6 +136,7 @@ class LoopConfig(BaseModel):
     of, not a thing to die of.
     """
 
+    kind: Literal["standard", "worker-writer"] = "standard"
     product_after: int | None = 8     # iterations changing only bookkeeping
     frontier_after: int | None = 30   # iterations with the frontier unmoved
     escalate_every: int = 5           # iterations past the threshold per escalation step
@@ -217,6 +230,9 @@ class Config(BaseModel):
     critic: str = "agent"  # agent | rules
     scribe: str = "agent"  # agent | rules
     idle_interval: str = "30m"  # sleep between iterations after done_accepted under report_done
+    # worker-writer only: what the worker starts from. both: the writer's prompt and the
+    # memory's brief; prompt: the prompt alone; graph: the brief alone, the worker picks.
+    handoff: Literal["both", "prompt", "graph"] = "both"
     roles: dict[str, RoleConfig] = Field(
         default_factory=lambda: {
             # Codex carries the actor while Claude is limited (cadex nt2: 54 of 68 turns).
@@ -240,6 +256,42 @@ class Config(BaseModel):
     def _old_memory_names(cls, value):
         return "files" if value == "handoff" else value
 
+    @field_validator("loop", mode="before")
+    @classmethod
+    def _loop_by_name(cls, value):
+        """`loop: worker-writer` is short for `loop: {kind: worker-writer}`."""
+        if isinstance(value, str):
+            if value not in LOOPS:
+                raise ValueError(f"loop: {value!r} is not a loop; one of {', '.join(LOOPS)}")
+            return {"kind": value}
+        return value
+
+    @model_validator(mode="after")
+    def _coherent(self) -> "Config":
+        problem = self.problem()
+        if problem:
+            raise ValueError(problem)
+        return self
+
+    def problem(self) -> str | None:
+        """A combination the loop cannot run, in one sentence; None when the config holds together.
+
+        Also called by preflight, after command-line flags have changed the config."""
+        if self.loop.kind == "standard":
+            if self.handoff != "both":
+                return (f"handoff: {self.handoff} applies only to loop: worker-writer "
+                        "(the standard loop's actor always gets the critic's reply and the memory)")
+            return None
+        for key in ("critic", "scribe"):
+            if getattr(self, key) != "agent":
+                return (f"{key}: {getattr(self, key)} does not apply to loop: worker-writer, which has no {key} "
+                        "(its writer reviews and keeps the memory); remove the key")
+        for name in ("worker", "writer"):
+            if self.role(name).resume_for != 1:
+                return (f"roles.{name}.resume_for: {self.role(name).resume_for}: the worker and the writer start "
+                        "fresh every turn in loop: worker-writer; remove resume_for")
+        return None
+
     @property
     def branch(self) -> str:
         return self.git.branch or f"ouroboros/{self.run}"
@@ -251,20 +303,43 @@ class Config(BaseModel):
         return PROFILE_TEMPLATE[self.profile] if t == "auto" else t
 
     def role(self, name: str) -> RoleConfig:
-        return self.roles.get(name) or RoleConfig()
+        return self.roles.get(name) or (ROLE_DEFAULTS[name]() if name in ROLE_DEFAULTS else RoleConfig())
+
+    @property
+    def worker_writer(self) -> bool:
+        return self.loop.kind == "worker-writer"
+
+    @property
+    def primary_role(self) -> str:
+        """The role that does the work: `--harness` and `--model` set its chain."""
+        return "worker" if self.worker_writer else "actor"
 
     @property
     def active_roles(self) -> list[str]:
         """The roles the loop calls a model for, in pipeline order (a `rules` role calls none)."""
+        if self.worker_writer:
+            return ["worker", "writer"]
         return ["actor"] + [r for r in ("critic", "scribe") if getattr(self, r) == "agent"]
 
     @classmethod
     def load(cls, path: Path) -> "Config":
         data = yaml.safe_load(path.read_text()) or {}
-        return cls.model_validate(data)
+        try:
+            return cls.model_validate(data)
+        except ValidationError as exc:
+            raise ConfigError(f"{path}: " + "; ".join(
+                f"{'.'.join(str(x) for x in e['loc']) + ': ' if e['loc'] else ''}{e['msg'].removeprefix('Value error, ')}"
+                for e in exc.errors())) from None
 
     def dump(self) -> str:
         return yaml.safe_dump(self.model_dump(mode="json"), sort_keys=False)
 
+
+# The worker-writer loop's roles, when the config names none: the worker as the
+# actor (codex covers a limit), the writer as the scribe's time limit.
+ROLE_DEFAULTS = {
+    "worker": lambda: RoleConfig(fallback=[FallbackConfig(harness="codex")]),
+    "writer": lambda: RoleConfig(timeout="20m", fallback=[FallbackConfig(harness="codex")]),
+}
 
 DEFAULT_CONFIG_PATH = Path(".ouroboros/config.yml")

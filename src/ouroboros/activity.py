@@ -23,7 +23,8 @@ WAIT_TOOLS = {"Monitor", "ScheduleWakeup"}
 SHELL_TOOLS = {"Bash"}
 _WAIT_CMD = re.compile(r"^\s*(sleep|until|while|wait)\b")
 _SHELL_WRAP = re.compile(r"^/bin/(?:zsh|bash|sh) -lc ['\"]?")
-ROLE_OF_STATE = {"work": "actor", "critique": "critic", "scribe": "scribe"}
+# The roles a state can be running: `work` is the actor, or the worker-writer loop's worker.
+ROLE_OF_STATE = {"work": ("actor", "worker"), "critique": ("critic",), "scribe": ("scribe",), "write": ("writer",)}
 
 
 def _one(text, limit: int = 160) -> str:
@@ -111,10 +112,10 @@ def tail_lines(path: Path, size: int = TAIL_BYTES) -> list[str]:
 def live(run_dir: Path, iteration: int, state: str) -> dict | None:
     """The activity of the call that runs now: the newest transcript of this iteration's role. Never raises."""
     try:
-        role = ROLE_OF_STATE.get(state)
-        if not role:
+        roles = ROLE_OF_STATE.get(state)
+        if not roles:
             return None
-        paths = list((Path(run_dir) / "transcripts").glob(f"{int(iteration):04d}-{role}*.json"))
+        paths = [p for role in roles for p in (Path(run_dir) / "transcripts").glob(f"{int(iteration):04d}-{role}*.json")]
         if not paths:
             return {"kind": "thinking", "what": "", "tool": None, "id": None, "background": 0}
         return current(tail_lines(max(paths, key=lambda p: p.stat().st_mtime)))

@@ -155,6 +155,11 @@ class Engine:
                 self.git.commit(f"ouroboros: start run {self.config.run}")
         except Exception as exc:
             self.recorder.log(f"memory start failed: {exc!r} (continuing)")
+        try:
+            self._before_loop()
+        except Exception as exc:  # the first turn's setup must not stop the loop either
+            self.recorder.log(f"before the loop: {exc!r}\n{traceback.format_exc()}")
+            self.recorder.step(iteration=self.iteration, step="engine_error", error=repr(exc))
         reason: str | None = None
         while reason is None:
             try:
@@ -172,6 +177,17 @@ class Engine:
         self._publish_final(reason)
         self._status("stopped", stop_reason=reason)
         return reason
+
+    def _before_loop(self) -> None:
+        """Anything a loop does once before its first iteration. The standard loop does nothing."""
+
+    def _role_pools(self) -> list:
+        """The harness pools of the roles beside the one doing the work."""
+        return [h for h in (getattr(self.critic, "harness", None), getattr(self.scribe, "harness", None)) if h is not None]
+
+    def _final_role(self):
+        """(runner, role name) for the report pass when the run stops; runner None skips it."""
+        return self.scribe, "scribe"
 
     # ------------------------------------------------------------------
     def step(self) -> IterationOutcome:
@@ -418,10 +434,11 @@ class Engine:
 
     def _publish_final(self, reason: str) -> None:
         """The report, after the loop has stopped. One bounded scribe call; never raises."""
-        if self.scribe is None or not publication.final_due(self.config, reason):
+        runner, role = self._final_role()
+        if runner is None or not publication.final_due(self.config, reason):
             return
         try:
-            self._status("scribe", iteration=self.iteration, publishing="final")
+            self._status("write" if role == "writer" else "scribe", iteration=self.iteration, publishing="final")
             vd = view.view_dir(self.recorder.run_dir)
             prompt = publication.final_prompt(
                 self.config, reason=reason, goal_text=self.goal_text,
@@ -431,12 +448,12 @@ class Engine:
                 assets_dir=self._rel(view.assets_dir(self.recorder.run_dir)),
                 summary_path=self._rel(view.summary_path(self.recorder.run_dir)),
             )
-            self._refresh_limits("scribe")
-            with role_env("scribe"), self._heartbeat():
-                res = self.scribe.run(prompt, self.iteration, "final",
-                                      timeout=self.config.publication.final_timeout_seconds)
+            self._refresh_limits(role)
+            with role_env(role), self._heartbeat():
+                res = runner.run(prompt, self.iteration, "final",
+                                 timeout=self.config.publication.final_timeout_seconds)
             self.budget.add(cost=res.cost_usd, usage=res.usage, harness=res.extra.get("harness"))
-            self.budget.count(res, "scribe", _harness_of(self.scribe))
+            self.budget.count(res, role, _harness_of(runner))
             self.recorder.step(iteration=self.iteration, step="publish_final", exit=res.exit_code,
                                error=(res.error or None) and res.error[:200], cost=res.cost_usd)
             self.git.commit(f"ouroboros: publication — final ({reason[:60]})", allow_empty=False)
@@ -506,7 +523,7 @@ class Engine:
                 return False
             request.unlink()
             self.recorder.log("manual refresh: checking current harness accounts")
-            pools = [self.harness, getattr(self.critic, "harness", None), getattr(self.scribe, "harness", None)]
+            pools = [self.harness, *self._role_pools()]
             boards = {}
             for pool in pools:
                 board = getattr(pool, "board", None)
@@ -525,7 +542,7 @@ class Engine:
 
     def _refresh_limits(self, role: str) -> None:
         """Refresh once per actor/agent-critic handoff, never per retry."""
-        others = [h for h in (getattr(self.critic, "harness", None), getattr(self.scribe, "harness", None)) if h is not None]
+        others = self._role_pools()
         if not others:
             return
         previous, self.last_primary_role = self.last_primary_role, role
@@ -589,18 +606,22 @@ class Engine:
         board.block(name, why=f"loop escalation: {why}"[:120])
         self.recorder.log(f"loop: actor harness {name} rotated out ({why})")
 
-    def _call_actor(self, prompt: str, timeout: float, model: str | None) -> Result:
-        """Call the harness. Retry on retriable errors with backoff, forever. One retry on other errors."""
-        role = self.config.role("actor")
+    def _call_actor(self, prompt: str, timeout: float, model: str | None, name: str = "actor") -> Result:
+        """Call the harness. Retry on retriable errors with backoff, forever. One retry on other errors.
+
+        `name` is the role doing the work: the actor, or the worker of the worker-writer
+        loop, which never resumes a session."""
+        role = self.config.role(name)
         n = self.iteration
-        transcript = "actor"
-        resume = self.session_id if (role.resume_for > 1 and 0 < self.session_uses < role.resume_for) else None
+        transcript = name
+        resume = (self.session_id if (name == "actor" and role.resume_for > 1 and 0 < self.session_uses < role.resume_for)
+                  else None)
         retriable_attempts = 0
         plain_attempts = 0
         while True:
             attempt = retriable_attempts + plain_attempts
             try:
-                with role_env("actor"), self._heartbeat():
+                with role_env(name), self._heartbeat():
                     result = self.harness.run(
                         prompt, cwd=self.repo, timeout=timeout, resume=resume, model=model,
                         log_path=self.recorder.transcript_path(n, transcript, attempt),
@@ -608,8 +629,8 @@ class Engine:
             except Exception as exc:
                 result = Result(exit_code=-1, error=f"harness raised {exc!r}")
             self.budget.usage.record(result.usage)
-            self.budget.count(result, "actor", self.harness.name)
-            self.recorder.step(iteration=n, step="actor", attempt=attempt, exit=result.exit_code, timed_out=result.timed_out, error=(result.error or None) and result.error[:200], session=result.session_id, turns=result.turns)
+            self.budget.count(result, name, self.harness.name)
+            self.recorder.step(iteration=n, step=name, attempt=attempt, exit=result.exit_code, timed_out=result.timed_out, error=(result.error or None) and result.error[:200], session=result.session_id, turns=result.turns)
             if result.ok or result.timed_out:
                 self.recorder.clear_needs_human()
                 break

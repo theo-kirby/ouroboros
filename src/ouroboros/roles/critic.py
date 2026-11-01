@@ -83,6 +83,10 @@ NO_REPORT_REPLY = (
     "report: `## What`, `## Why`, `## Method`, `## Result`, `## Claims`. The scribe records "
     "the unit from it."
 )
+NO_JSON_REPORT_REPLY = (
+    "The previous turn ended without its report. End every turn with the JSON report "
+    "the footer of your prompt asks for: the writer records the turn from it."
+)
 _REPORT = re.compile(r"^## What\s*$", re.MULTILINE)
 
 _QUESTION = re.compile(
@@ -112,6 +116,14 @@ class Signals:
     loop: str = ""       # the loop detector's three counters (loops.py)
     loop_fired: str = ""  # the signal that has crossed its threshold, if any
     check: str = ""      # the memory checker's complaint after the last scribe, if any
+    # The worker-writer loop's worker reports in JSON, not under `## What`: it says
+    # whether the report is missing itself, and who wrote the message.
+    report_missing: bool | None = None
+    who: str = "actor"
+
+    @property
+    def no_report(self) -> bool:
+        return (not _REPORT.search(self.text or "")) if self.report_missing is None else self.report_missing
 
     def describe(self) -> str:
         lines = [
@@ -119,8 +131,8 @@ class Signals:
             f"- iterations in a row with no changes: {self.no_change_streak}",
             f"- identical errors in a row: {self.error_streak}",
         ]
-        if not _REPORT.search(self.text or "") and self.changed:
-            lines.append("- the actor's message has no `## What` report")
+        if self.no_report and self.changed:
+            lines.append(f"- the {self.who}'s message has no {'`## What` ' if self.report_missing is None else ''}report")
         if self.check:
             lines.append(f"- the memory check fails (the scribe fixes it next): {self.check[:300]}")
         if self.loop:
@@ -182,8 +194,8 @@ class RulesCritic:
             return Verdict("done_rejected", DONE_REPLY, "actor claimed done; rules never accept")
         if _QUESTION.search(tail):
             return Verdict("answer", RULES_REPLY, "actor ended with a question")
-        if s.changed and not _REPORT.search(s.text or ""):
-            return Verdict("continue", NO_REPORT_REPLY, "no report")
+        if s.changed and s.no_report:
+            return Verdict("continue", NO_REPORT_REPLY if s.report_missing is None else NO_JSON_REPORT_REPLY, "no report")
         return Verdict("continue", "", "ok")
 
 
