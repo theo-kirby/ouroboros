@@ -1887,7 +1887,7 @@ graph", a finding's diagram or its "Show in the graph" posts `governor:focus` wi
 those node ids to the embed, which fades the rest; a node clicked in the graph posts
 `governor:pick` back and the page marks the iterations that wrote or changed it.
 That channel is new in Governor's report embed (governor `feat/report-focus`,
-vendored at governor `10cb417`); the embed takes no
+vendored from governor `main` (now `2dd8fb6`, which also carries its hub styles)); the embed takes no
 other message. The graph keeps its own top-level section so a live refresh never
 reloads its frame; the timeline follows it as `#timeline`, unnumbered.
 
