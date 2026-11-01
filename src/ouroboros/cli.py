@@ -322,6 +322,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"ouroboros: {exc}", file=sys.stderr)
         return 2
     os.environ[MEMORY_ENV] = memory.name   # the harnesses' `ouroboros mem` acts on this run's store
+    from .figstyle import ASSETS_ENV
+    os.environ[ASSETS_ENV] = str(runview.assets_dir(run_dir_for(repo, cfg.run)))   # `ouroboros plot`/`shot` write here
     goal_path = repo / cfg.goal
     goal_text = goal_path.read_text() if goal_path.exists() else ""
     if not goal_text.strip():
@@ -1123,7 +1125,49 @@ def build_parser() -> argparse.ArgumentParser:
 
     memcli.add_parser(sub)
     sub.choices["mem"].set_defaults(fn=cmd_mem)
+
+    pl = sub.add_parser("plot", help="run a figure script with matplotlib, seaborn and pandas in the house palette "
+                                     "(`from ouroboros.figstyle import save`); figures land in the run's assets")
+    pl.add_argument("script", help="a Python file, or - for stdin")
+    pl.add_argument("args", nargs=argparse.REMAINDER, help="passed to the script")
+    pl.set_defaults(fn=cmd_plot)
+    sh = sub.add_parser("shot", help="screenshot a URL or a local HTML/SVG file with headless Chromium")
+    sh.add_argument("target", help="a URL, or a path to a local file")
+    sh.add_argument("out", help="the PNG to write; a bare name goes to the run's assets")
+    sh.add_argument("--size", default="1280x800", help="WIDTHxHEIGHT (default 1280x800)")
+    sh.add_argument("--wait", type=int, default=1500, help="milliseconds to let the page settle")
+    sh.set_defaults(fn=cmd_shot)
     return p
+
+
+def _assets_for_cli() -> Path:
+    """Where `plot` and `shot` write: the running loop's assets folder, else this repo's run's, else ./assets."""
+    from .figstyle import ASSETS_ENV
+    if os.environ.get(ASSETS_ENV):
+        return Path(os.environ[ASSETS_ENV])
+    try:
+        repo = repo_root()
+        cfg = load_config(argparse.Namespace(config=None, run=None, memory=None), repo)
+        return runview.assets_dir(run_dir_for(repo, cfg.run))
+    except Exception:
+        return Path("assets")
+
+
+def cmd_plot(args: argparse.Namespace) -> int:
+    from . import figures
+    return figures.run_plot(args.script, list(args.args or []), _assets_for_cli())
+
+
+def cmd_shot(args: argparse.Namespace) -> int:
+    from . import figures
+    out = Path(args.out)
+    if not out.is_absolute() and out.parent == Path("."):
+        out = _assets_for_cli() / out   # a bare name goes to the run's assets
+    if out.suffix.lower() != ".png":
+        out = out.with_suffix(".png")
+    ok, message = figures.screenshot(args.target, out, size=args.size, wait_ms=args.wait)
+    print(message, file=sys.stdout if ok else sys.stderr)
+    return 0 if ok else 2
 
 
 def cmd_mem(args: argparse.Namespace) -> int:

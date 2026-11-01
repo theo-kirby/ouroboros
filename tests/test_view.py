@@ -261,10 +261,10 @@ def test_each_finding_folds_under_its_heading(run_dir, repo):
     assert "<p>lead</p>" in html and "<section><p>no heading</p></section>" in html
 
 
-def test_the_memory_graph_comes_before_the_findings(run_dir, repo, graph):
+def test_findings_come_before_the_memory_graph_and_its_timeline(run_dir, repo, graph):
     view.render(run_dir, repo, goal_text=GOAL, graph=graph)
     html = page(run_dir)
-    assert html.index('id="h-graph"') < html.index('id="h-story"') < html.index('id="h-progress"')
+    assert html.index('id="h-story"') < html.index('id="h-graph"') < html.index('id="timeline"')
 
 
 def test_the_summary_is_the_scribes_else_the_mission(run_dir, repo):

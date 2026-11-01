@@ -8,6 +8,11 @@ license = "MIT"
 dependencies = [
     "pydantic>=2.7",
     "pyyaml>=6.0",
+    # figures for every run, whatever the target project is written in (`ouroboros plot`)
+    "matplotlib>=3.8",
+    "seaborn>=0.13",
+    "pandas>=2.2",
+    "numpy>=1.26",
 ]
 
 [project.scripts]

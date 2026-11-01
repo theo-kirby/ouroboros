@@ -45,7 +45,8 @@ See `DESIGN.md` section 17. Short form: `cli.py` (commands, signals),
 `engine.py` (the state machine), `config.py`, `goal.py` (charter parser),
 `harness/` (drivers, pool, backends), `memory/` (graph.py, the model and loop logic; governor.py and files.py, the two stores), `memcli.py` (`ouroboros mem`),
 `worker_writer.py` (the worker-writer loop), `roles/` (prompt assembly and JSON parsing), `gitguard.py`, `budget.py`,
-`recorder.py`, `loops.py` (the loop detector), `launch.py` and `tmux.py` (where `run` puts
+`recorder.py`, `loops.py` (the loop detector), `findings.py` (the writer's findings ledger),
+`figstyle.py` and `figures.py` (`ouroboros plot` and `shot`, the house palette), `launch.py` and `tmux.py` (where `run` puts
 the loop), `watch.py` and `notify.py` (the reporter), `view.py` (the run page),
 `history.py` (digests and RUNS.md), `tui/`, `skills/`.
 

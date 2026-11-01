@@ -39,6 +39,7 @@ from urllib.parse import unquote, urlsplit
 
 from . import goal as charter
 from . import criteria as progress
+from . import findings as findings_mod
 from .memory.graph import FRONTIER_STATUSES, Graph, first_line, one_line, section
 
 VIEW = "view"
@@ -364,13 +365,14 @@ def _header(status: dict, run_name: str, goal_text: str) -> str:
             + (f'<p class="meta">{meta}</p>' if meta else "") + "".join(notes))
 
 
-def _summary(run_dir: Path, goal_text: str) -> str:
-    """The scribe's plain-language summary (view/summary.txt), else the charter's mission."""
+def _summary(run_dir: Path, goal_text: str, ww: bool = False) -> str:
+    """The plain-language summary (view/summary.txt, the scribe's or the writer's), else the charter's mission."""
     text = _read_text(summary_path(run_dir), 8000).strip()
     source = ""
     if not text:
         text = charter.mission(goal_text or "").strip()
-        source = '<p class="src">From the charter\'s mission. The scribe writes a summary after its first iteration.</p>'
+        source = (f'<p class="src">From the charter\'s mission. The {"writer" if ww else "scribe"} writes a summary '
+                  'after its first iteration.</p>')
     if not text:
         return ""
     paras = [one_line(p) for p in re.split(r"\n\s*\n", text) if p.strip()][:4]
@@ -860,7 +862,7 @@ def _progress(its: list[dict], status: dict) -> str:
         d = it.get("decision") or {}
         if d.get("did") or d.get("reason"):
             tip += " — " + _clip(str(d.get("did") or d.get("reason")), 160)
-        g.append(f'<a href="#it-{it["n"]}"><g class="col"><title>{_e(_plain(tip))}</title>')
+        g.append(f'<a href="#it-{it["n"]}" data-focus="it:{it["n"]}"><g class="col" data-it="{it["n"]}"><title>{_e(_plain(tip))}</title>')
         for key, cls in (("actor_s", "s-actor"), ("critic_s", "s-critic"), ("scribe_s", "s-scribe")):
             h = (it.get(key) or 0) * scale
             if h > 0:
@@ -907,7 +909,9 @@ def _progress(its: list[dict], status: dict) -> str:
             ("Writer" if "prompt" in d else "Critic", _md(_clip(str(why), 600))),
             ("Next", _md(_clip(str(d.get("doing") or ""), 400))),
             ("Next prompt", _md(_clip(str(d.get("prompt") or ""), 600))),   # the worker-writer loop's
-            ("Record", rec.strip())) if x)
+            ("Record", rec.strip()),
+            ("Graph", f'<button type="button" class="focus-btn" data-focus="it:{it["n"]}">Show in the graph</button>'
+                      if recs else "")) if x)
         rows.append(
             f'<li><details class="it" id="it-{it["n"]}"><summary><span class="num n">{it["n"]}</span>'
             f'{_chip("running", "on") if running else _chip(VERDICT_WORD.get(v, v), VERDICT_CLASS.get(v, "")) if v else _chip("–", "mute")}'
@@ -1106,7 +1110,8 @@ def _graph(graph: Graph | None, version: str | None, omitted: int = 0) -> str:
         ("record", "record of an iteration")))
     return (f'<figure class="graphfig"><iframe class="graph" data-src="{GRAPH_PAGE}?v={version}" title="The run\'s memory graph"'
             ' loading="lazy"></iframe>'
-            f'<figcaption><span class="legend">{swatch}</span>'
+            f'<figcaption><p class="focus-note" hidden><span></span> <button type="button" class="focus-clear">Show everything</button></p>'
+            f'<span class="legend">{swatch}</span>'
             '<div class="graph-tools" hidden><button type="button" data-key="f">Fit graph</button>'
             '<button type="button" data-key="n" aria-pressed="false">Show names</button>'
             '<details><summary>Node titles</summary><ul></ul></details></div>'
@@ -1147,9 +1152,208 @@ def _findings(text: str) -> str:
     return "".join(out) + text[at:]
 
 
-def _story(run_dir: Path) -> str:
+# -- the findings: what the run knows, each tied to the graph (findings.py) ------
+
+FINDING_STATUS = {"holds": ("holds", "ok"), "revised": ("revised", "warn"), "retracted": ("retracted", "bad")}
+_FENCE = re.compile(r"^```[^\n]*\n(.*?)^```\s*$", re.S | re.M)
+
+
+def _md_block(text: str) -> str:
+    """Notes as HTML: paragraphs, `- ` lists, ``` code blocks, and inline markdown (`_md`)."""
+    out, kept = [], []
+
+    def fence(m):
+        kept.append(f"<pre><code>{_e(m.group(1).rstrip())}</code></pre>")
+        return f"\n\n\x01{len(kept) - 1}\x01\n\n"
+    text = _FENCE.sub(fence, str(text or "").replace("\x01", ""))
+    for block in re.split(r"\n\s*\n", text.strip()):
+        block = block.strip()
+        if not block:
+            continue
+        m = re.fullmatch("\x01(\\d+)\x01", block)
+        if m:
+            out.append(kept[int(m.group(1))])
+            continue
+        lines = block.splitlines()
+        if all(re.match(r"^\s*[-*] ", x) for x in lines):
+            out.append("<ul>" + "".join(f"<li>{_md(re.sub(r'^\s*[-*] ', '', x))}</li>" for x in lines) + "</ul>")
+        elif re.match(r"^#{1,4} ", lines[0]):
+            out.append(f"<h4>{_md(lines[0].lstrip('#').strip())}</h4>"
+                       + (f"<p>{_md(' '.join(lines[1:]))}</p>" if lines[1:] else ""))
+        else:
+            out.append(f"<p>{_md(' '.join(x.strip() for x in lines))}</p>")
+    return "".join(out)
+
+
+def _record_iterations(its: list[dict]) -> dict[str, int]:
+    """Record node id -> the iteration that wrote it; 0 for what the writer's turn 0 wrote
+    (a record of the first iteration made before its worker committed)."""
+    out: dict[str, int] = {}
+    for it in its:
+        commit = it["ts"].get("commit")
+        for r in it.get("records") or []:
+            at = _epoch(r.get("at"))
+            out[r["id"]] = 0 if it is its[0] and commit is not None and at is not None and at < commit else it["n"]
+    return out
+
+
+def _impacts(graph: Graph) -> set[tuple[str, str]]:
+    """(record id, claim id) for every impact a record declared."""
+    out = set()
+    for e in graph.edges:
+        src, tgt = graph.nodes.get(e.get("source", "")), graph.nodes.get(e.get("target", ""))
+        if src and tgt and src.get("kind") == "record" and tgt.get("kind") == "state":
+            out.add((src["id"], tgt["id"]))
+    return out
+
+
+def _evidence_svg(graph: Graph, claims: list[dict], records: list[dict], rec_it: dict[str, int], key: str) -> str:
+    """One finding's part of the graph: its claims as rows (the tree indented), the records
+    that carry them as columns in the order they were written, a dot where a record changed
+    a claim (a ring where the claim only cites it), and the records' lineage on top."""
+    if not claims:
+        return ""
+    ids = {c["id"] for c in claims}
+    order: list[tuple[dict, int]] = []
+
+    def walk(c: dict, depth: int) -> None:
+        order.append((c, depth))
+        for k in sorted((n for n in claims if c["id"] in (n.get("parents") or []) and n["id"] != c["id"]),
+                        key=lambda n: n.get("seq", 0)):
+            if all(k is not x for x, _ in order):
+                walk(k, depth + 1)
+    for c in claims:
+        if not any(p in ids for p in c.get("parents") or []):
+            walk(c, 0)
+    for c in claims:   # anything a cycle or an odd parent left out
+        if all(c is not x for x, _ in order):
+            order.append((c, 0))
+    impacts = _impacts(graph)
+    cites = {(r["id"], c["id"]) for c in claims for r in graph.cites(c)}
+    LW, CW, RH, TOP = 300, 30, 26, 52
+    W, H = LW + CW * max(len(records), 1) + 16, TOP + RH * len(order) + 30
+    col = {r["id"]: LW + CW * i + CW / 2 for i, r in enumerate(records)}
+    g = [f'<svg class="ev" viewBox="0 0 {W} {H}" style="max-width:{W}px" role="img" '
+         'aria-label="The claims and records this finding rests on">']
+    for i, (c, depth) in enumerate(order):   # rows
+        y = TOP + RH * i + RH / 2
+        st = c.get("status") or "open"
+        title = str(c.get("title") or c.get("slug") or "")
+        g.append(f'<g class="row" data-focus="n:{_e(c["id"])}"><title>{_e(title)} ({_e(st)}; {_e(graph.label(c["id"]))})</title>'
+                 f'<rect class="band" x="0" y="{y - RH / 2:.1f}" width="{W}" height="{RH}"/>'
+                 f'<line class="lane" x1="{LW - 6}" x2="{W - 8}" y1="{y:.1f}" y2="{y:.1f}"/>'
+                 f'<circle class="st st-{_e(st)}" cx="{12 + depth * 14}" cy="{y:.1f}" r="6"/>'
+                 f'<text class="cl{" gone" if st == "superseded" else ""}" x="{24 + depth * 14}" y="{y + 4:.1f}">'
+                 f'{_e(_clip(title, 44 - depth * 2))}</text></g>')
+    for r in records:   # columns: the record's mark on each row it touched
+        x = col[r["id"]]
+        n = rec_it.get(r["id"])
+        g.append(f'<g class="colm"' + (f' data-focus="it:{n}"' if n is not None else f' data-focus="n:{_e(r["id"])}"') + '>'
+                 f'<title>{_e(r.get("title") or "")} ({_e(graph.label(r["id"]))}'
+                 + (f", iteration {n}" if n is not None else "") + ')</title>'
+                 f'<rect class="hit" x="{x - CW / 2:.1f}" y="0" width="{CW}" height="{H}"/>'
+                 f'<circle class="rec" cx="{x:.1f}" cy="22" r="5"/>'
+                 f'<text class="it" x="{x:.1f}" y="{H - 10}" text-anchor="middle">{f"#{n}" if n is not None else "·"}</text>')
+        for i, (c, _) in enumerate(order):
+            y = TOP + RH * i + RH / 2
+            st = _e(c.get("status") or "open")
+            if (r["id"], c["id"]) in impacts:
+                g.append(f'<circle class="hitd st-{st}" cx="{x:.1f}" cy="{y:.1f}" r="6.5"/>')
+            elif (r["id"], c["id"]) in cites:
+                g.append(f'<circle class="cite" cx="{x:.1f}" cy="{y:.1f}" r="5"/>')
+        g.append("</g>")
+    for r in records:   # lineage: an arc from each parent record in view
+        for p in r.get("parents") or []:
+            if p in col and p != r["id"]:
+                x0, x1 = col[p], col[r["id"]]
+                h = min(18.0, 6 + abs(x1 - x0) / 10)
+                g.append(f'<path class="lin" d="M{x0:.1f},17 Q{(x0 + x1) / 2:.1f},{17 - h:.1f} {x1:.1f},17"/>')
+    g.append("</svg>")
+    return "".join(g)
+
+
+def _findings_ledger(run_dir: Path, graph: Graph | None, its: list[dict]) -> str:
+    """The writer's findings (view/findings.json), each as title, summary, its part of the
+    graph, its visuals and folded notes; '' when there are none."""
+    items = findings_mod.load(run_dir)
+    if not items:
+        return ""
+    rec_it = _record_iterations(its)
+    vdir = view_dir(run_dir)
+    out = []
+    for k, f in enumerate(items, 1):
+        fid = _SAFE_ID.sub("-", str(f.get("id") or f"finding-{k}"))[:60]
+        word, cls = FINDING_STATUS.get(str(f.get("status") or "holds"), ("holds", "ok"))
+        claims, records = findings_mod.related(graph, f) if graph is not None and graph.ok else ([], [])
+        ev = _evidence_svg(graph, claims, records, rec_it, fid) if claims else ""
+        n_it = sorted({rec_it[r["id"]] for r in records if r["id"] in rec_it})
+        span = (f"iterations {n_it[0]}–{n_it[-1]}" if len(n_it) > 1 else f"iteration {n_it[0]}") if n_it else ""
+        graph_part = (f'<div class="fnd-graph">{ev}<p class="cap"><b>In the memory graph.</b> '
+                      f'{len(claims)} claim{"s" if len(claims) != 1 else ""} and {len(records)} record'
+                      f'{"s" if len(records) != 1 else ""}{f", {span}" if span else ""}. A dot is a record that changed '
+                      'the claim, a ring one it cites; a column is an iteration. '
+                      f'<button type="button" class="focus-btn" data-focus="f:{_e(fid)}">Show in the graph</button></p></div>'
+                      if ev else "")
+        vis = []
+        for v in (f.get("visuals") or [])[:findings_mod.VISUALS_MAX]:
+            file = str((v or {}).get("file") or "") if isinstance(v, dict) else ""
+            if not file or not file.lower().endswith(findings_mod.IMAGE) or ".." in file or file.startswith("/"):
+                continue
+            exists = (vdir / file).is_file()
+            vis.append(f'<figure>' + (f'<a href="{_e(file)}"><img src="{_e(file)}" alt="{_e(_plain(v.get("caption") or ""))}" loading="lazy"></a>'
+                                      if exists else f'<p class="quiet">Missing: <code>{_e(file)}</code></p>')
+                       + f'<figcaption>{_md(_clip(str(v.get("caption") or ""), 400))}</figcaption></figure>')
+        notes = str(f.get("notes") or "").strip()
+        out.append(
+            f'<article class="fnd{" gone" if cls == "bad" else ""}" id="finding-{_e(fid)}">'
+            f'<h3><span class="fnd-n num">{k}</span>{_md(_clip(str(f.get("title") or ""), 160))} {_chip(word, cls)}</h3>'
+            f'<p class="fnd-sum">{_md(_clip(str(f.get("summary") or ""), 900))}</p>'
+            + graph_part
+            + (f'<div class="fnd-vis">{"".join(vis)}</div>' if vis else
+               '<p class="quiet fnd-novis">No visual yet.</p>')
+            + (f'<details class="fnd-notes" id="notes-{_e(fid)}"><summary>Notes</summary>{_md_block(notes)}</details>'
+               if notes else "")
+            + "</article>")
+    return "".join(out)
+
+
+def _run_map(graph: Graph | None, its: list[dict], run_dir: Path) -> str:
+    """What the page's links bring forward in the graph: per iteration, its records and the
+    claims they changed; per finding, its claims and records; per node, its iterations."""
+    if graph is None or not graph.ok:
+        return "{}"
+    impacts = _impacts(graph)
+    by_rec: dict[str, set] = {}
+    for r, c in impacts:
+        by_rec.setdefault(r, set()).add(c)
+    for c in graph.claims("state"):
+        for r in graph.cites(c):
+            by_rec.setdefault(r["id"], set()).add(c["id"])
+    keys: dict[str, list[str]] = {}
+    node_it: dict[str, list[int]] = {}
+    for rid, n in _record_iterations(its).items():
+        ids = keys.setdefault(f"it:{n}", [])
+        for x in [rid, *sorted(by_rec.get(rid, set()))]:
+            if x not in ids:
+                ids.append(x)
+    for key, ids in keys.items():
+        for x in ids:
+            node_it.setdefault(x, []).append(int(key[3:]))
+    for k, f in enumerate(findings_mod.load(run_dir), 1):
+        fid = _SAFE_ID.sub("-", str(f.get("id") or f"finding-{k}"))[:60]
+        claims, records = findings_mod.related(graph, f)
+        keys[f"f:{fid}"] = [n["id"] for n in claims + records]
+    return _graph_json({"keys": keys, "nodeIt": node_it})
+
+
+def _story(run_dir: Path, graph: Graph | None = None, its: list[dict] | None = None, ww: bool = False) -> str:
+    ledger = _findings_ledger(run_dir, graph, its or [])
+    if ledger:
+        return ledger
     text = _read_text(story_path(run_dir))
     if not text.strip():
+        if ww:
+            return '<p class="quiet">No finding yet. The writer adds one when the run first knows something.</p>'
         return '<p class="quiet">The scribe has not written the story yet.</p>'
     return _findings(text)
 
@@ -1251,7 +1455,7 @@ def render(run_dir: Path, repo: Path, *, goal_text: str, graph=None, now: float 
             "logo": LOGO,
             "favicon": FAVICON,
             "header": part(_header, status, run_name, goal_text or ""),
-            "summary": part(_summary, run_dir, goal_text or ""),
+            "summary": part(_summary, run_dir, goal_text or "", _ww(status)),
             "figures": part(_figures, status, steps, graph, goal_text or ""),
             "loop": part(_loop, status, its),
             "usage": part(_usage, status),
@@ -1266,7 +1470,8 @@ def render(run_dir: Path, repo: Path, *, goal_text: str, graph=None, now: float 
             "stages": part(_stages, status),
             "criteria": part(_criteria, graph, goal_text or ""),
             "frontier": part(_frontier, graph),
-            "story": part(_story, run_dir),
+            "story": part(_story, run_dir, graph, its, _ww(status)),
+            "run_map": part(_run_map, graph, its, run_dir),
             "paper": part(_paper, run_dir),
             "decisions": part(_decisions, decisions),
             "timeline": part(_timeline, graph),

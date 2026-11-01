@@ -21,6 +21,7 @@ from .budget import backoff_seconds
 from .config import parse_duration
 from .engine import (CREATIVE_REPLY, MAINTAIN_REPLY, NO_EARLY_EXIT_REPLY, REPORT_DONE_REPLY, Engine,
                      IterationOutcome, _harness_of, exhaustion_policy, role_env)
+from . import findings as findings_mod
 from .harness.base import Result
 from .memory.graph import target_claim, target_text, tree_text
 from .roles.critic import RulesCritic, Signals, Verdict, _one_line
@@ -39,6 +40,7 @@ class WorkerWriterEngine(Engine):
     next_prompt: str | None = None   # the writer's prompt for the next worker; None: the worker picks from the brief
     next_target: str | None = None   # the claim id the next unit works on; None: the worker picks from the frontier
     writer_failures: int = 0         # writer calls in a row that gave no reply
+    findings_problems: list | None = None   # what the findings check found after the last writer
 
     # -- hooks into the standard engine ------------------------------------
     def _role_pools(self) -> list:
@@ -79,6 +81,24 @@ class WorkerWriterEngine(Engine):
     # -- small helpers -------------------------------------------------------
     def _charter_path(self) -> str:
         return self._rel(self.goal_path) if self.goal_path is not None else self.config.goal
+
+    def _assets(self) -> str:
+        return str(self.recorder.run_dir / "view" / "assets")
+
+    def _findings_text(self) -> str:
+        try:
+            return findings_mod.path(self.recorder.run_dir).read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            return ""
+
+    def _check_findings(self, n: int, graph) -> None:
+        try:
+            self.findings_problems = findings_mod.check(self.recorder.run_dir, graph)
+        except Exception as exc:
+            self.recorder.log(f"[{n}] findings check raised {exc!r}")
+            self.findings_problems = None
+        if self.findings_problems:
+            self.recorder.step(iteration=n, step="findings", problems=self.findings_problems[:5])
 
     def _where(self) -> str:
         return getattr(getattr(self.memory, "store", None), "where", self.memory.name)
@@ -204,7 +224,7 @@ class WorkerWriterEngine(Engine):
         target, target_view = self._target(n, self._graph())
         prompt = build_worker_prompt(iteration=n, handoff=handoff, prompt=asked, brief=brief,
                                      notes=self.injected or "", charter_path=self._charter_path(),
-                                     agents=agents_path(self.repo), target=target_view)
+                                     agents=agents_path(self.repo), target=target_view, assets_dir=self._assets())
         head_before = self.git.head()
         self._status("work", iteration=n)
         self._refresh_limits("worker")
@@ -256,7 +276,10 @@ class WorkerWriterEngine(Engine):
         wprompt = build_writer_prompt(
             iteration=n, handoff=handoff, where=self._where(), goal_text=self.goal_text,
             charter_path=self._charter_path(), fold=fold, fix_first=self.check_problem or "",
-            signals=signals.describe(), previous_prompt=asked or "", previous_target=target or "", report=report_for_writer(result.text),
+            signals=signals.describe(), previous_prompt=asked or "", previous_target=target or "",
+            findings_path=str(findings_mod.path(self.recorder.run_dir)), assets_dir=self._assets(),
+            findings=self._findings_text(),
+            findings_problems="\n".join(f"- {p}" for p in self.findings_problems or []), report=report_for_writer(result.text),
             commit=(commit or "")[:10] if changed else "", diff_stat=diff_stat, diff=signals.diff,
             touched=touched_claims(graph, ([target] if target else []) + claimed_ids(result.text), result.text),
             frontier=frontier_text,
@@ -324,6 +347,7 @@ class WorkerWriterEngine(Engine):
                            cost=res.cost_usd if res else 0.0)
         self._commit_memory(f"ouroboros #{n}: record — {self._last_summary()}")
         self._check(n)
+        self._check_findings(n, self._graph())
         if verdict.verdict in ("continue", "answer", "done_rejected", "done_accepted") and self.config.git.tag_on_accept:
             tag = f"ouroboros/{self.config.run}/ok-{n:04d}"
             try:

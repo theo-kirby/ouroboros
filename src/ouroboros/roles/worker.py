@@ -25,7 +25,7 @@ def agents_path(repo: Path) -> str | None:
     return None
 
 
-def footer(*, iteration: int, charter_path: str, agents: str | None, orient: str) -> str:
+def footer(*, iteration: int, charter_path: str, agents: str | None, orient: str, assets_dir: str = "assets") -> str:
     """The part of every worker prompt the loop owns."""
     s = skill(SKILL)
     agents_line = (section(s, "agents").replace("{agents_path}", agents) if agents else section(s, "no agents"))
@@ -33,11 +33,12 @@ def footer(*, iteration: int, charter_path: str, agents: str | None, orient: str
             .replace("{orient}", orient)
             .replace("{agents}", agents_line)
             .replace("{charter_path}", charter_path)
+            .replace("{assets_dir}", assets_dir)
             .replace("{iteration}", str(iteration)))
 
 
 def build_worker_prompt(*, iteration: int, handoff: str, prompt: str | None, brief: str, notes: str = "",
-                        charter_path: str, agents: str | None, target: str = "") -> str:
+                        charter_path: str, agents: str | None, target: str = "", assets_dir: str = "assets") -> str:
     """notes, the target claim, the next step (unless `graph`), the brief (unless `prompt`), the footer.
 
     `target` is the claim the writer named for this unit, whole (`graph.target_text`):
@@ -62,11 +63,12 @@ def build_worker_prompt(*, iteration: int, handoff: str, prompt: str | None, bri
         orient = "orient target"
     else:
         orient = "orient graph" if handoff == "graph" else "orient none"
-    parts.append(footer(iteration=iteration, charter_path=charter_path, agents=agents, orient=section(s, orient)))
+    parts.append(footer(iteration=iteration, charter_path=charter_path, agents=agents, orient=section(s, orient),
+                        assets_dir=assets_dir))
     return "\n\n".join(p for p in parts if p) + "\n"
 
 
-REPORT_KEYS = ("did", "target", "files", "result", "evidence", "claims", "failed", "blocked", "assumed", "next")
+REPORT_KEYS = ("did", "target", "files", "visuals", "result", "evidence", "claims", "failed", "blocked", "assumed", "next")
 
 
 def parse_report(text: str) -> dict | None:
