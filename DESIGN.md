@@ -1699,6 +1699,17 @@ before the footer:
 When the writer gave no prompt (it failed, or under `graph`), the brief is always
 there and the worker is told to pick from its frontier.
 
+**A step is checked before it is tried** (orientation lab round 2, 2026-11-01: on
+five late states with weak next steps, workers given the step tried what this host
+could not do or what the memory had ruled out, while workers with only the brief
+chose well; quality 6.9-7.1 of 8 with the step against 7.7 without, n = 10 each). The
+writer checks its step against the `environment` claim and the ruled-out knowledge
+and, when none passes, writes no prompt so the worker picks from the brief. The
+worker checks it too: a step this host cannot carry out, or one the brief lists as
+ruled out, is reported in `blocked` or `failed` and replaced by an open frontier
+item. `both` stays the default: on states with a good step every arm did as well,
+and no step cost more tokens and more time-outs.
+
 **The report** is one JSON object: `did`, `files`, `result`, `evidence`, `claims`
 (`[{claim, change}]`), `failed`, `blocked`, `assumed`, `next`. The commit subject is
 its `did`. A report that does not parse reaches the writer verbatim, as a fact about

@@ -88,7 +88,7 @@ def test_the_footer_is_the_engines_on_every_worker_prompt(repo):
         assert f"You are\nturn {n} " in tail or f"turn {n} of a loop" in tail.replace("\n", " ")
         assert rogue not in tail
     assert rogue in worker.prompts[0] and rogue not in worker.prompts[1], "after garbage, no prompt to pass on"
-    assert "The writer could not write your next step" in worker.prompts[1]
+    assert "No next step was written for you this turn" in worker.prompts[1]
 
 
 def test_agents_md_is_named_when_the_repo_has_one(repo):
@@ -117,7 +117,11 @@ def test_the_three_handoffs(repo, handoff, has_step, has_brief, orient):
         assert ("# Brief: what you need to start this turn" in prompt) is has_brief
         assert orient in prompt
         assert FOOTER_HEAD in prompt
+        # a written step is checked before it is tried (orientation lab round 2)
+        assert ('do not try it "to see"' in " ".join(prompt.split())) is has_step
     assert section(skill("ouroboros-writer"), f"handoff {handoff}")[:60] in writer.prompts[1]
+    if handoff == "both":
+        assert "is worse than no step" in writer.prompts[1], "the writer checks its step, or writes none"
 
 
 def test_the_worker_only_reads_and_the_writer_is_the_only_writer(repo, monkeypatch):
@@ -200,7 +204,7 @@ def test_failing_calls_and_bad_json_never_stop_the_loop(repo):
     titles = [r["title"] for r in eng.memory.graph().records()]
     assert "Iteration 1 (unrecorded by the scribe)" in titles
     assert "ended with an error: boom" in worker.prompts[2]
-    assert "The writer could not write your next step" in worker.prompts[2]
+    assert "No next step was written for you this turn" in worker.prompts[2]
     assert "ok then" in worker.prompts[4]
     assert not any(s["step"] == "engine_error" for s in steps(eng))
     assert sleeps, "repeated failures back off"
@@ -225,7 +229,7 @@ def test_turn_zero_failing_leaves_the_first_worker_the_brief(repo):
     worker = FakeHarness([], default=works_json())
     eng = make_ww(repo, worker, FakeHarness([garbage(), writes("u2")]), max_iterations=1)
     eng.run()
-    assert "The writer could not write your next step" in worker.prompts[0]
+    assert "No next step was written for you this turn" in worker.prompts[0]
     assert "# Brief" in worker.prompts[0] and eng.iteration == 1
 
 

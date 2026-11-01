@@ -144,6 +144,13 @@ a newcomer with no context, in at most 300 words, with
 Never hand over a step this host cannot carry out, or a bare constraint with no next
 step. When the last turn failed, the prompt says what to fix first.
 
+Before you reply, check the step against the `environment` claim and the ruled-out
+knowledge: a step this host cannot carry out, or one that retries something ruled
+out, is worse than no step (the orientation lab, 2026-11-01: workers followed such
+steps; workers with only the brief chose well). If no step passes, reply with
+`"prompt": ""` and make sure the frontier claims say what is open: the worker then
+picks from the brief.
+
 ## handoff prompt
 
 The next worker gets your prompt and a fixed footer the loop adds (the charter's
