@@ -1505,7 +1505,7 @@ Atomic pending/receipt/checkpoint state preserves counters, start time and curso
 Unknown in-flight work is never replayed; source/config/charter changes refuse resume.
 Recursive triage (Theo, 2026-11-01) adds a sixth opt-in topology: each cycle a
 proposer that sees only the code and one that sees only the memory graph propose the
-next unit independently, a read-only merger turns them into one plan, and a fresh
+next unit independently and at the same time, a read-only merger turns them into one plan, and a fresh
 executor carries it out and records memory. Only a unanimous vote stops the run. The
 views are host-built copies, so the split is enforced by confinement, not the prompt.
 

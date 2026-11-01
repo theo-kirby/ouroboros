@@ -226,15 +226,19 @@ class ExperimentRunner:
     def recover(self):
         pending=self.state.get('pending')
         if not pending: return
-        path=self.control/'receipts'/f"{pending['call']:05d}.json"
-        if path.exists():
-            self._apply(json.loads(path.read_text()))
-        else:
-            # The process may have performed work/spent tokens. Never charge zero,
-            # restart its identity, or repeat the call automatically.
-            self.state['stop_reason']='interrupted_inflight'; self.save()
+        for one in pending.get('group',[pending]):   # parallel proposals are applied in call order
+            path=self.control/'receipts'/f"{one['call']:05d}.json"
+            if path.exists():
+                self._apply(json.loads(path.read_text()))
+            else:
+                # The process may have performed work/spent tokens. Never charge zero,
+                # restart its identity, or repeat the call automatically.
+                self.state['stop_reason']='interrupted_inflight'; self.save(); return
 
     def _stage(self):
+        if self.config.topology=='triage':
+            missing=[p for p in PROPOSERS if p not in self.state.get('proposals',{})]
+            return missing[0] if missing else 'executor' if self.state.get('merged') else 'merger'
         if self.config.topology=='blind' and self.state['cursor']<2*self.config.blind_calls:
             return 'solver_a' if self.state['cursor']<self.config.blind_calls else 'solver_b'
         offset=2*self.config.blind_calls if self.config.topology=='blind' else 0
@@ -423,15 +427,23 @@ class ExperimentRunner:
         atomic(self.control/f'{agent}-snapshot.json',{'files':manifest})
         self.state.setdefault('blind_exports',{})[agent]={'path':str(target),'files':manifest}
 
+    def _group(self):
+        """The calls that run now: every proposer still owed a proposal this cycle, together, else one call."""
+        agent=self._stage()
+        if agent not in PROPOSERS:return [agent]
+        group=[p for p in PROPOSERS if p not in self.state.get('proposals',{})]
+        return group[:max(1,self.config.max_calls-self.state['calls'])]
+
     @contextmanager
-    def _confinement(self, agent, key):
+    def _confinement(self, agent, key, pending, save=True):
         """Credential-free CLI/tool confinement. Never expose host auth or history.
 
         Authenticated model execution needs an independently provisioned credential
         boundary/broker; this helper does not copy, link or discover credentials.
         """
         if self.config.confinement=='none':
-            self.state['pending']['confinement']={'kind':'none'};self.save()
+            pending['confinement']={'kind':'none'}
+            if save:self.save()
             yield
             return
         from .experiment_sandbox import abi
@@ -449,17 +461,20 @@ class ExperimentRunner:
         for read in reads:
             if any(read.is_relative_to(p) or p.is_relative_to(read) for p in forbidden):
                 raise ValueError('read allowlist overlaps private control/peer workspace')
+        # One CPU per call; parallel proposers each get their own, so neither halves the other.
+        cpus=sorted(os.sched_getaffinity(0))
+        cpu=cpus[PROPOSERS.index(agent)%len(cpus)] if agent in PROPOSERS else cpus[0]
         prefix=[sys.executable,'-I',str(Path(__file__).with_name('experiment_sandbox.py')),
-                '--cpu',str(min(os.sched_getaffinity(0))),'--memory-bytes',str(self.config.memory_bytes)]
+                '--cpu',str(cpu),'--memory-bytes',str(self.config.memory_bytes)]
         for read in reads:prefix += ['--read',str(read)]
         cwd=self._cwd(agent)   # a proposer gets its read-only copy, and no workspace path at all
         prefix += ['--read' if agent in READONLY else '--write',str(cwd),'--write',str(home),'--']
-        self.state['pending']['confinement']={'kind':'landlock','abi':abi(),
+        pending['confinement']={'kind':'landlock','abi':abi(),
             'read_paths':[str(p) for p in reads],
             'workspace_access':'readonly' if agent in READONLY else 'readwrite',
             'workspace':str(cwd),'identity_home':str(home),
-            'cpu_affinity':[min(os.sched_getaffinity(0))],'address_limit_bytes':self.config.memory_bytes}
-        self.save()
+            'cpu_affinity':[cpu],'address_limit_bytes':self.config.memory_bytes}
+        if save:self.save()
         token=COMMAND_PREFIX.set(tuple(prefix))
         try:
             with environment({'HOME':str(home),'CODEX_HOME':str(home/'.codex'),'TMPDIR':str(temporary),
@@ -473,29 +488,47 @@ class ExperimentRunner:
         try:self._check_inputs(self.inputs)
         except (OSError,ValueError):
             self.state['stop_reason']='input_modified';self.save();return
-        agent=self._stage();key=self._workspace(agent);call=self.state['calls']+1
-        if agent in PROPOSERS:self._build_view(agent)
-        prompt=self._prompt(agent,key)
-        pending={'call':call,'agent':agent,'workspace':key,'started_at':self.now(),'publish_due':self._publish_due(agent),
-                 'head_before':self.guards[key].head(),'prompt_sha256':digest(prompt),'resume':self.state['sessions'].get(agent) if self._persistent(agent) else None}
-        self.state['pending']=pending;self.save()
-        self.recorder.transcript_path(call,agent).with_suffix('.prompt.txt').write_text(prompt)
-        principal='critic' if agent in READONLY else 'actor' if agent=='actor' else 'scribe'
-        self.publish(agent)
-        limit=self.config.propose_timeout_seconds if agent in PROPOSERS and self.config.propose_timeout_seconds else self.config.timeout_seconds
-        timeout=min(limit,max(0,self.config.after_seconds-(self.now()-self.state['started_at'])))
-        if timeout<=0:
+        calls=[]
+        for agent in self._group():
+            key=self._workspace(agent);call=self.state['calls']+1+len(calls)
+            if agent in PROPOSERS:self._build_view(agent)
+            prompt=self._prompt(agent,key)
+            limit=self.config.propose_timeout_seconds if agent in PROPOSERS and self.config.propose_timeout_seconds else self.config.timeout_seconds
+            pending={'call':call,'agent':agent,'workspace':key,'started_at':self.now(),'publish_due':self._publish_due(agent),
+                     'head_before':self.guards[key].head(),'prompt_sha256':digest(prompt),'resume':self.state['sessions'].get(agent) if self._persistent(agent) else None,
+                     'timeout':min(limit,max(0,self.config.after_seconds-(self.now()-self.state['started_at'])))}
+            calls.append((pending,prompt))
+        self.state['pending']=calls[0][0] if len(calls)==1 else {'group':[p for p,_ in calls]};self.save()
+        for pending,prompt in calls:
+            self.recorder.transcript_path(pending['call'],pending['agent']).with_suffix('.prompt.txt').write_text(prompt)
+        self.publish('+'.join(p['agent'] for p,_ in calls))
+        if calls[0][0]['timeout']<=0:
             self.state['pending']=None;self.state['stop_reason']='deadline';self.save();return
+        if len(calls)==1:
+            try:receipts=[self._invoke(*calls[0])]
+            except (KeyboardInterrupt,SystemExit):
+                self.state['stop_reason']='interrupted_inflight';self.save();raise
+        else:receipts=self._invoke_parallel(calls)
+        for receipt in receipts:
+            if receipt is None:   # a call that left no receipt: unknown work and spend
+                self.state['stop_reason']='interrupted_inflight';self.save();break
+            self._apply(receipt)
+        self.publish('idle')
+
+    def _invoke(self,pending,prompt,save=True):
+        """One harness call to a durable receipt. Touches no runner state, so it can run in a fork."""
+        agent=pending['agent'];key=pending['workspace'];call=pending['call']
+        principal='critic' if agent in READONLY else 'actor' if agent=='actor' else 'scribe'
         start=self.now()
         usage_before=resource.getrusage(resource.RUSAGE_CHILDREN)
         try:
-            with role_env(principal), environment({ENV:self.config.memory,'OUROBOROS_EXPERIMENT_AGENT':agent}), self._confinement(agent,key):
-                result=self.harness.run(prompt,cwd=self._cwd(agent),timeout=timeout,
+            with role_env(principal), environment({ENV:self.config.memory,'OUROBOROS_EXPERIMENT_AGENT':agent}), self._confinement(agent,key,pending,save):
+                result=self.harness.run(prompt,cwd=self._cwd(agent),timeout=pending['timeout'],
                     resume=pending['resume'],model=self.config.model,json_schema=SCHEMA,
                     tools='readonly' if agent in READONLY else None,
                     log_path=self.recorder.transcript_path(call,agent))
         except (KeyboardInterrupt,SystemExit):
-            kill_active();self.state['stop_reason']='interrupted_inflight';self.save();raise
+            kill_active();raise
         except Exception as exc:
             result=Result(exit_code=-1,error=f'{type(exc).__name__}: {exc}')
         usage_after=resource.getrusage(resource.RUSAGE_CHILDREN)
@@ -507,8 +540,32 @@ class ExperimentRunner:
                  'model':result.model,'error':result.error,'timed_out':result.timed_out}
         (self.control/'receipts').mkdir(exist_ok=True)
         atomic(self.control/'receipts'/f'{call:05d}.json',receipt)
-        self._apply(receipt)
-        self.publish('idle')
+        return receipt
+
+    def _invoke_parallel(self,calls):
+        """Each call in its own forked process: the environment, home and confinement a call
+        sets are process-wide, so threads would share them. Receipts come back in call order."""
+        import warnings
+        children=[]
+        for pending,prompt in calls:
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore',DeprecationWarning)   # the fork only spawns the harness
+                pid=os.fork()
+            if pid==0:
+                code=1
+                try:self._invoke(pending,prompt,save=False);code=0
+                except BaseException:pass
+                finally:os._exit(code)
+            children.append(pid)
+        try:
+            for pid in children:os.waitpid(pid,0)
+        except (KeyboardInterrupt,SystemExit):
+            for pid in children:
+                try:os.kill(pid,signal.SIGTERM);os.waitpid(pid,0)
+                except (ProcessLookupError,ChildProcessError):pass
+            self.state['stop_reason']='interrupted_inflight';self.save();raise
+        paths=[self.control/'receipts'/f"{p['call']:05d}.json" for p,_ in calls]
+        return [json.loads(path.read_text()) if path.exists() else None for path in paths]
 
     def _apply(self,receipt):
         if receipt['call']<=self.state['calls']:return
@@ -547,12 +604,13 @@ class ExperimentRunner:
             elif key=='shared':s['handoff']=response['handoff']
             if agent=='critic':s['done_pending']=response['done']
             if agent=='merger':
+                s['merged']=True
                 votes=s.get('proposals',{})
                 s['done_pending']=set(votes)==set(PROPOSERS) and all(v['stop'] for v in votes.values())
             if agent=='executor':
                 if s['done_pending']:
                     s['done_source']='proposers_unanimous';s['stop_reason']=s['stop_reason'] or 'done_claimed'
-                s['proposals']={}
+                s['proposals']={};s['merged']=False
             if agent in ('researcher','peer_a','peer_b') and response['done']:
                 s['done_source']='self_review' if agent=='researcher' else 'peer_claim'
                 s['stop_reason']=s['stop_reason'] or 'done_claimed'

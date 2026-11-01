@@ -16,7 +16,7 @@ batch, and do not pool its control with historical production runs.
 | freeflow | one persistent researcher | self-review, explicitly labeled | researcher |
 | peers | persistent peer_a ↔ peer_b, no specialized roles | whichever peer claims done | active peer only |
 | blind | N private solver_a turns, N private solver_b turns, then standard cycles | shared critic, then scribe | active solver in its private store; shared scribe |
-| triage | proposer_code and proposer_graph → merger → executor, every cycle | unanimous proposer vote to stop, then the closing executor turn | executor |
+| triage | proposer_code ∥ proposer_graph (in parallel) → merger → executor, every cycle | unanimous proposer vote to stop, then the closing executor turn | executor |
 
 Planner and critic use read-only tools and never resume a writable session. The
 planner recommends one next action before every actor turn, including the first;
@@ -41,8 +41,12 @@ which proposers voted to stop, and the last executor report; its handoff is the 
 The executor (scribe principal, fresh every call) receives only the plan, does the
 work and records memory. Done from a proposer is a vote: when both vote to stop, the
 merger writes a closing plan and the run stops after the executor's turn.
-`propose_timeout_seconds` (default: timeout_seconds) caps proposer calls, since the
-two proposals run one after the other.
+The proposals run at the same time, each in its own forked process (a call's
+environment, home and confinement are process-wide), each on its own CPU, and each
+leaves its own durable receipt; receipts are applied in call order. A proposal that
+fails is retried alone. If the runner stops while proposals are in flight, any
+proposal without a receipt stops the run as interrupted_inflight, as for one call.
+`propose_timeout_seconds` (default: timeout_seconds) caps proposer calls.
 
 Every identity uses the same configured model/harness, without silent model
 fallback. Guidance strings may differ by declared treatment. A peer handoff is

@@ -453,46 +453,106 @@ def proposal(text, stop=False):
                   session_id='session', tokens={'input': 10, 'output': 2})
 
 
+class Logged:
+    """A fork-safe fake: proposers run in child processes, so calls go to a file, and each
+    answer is picked by identity and that identity's call count, not by global order."""
+    name = 'fake'
+
+    def __init__(self, log, answers=None, delay=0.0):
+        self.log, self.answers, self.delay = log, answers or {}, delay
+
+    def calls(self):
+        return [json.loads(line) for line in self.log.read_text().splitlines()] if self.log.exists() else []
+
+    def run(self, prompt, **kw):
+        import time
+        agent = os.environ['OUROBOROS_EXPERIMENT_AGENT']
+        n = sum(c['agent'] == agent for c in self.calls())
+        start = time.time(); time.sleep(self.delay)
+        cwd = kw['cwd']
+        files = sorted(str(p.relative_to(cwd)) for p in cwd.rglob('*') if p.is_file() and '.git' not in p.relative_to(cwd).parts)
+        with self.log.open('a') as f:
+            f.write(json.dumps(dict(agent=agent, prompt=prompt, cwd=str(cwd), tools=kw['tools'], resume=kw['resume'],
+                                    principal=os.environ.get('OUROBOROS_ROLE'), files=files,
+                                    start=start, end=time.time())) + '\n')
+        result = (self.answers.get(agent) or [])[n:n+1]
+        result = result[0] if result else answer()
+        if isinstance(result, BaseException):
+            raise result
+        return Result(text=result.text, exit_code=result.exit_code, error=result.error,
+                      session_id=f'session-{agent}-{n}', tokens=result.tokens)
+
+
+def triage(repo, tmp_path, answers=None, delay=0.0, **kwargs):
+    h = Logged(tmp_path/'calls.jsonl', answers, delay)
+    cfg = ExperimentConfig(topology='triage', harness='fake', model='test', max_calls=kwargs.pop('max_calls', 12),
+                           confinement='none', **kwargs)
+    return ExperimentRunner(cfg, repo, tmp_path / 'control', harness=h), h
+
+
 def test_triage_cycle_passes_each_step_only_what_it_needs(repo, tmp_path):
     (repo/'model.py').write_text('SPEED = 1\n'); commit_all(repo)
-    r, h = runner(repo, tmp_path, 'triage', max_cycles=1,
-                  results=[proposal('speed up the inner loop'), proposal('test the open claim'),
-                           answer(handoff='plan: do both'), answer()])
+    r, h = triage(repo, tmp_path, {'proposer_code': [proposal('speed up the inner loop')],
+                                   'proposer_graph': [proposal('test the open claim')],
+                                   'merger': [answer(handoff='plan: do both')]}, max_cycles=1)
     assert r.run() == 'max_cycles'
     assert [x['agent'] for x in r.state['receipts']] == ['proposer_code','proposer_graph','merger','executor']
-    code, graph, merger, executor = h.calls
-    assert [c['tools'] for c in h.calls] == ['readonly']*3 + [None]
-    assert [c['principal'] for c in h.calls] == ['critic']*3 + ['scribe']
-    assert code['cwd'] == tmp_path/'control/views/proposer_code' and graph['cwd'] == tmp_path/'control/views/proposer_graph'
-    assert merger['cwd'] == executor['cwd'] == repo.resolve()
-    assert 'speed up the inner loop' not in graph['prompt']
+    by = {c['agent']: c for c in h.calls()}
+    code, graph, merger, executor = (by[a] for a in ('proposer_code','proposer_graph','merger','executor'))
+    assert [c['tools'] for c in (code, graph, merger, executor)] == ['readonly']*3 + [None]
+    assert [c['principal'] for c in (code, graph, merger, executor)] == ['critic']*3 + ['scribe']
+    assert code['cwd'] == str(tmp_path/'control/views/proposer_code') and graph['cwd'] == str(tmp_path/'control/views/proposer_graph')
+    assert merger['cwd'] == executor['cwd'] == str(repo.resolve())
+    assert 'speed up the inner loop' not in graph['prompt'] and 'test the open claim' not in code['prompt']
     assert 'speed up the inner loop' in merger['prompt'] and 'test the open claim' in merger['prompt']
     assert 'plan: do both' in executor['prompt'] and 'speed up the inner loop' not in executor['prompt']
-    assert all(c['resume'] is None for c in h.calls)
+    assert all(c['resume'] is None for c in h.calls())
+
+
+def test_triage_proposals_run_at_the_same_time(repo, tmp_path):
+    r, h = triage(repo, tmp_path, delay=0.5, max_cycles=1)
+    r.run()
+    by = {c['agent']: c for c in h.calls()}
+    a, b = by['proposer_code'], by['proposer_graph']
+    assert a['start'] < b['end'] and b['start'] < a['end']
+    assert [x['call'] for x in r.state['receipts']] == [1, 2, 3, 4] and r.state['tokens'] == 4*12
+
+
+def test_a_failed_proposal_is_retried_alone(repo, tmp_path):
+    r, h = triage(repo, tmp_path, {'proposer_graph': [Result(exit_code=1, error='boom'), proposal('again')]},
+                  max_cycles=1)
+    assert r.run() == 'max_cycles'
+    assert [x['agent'] for x in r.state['receipts']] == ['proposer_code','proposer_graph','proposer_graph','merger','executor']
+    assert 'again' in [c for c in h.calls() if c['agent'] == 'merger'][0]['prompt']
+
+
+def test_an_interrupted_parallel_proposal_is_never_replayed(repo, tmp_path):
+    r, h = triage(repo, tmp_path, max_cycles=1)
+    r.step()
+    (tmp_path/'control/receipts/00002.json').unlink()
+    r.state['calls'] = 0; r.state['receipts'] = []; r.state['proposals'] = {}
+    r.state['pending'] = {'group': [{'call': 1}, {'call': 2}]}; r.save()
+    restored, h2 = triage(repo, tmp_path, max_cycles=1)
+    assert restored.state['stop_reason'] == 'interrupted_inflight' and restored.state['calls'] == 1
+    assert restored.run() == 'interrupted_inflight' and len(h2.calls()) == 2
 
 
 def test_triage_views_split_code_from_memory(repo, tmp_path):
     (repo/'src').mkdir(); (repo/'src/model.py').write_text('SPEED = 1\n'); commit_all(repo)
-    r, h = runner(repo, tmp_path, 'triage', max_cycles=1)
-    seen = {}
-    def look(prompt, **kw):
-        cwd = kw['cwd']
-        seen[os.environ['OUROBOROS_EXPERIMENT_AGENT']] = sorted(str(p.relative_to(cwd)) for p in cwd.rglob('*')
-                                                             if p.is_file() and '.git' not in p.relative_to(cwd).parts)
-        return Script.run(h, prompt, **kw)
-    h.run = look
+    r, h = triage(repo, tmp_path, max_cycles=1)
     r.run()
+    seen = {c['agent']: c['files'] for c in h.calls()}
     assert 'src/model.py' in seen['proposer_code'] and not any('graph' in p.lower() for p in seen['proposer_code'])
     assert 'GRAPH.md' in seen['proposer_graph'] and 'src/model.py' not in seen['proposer_graph']
     assert '.ouroboros/goal.md' in seen['proposer_code'] and '.ouroboros/goal.md' in seen['proposer_graph']
-    assert '(none: you see only the code)' in h.calls[0]['prompt']
+    assert '(none: you see only the code)' in [c for c in h.calls() if c['agent'] == 'proposer_code'][0]['prompt']
 
 
 def test_triage_stops_only_on_a_unanimous_vote_after_the_closing_executor(repo, tmp_path):
-    r, h = runner(repo, tmp_path, 'triage', max_cycles=5,
-                  results=[proposal('a', stop=True), proposal('b'), answer(), answer(),
-                           proposal('a', stop=True), proposal('b', stop=True), answer(), answer()])
+    r, h = triage(repo, tmp_path, {'proposer_code': [proposal('a', stop=True), proposal('a', stop=True)],
+                                   'proposer_graph': [proposal('b'), proposal('b', stop=True)]}, max_cycles=5)
     assert r.run() == 'done_claimed'
     assert [x['agent'] for x in r.state['receipts']] == ['proposer_code','proposer_graph','merger','executor'] * 2
     assert r.state['done_source'] == 'proposers_unanimous' and r.state['cycle'] == 2
-    assert '"closing": true' in h.calls[-1]['prompt'] and '"closing": false' in h.calls[3]['prompt']
+    executors = [c for c in h.calls() if c['agent'] == 'executor']
+    assert '"closing": true' in executors[1]['prompt'] and '"closing": false' in executors[0]['prompt']
