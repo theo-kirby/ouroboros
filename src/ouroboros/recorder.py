@@ -13,6 +13,13 @@ def _ts() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def recorded_iterations(steps: list[dict]) -> int:
+    """Successful recording receipts, once per iteration (including legacy commits)."""
+    return len({s.get("iteration") for s in steps
+                if s.get("step") in ("commit", "scribe") and s.get("recorded")
+                and s.get("iteration") is not None})
+
+
 class Recorder:
     def __init__(self, run_dir: Path, *, echo=print) -> None:
         self.run_dir = run_dir
@@ -91,7 +98,7 @@ class Recorder:
         if self.needs_human_path.exists():
             self.needs_human_path.unlink()
 
-    def transcript_path(self, iteration: int, role: str, attempt: int = 0) -> Path:
+    def transcript_path(self, iteration: int, role: str, attempt: int | str = 0) -> Path:
         suffix = f"-{attempt}" if attempt else ""
         return self.run_dir / "transcripts" / f"{iteration:04d}-{role}{suffix}.json"
 

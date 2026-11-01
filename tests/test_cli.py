@@ -166,6 +166,21 @@ def test_preflight_reports_logins(tmp_path, monkeypatch, capsys):
     assert cli.preflight(cfg, tmp_path) is None
 
 
+def test_preflight_refuses_a_critic_whose_sandbox_cannot_run(monkeypatch):
+    from ouroboros.config import RoleConfig
+    from ouroboros.harness.codex import CodexHarness
+    cfg = Config(run="t", roles={"critic": RoleConfig(harness="codex")})
+    monkeypatch.setattr(CodexHarness, "sandbox_problem", lambda self: "bwrap: loopback: Failed RTM_NEWADDR")
+    problem = cli.readonly_sandbox_problem(cfg)
+    assert problem.startswith("critic: codex") and "RTM_NEWADDR" in problem and "docs/sandbox.md" in problem
+    monkeypatch.setattr(CodexHarness, "sandbox_problem", lambda self: None)
+    assert cli.readonly_sandbox_problem(cfg) is None
+    cfg.critic = "rules"
+    monkeypatch.setattr(CodexHarness, "sandbox_problem", lambda self: "broken")
+    assert cli.readonly_sandbox_problem(cfg) is None      # a rules critic runs no sandbox
+    assert cli.readonly_sandbox_problem(Config(run="t")) is None   # claude has no bwrap probe
+
+
 # -- where the loop lives in tmux -------------------------------------------
 
 def test_run_takes_a_window_of_the_session_it_is_started_from(tmp_path, monkeypatch, capsys):

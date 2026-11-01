@@ -32,6 +32,7 @@ from .roles.actor import build_actor_prompt
 from .loops import LoopDetector, loop_reply
 from .roles.critic import HISTORY_WINDOW, Critic, RulesCritic, Signals, Verdict
 from .roles.scribe import Scribe, build_scribe_prompt, summary_of
+from . import publication
 from . import activity, view
 
 Sleeper = Callable[[float], None]
@@ -63,6 +64,18 @@ MAINTAIN_REPLY = (
 REPORT_DONE_REPLY = (
     "The done criteria are met. Exhaustion policy: report_done. Do one light maintenance pass "
     "(tests green, docs accurate), record it, and stop."
+)
+# Said by the engine, not a model, when a run that never had its done criteria accepted
+# stops changing anything. The pilot that taught it (home-advantage, 2026-10-30) read
+# "Exhaustion policy: report_done" as leave to give up on an open criterion; its critic
+# agreed, and the loop idled for seventy minutes of a two-hour run on "no change" turns.
+NO_EARLY_EXIT_REPLY = (
+    "Nothing has changed for {n} iterations, and the done criteria have not been accepted. "
+    "This run does not end on an agent's decision: the exhaustion policy applies only after "
+    "the critic accepts every done criterion, and stopping is the stop rules' job. A source "
+    "or route that ran dry is a reason to try the next one, not to stop. Pick one open "
+    "criterion, name a route not yet tried (another source, period, measure or method), "
+    "and do one unit of it now."
 )
 _EXHAUST = re.compile(r"##\s*Exhaustion policy\s*\n+\s*\**(creative|maintain|report_done)\**", re.IGNORECASE)
 
@@ -111,9 +124,12 @@ class Engine:
     session_uses: int = 0
     failed_iterations: int = 0
     stuck_iterations: int = 0
+    done_accepted_seen: bool = False  # the critic has accepted the done criteria at least once
     loops: LoopDetector = None   # type: ignore[assignment]  # built in __post_init__
     scribe: Scribe | None = None     # None: the loop writes each record itself (the rules scribe)
     check_problem: str | None = None  # the memory checker's last complaint, for the next scribe and critic
+    worked_since_publish: int = 0     # kept, changed iterations since the last report pass
+    publication_problem: str | None = None  # the report check's last findings, for the next report pass
     last_primary_role: str | None = None
     stage: tuple[str, float] | None = None   # (state, when it began): the view's "on the critic for 2 min"
     outcomes: list[IterationOutcome] = field(default_factory=list)
@@ -153,6 +169,7 @@ class Engine:
                 self._sleep(backoff_seconds(0), "engine error")
             reason = self.budget.should_stop()
         self.recorder.log(f"stop: {reason}")
+        self._publish_final(reason)
         self._status("stopped", stop_reason=reason)
         return reason
 
@@ -163,7 +180,8 @@ class Engine:
         self.iteration += 1
         n = self.iteration
         role = self.config.role("actor")
-        prompt = build_actor_prompt(goal_text=self.goal_text, memory=self.memory, iteration=n, injected=self.injected)
+        prompt = build_actor_prompt(goal_text=self.goal_text, memory=self.memory, iteration=n, injected=self.injected,
+                                    profile=publication.profile_text(self.config.profile, "actor"))
         head_before = self.git.head()
         self._status("work", iteration=n)
 
@@ -225,14 +243,17 @@ class Engine:
         for res in getattr(self.critic, "last_results", None) or []:
             self.budget.count(res, "critic", _harness_of(self.critic))
         self.recorder.decision(iteration=n, verdict=verdict.verdict, reason=verdict.reason, reply=verdict.reply,
-                               did=verdict.did, doing=verdict.doing, fix_first=verdict.fix_first, source=verdict.source)
+                               did=verdict.did, doing=verdict.doing, fix_first=verdict.fix_first, source=verdict.source,
+                               verification=verdict.verification, verification_evidence=verdict.verification_evidence)
         self.recorder.step(iteration=n, step="critique", verdict=verdict.verdict, source=verdict.source,
-                           reason=verdict.reason, cost=critic_cost)
+                           reason=verdict.reason, cost=critic_cost,
+                           verification=verdict.verification, verification_evidence=verdict.verification_evidence)
         if loop is not None:
             self._escalate(n, loop, verdict)
 
         idle = False
         if verdict.verdict == "done_accepted":
+            self.done_accepted_seen = True
             policy = exhaustion_policy(self.goal_text)
             nudge = {"creative": CREATIVE_REPLY, "maintain": MAINTAIN_REPLY}.get(policy, REPORT_DONE_REPLY)
             verdict.reply = f"{nudge}\n\n{verdict.reply}".strip()
@@ -269,10 +290,14 @@ class Engine:
         if result.error and verdict.verdict == "continue":
             note = f"The previous iteration ended with an error: {result.error[:500]}. Recover and continue."
             verdict.reply = f"{note}\n\n{verdict.reply}".strip()
+        if verdict.verdict == "stuck" and not self.done_accepted_seen and self.stuck_iterations >= 1:
+            verdict.reply = f"{NO_EARLY_EXIT_REPLY.format(n=self.stuck_iterations + 1)}\n\n{verdict.reply}".strip()
         self.injected = verdict.reply or None
 
         # The scribe writes down what happened -- after the verdict and after any
         # revert, so it records the verdict too and no revert can undo its record.
+        if worked and changed and not reverted:
+            self.worked_since_publish += 1
         recorded = self._scribe(n, result, verdict, reverted=reverted, diff_stat=diff_stat, commit=commit if changed else "")
         if accepted:
             tag = f"ouroboros/{self.config.run}/ok-{n:04d}"
@@ -313,6 +338,7 @@ class Engine:
         """
         self._status("scribe", iteration=n)
         verdict_text = (f"{verdict.verdict} — {verdict.reason}\n\n"
+                        f"Reviewer-reported verification: {verdict.verification} — {verdict.verification_evidence}\n\n"
                         + ("The change was **reverted**: record it as a dead end." if reverted
                            else "The change stays on the branch." if commit else "There was no change."))
         try:
@@ -323,16 +349,25 @@ class Engine:
         except Exception as exc:
             self.recorder.log(f"[{n}] memory unreadable before the scribe: {exc!r}")
             before, folded_before, due, fold = set(), 0, False, None
-        fix_first = "\n".join(x for x in (verdict.fix_first, self.check_problem) if x)
+        publish_due = self.scribe is not None and publication.publish_due(self.config, self.worked_since_publish)
+        # The report check's findings are for the next report pass, not for every notebook update.
+        fix_first = "\n".join(x for x in (verdict.fix_first, self.check_problem,
+                                           self.publication_problem if publish_due else None) if x)
         res: Result | None = None
         if self.scribe is not None:
             vd = view.view_dir(self.recorder.run_dir)
+            try:
+                story, publish = publication.story_rules(self.config), (publication.pass_rules(self.config) if publish_due else None)
+            except Exception as exc:   # a broken skill falls back to the notebook rather than stopping the loop
+                self.recorder.log(f"[{n}] publication rules unreadable: {exc!r}")
+                story, publish, publish_due = None, None, False
             prompt = build_scribe_prompt(
                 iteration=n, goal_text=self.goal_text, where=getattr(getattr(self.memory, "store", None), "where", self.memory.name),
                 report=result.text, verdict=verdict_text, fix_first=fix_first, diff_stat=diff_stat, commit=(commit or "")[:10],
                 fold=fold, view_dir=self._rel(vd), story_path=self._rel(view.story_path(self.recorder.run_dir)),
                 assets_dir=self._rel(view.assets_dir(self.recorder.run_dir)),
                 summary_path=self._rel(view.summary_path(self.recorder.run_dir)),
+                story=story, publish=publish,
             )
             self._refresh_limits("scribe")
             with role_env("scribe"), self._heartbeat():
@@ -364,7 +399,50 @@ class Engine:
             self.check_problem = None
         if self.check_problem:
             self.recorder.step(iteration=n, step="check", problem=self.check_problem[:300])
+        if publish_due and res is not None and res.ok:
+            self.worked_since_publish = 0
+        if publish_due:
+            self._check_publication(n, consolidated=res is not None and res.ok)
         return recorded
+
+    def _check_publication(self, n: int, *, consolidated: bool) -> None:
+        """Read the publication back against its contract; what is wrong goes to the next scribe."""
+        try:
+            problems = publication.check(self.config, view.view_dir(self.recorder.run_dir))
+        except Exception as exc:
+            self.recorder.log(f"[{n}] publication check raised {exc!r}")
+            return
+        self.publication_problem = publication.describe(problems)
+        self.recorder.step(iteration=n, step="publish", consolidated=consolidated or None,
+                           problems=len(problems), problem=(self.publication_problem or "")[:300] or None)
+
+    def _publish_final(self, reason: str) -> None:
+        """The report, after the loop has stopped. One bounded scribe call; never raises."""
+        if self.scribe is None or not publication.final_due(self.config, reason):
+            return
+        try:
+            self._status("scribe", iteration=self.iteration, publishing="final")
+            vd = view.view_dir(self.recorder.run_dir)
+            prompt = publication.final_prompt(
+                self.config, reason=reason, goal_text=self.goal_text,
+                where=getattr(getattr(self.memory, "store", None), "where", self.memory.name),
+                problems=self.publication_problem, view_dir=self._rel(vd),
+                story_path=self._rel(view.story_path(self.recorder.run_dir)),
+                assets_dir=self._rel(view.assets_dir(self.recorder.run_dir)),
+                summary_path=self._rel(view.summary_path(self.recorder.run_dir)),
+            )
+            self._refresh_limits("scribe")
+            with role_env("scribe"), self._heartbeat():
+                res = self.scribe.run(prompt, self.iteration, "final",
+                                      timeout=self.config.publication.final_timeout_seconds)
+            self.budget.add(cost=res.cost_usd, usage=res.usage, harness=res.extra.get("harness"))
+            self.budget.count(res, "scribe", _harness_of(self.scribe))
+            self.recorder.step(iteration=self.iteration, step="publish_final", exit=res.exit_code,
+                               error=(res.error or None) and res.error[:200], cost=res.cost_usd)
+            self.git.commit(f"ouroboros: publication — final ({reason[:60]})", allow_empty=False)
+            self._check_publication(self.iteration, consolidated=res.ok)
+        except Exception as exc:
+            self.recorder.log(f"final publication raised {exc!r}")
 
     def _folded_count(self) -> int:
         graph = self.memory.graph() if hasattr(self.memory, "graph") else None

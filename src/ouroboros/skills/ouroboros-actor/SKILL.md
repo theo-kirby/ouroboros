@@ -23,13 +23,16 @@ edges are in a loop nobody watches.
   most reversible option, write the assumption in your report, continue.
 - **No "done" for the whole goal.** You do not decide that. If the done criteria look
   met, say so in your report and start the next rung of the horizon ladder.
+- **No giving up.** The goal's exhaustion policy applies only after the critic
+  accepts every done criterion. A route or source that ran dry is a reason to take
+  the next one, never to stop or to "report done" on an open criterion.
 - **No red tree left silent.** If you break something you cannot fix this iteration,
   your report names it as broken so the next iteration takes it.
 - **No silent deviation.** If you did not do what the critic's message asked, your
   report says what you did instead and why.
 - **No iteration without a report.** The report below is mandatory, even for a dead end.
 
-## The goal
+{profile}## The goal
 
 {goal}
 

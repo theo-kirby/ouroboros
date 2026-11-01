@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import tempfile
 import time
 from pathlib import Path
@@ -54,6 +55,17 @@ def strict_schema(schema: dict) -> dict:
     return walk(schema)
 
 
+# The read-only sandbox, as a permission profile: everything readable, nothing writable but
+# the call's own TMPDIR. Plain `-s read-only` also froze /tmp, so a critic could not run a
+# test that makes a temporary file and graded on reading alone (transit pilot 2, 2026-10-30).
+# Network is on so a critic can start the repo's server and hit it: codex has no
+# loopback-only mode (allow_local_binding without enabled leaves no socket at all), and
+# without it the transit critic could not exercise `./serve` (pilot 3).
+READONLY_PROFILE = ["-c", 'permissions.ouroboros_readonly.filesystem={":root"="read",":tmpdir"="write"}',
+                    "-c", 'permissions.ouroboros_readonly.network={enabled=true,allow_local_binding=true}',
+                    "-c", 'default_permissions="ouroboros_readonly"']
+
+
 class CodexHarness:
     name = "codex"
 
@@ -70,8 +82,10 @@ class CodexHarness:
             cmd += ["resume", resume]
         cmd += ["--json", "--skip-git-repo-check"]
         if tools in ("none", "readonly"):
-            if not resume:
-                cmd += ["-s", "read-only"]     # exec never asks for approval; read-only sandbox stops writes
+            # The sandbox is the read-only guarantee, so nothing may approve a way out of it: a
+            # user config with `approvals_reviewer = "auto_review"` let a critic escalate every
+            # command when bwrap could not start, and its "read-only" reviews ran unsandboxed.
+            cmd += ["-c", 'approval_policy="never"', *READONLY_PROFILE]
         else:
             cmd += ["--dangerously-bypass-approvals-and-sandbox"]
         if not resume:
@@ -82,6 +96,24 @@ class CodexHarness:
             cmd += ["--output-schema", str(schema_path)]
         cmd.append("-")   # prompt on stdin
         return cmd
+
+    def sandbox_problem(self, timeout: float = 30.0) -> str | None:
+        """Why codex's sandbox cannot run a command here, or None if it can. Costs no model call.
+
+        On Ubuntu with kernel.apparmor_restrict_unprivileged_userns=1, bwrap gets a user
+        namespace without the rights to bring up its loopback, and every sandboxed
+        command fails with `bwrap: loopback: Failed RTM_NEWADDR`. A read-only role then
+        reviews blind.
+        """
+        try:
+            p = subprocess.run([self.binary, "sandbox", *READONLY_PROFILE, "--", "true"], capture_output=True, text=True,
+                               timeout=timeout, stdin=subprocess.DEVNULL)
+        except (OSError, subprocess.SubprocessError) as exc:
+            return f"`codex sandbox -- true` could not run: {exc}"
+        if p.returncode == 0:
+            return None
+        out = (p.stderr or p.stdout or "").strip().splitlines()
+        return f"`codex sandbox -- true` failed: {out[-1] if out else f'exit {p.returncode}'}"
 
     def run(
         self,
@@ -105,12 +137,16 @@ class CodexHarness:
             with os.fdopen(fd, "w") as f:
                 json.dump(strict_schema(json_schema), f)
             schema_path = Path(name)
+        scratch = tempfile.mkdtemp(prefix="ouroboros-ro-") if tools in ("none", "readonly") else None
         try:
             cmd = self.build_cmd(cwd=cwd, resume=resume, model=model, tools=tools, schema_path=schema_path)
-            proc = backend.run(cmd, cwd=cwd, timeout=timeout, stdin_text=prompt, log_path=log_path)
+            proc = backend.run(cmd, cwd=cwd, timeout=timeout, stdin_text=prompt, log_path=log_path,
+                               env={"TMPDIR": scratch} if scratch else None)
         finally:
             if schema_path:
                 schema_path.unlink(missing_ok=True)
+            if scratch:
+                shutil.rmtree(scratch, ignore_errors=True)
         result = self.parse(proc.stdout, proc.stderr, proc.exit_code, proc.timed_out, log_path)
         result.usage = self.usage_for(result.session_id)
         result.model = model_from_rollout(find_codex_rollout(self.home, result.session_id or "")) or model

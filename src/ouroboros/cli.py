@@ -34,6 +34,7 @@ from .recorder import Recorder
 from . import watch as watcher
 from .roles.critic import AgentCritic, RulesCritic
 from .roles.scribe import Scribe
+from .publication import profile_text
 from . import view as runview
 
 GOAL_TEMPLATE = """# Goal: {name}
@@ -196,6 +197,21 @@ def preflight(cfg: Config, repo: Path) -> str | None:
         print(f"  {note}", file=sys.stderr)
     if errors:
         return "not logged in: " + " | ".join(errors)
+    return readonly_sandbox_problem(cfg)
+
+
+def readonly_sandbox_problem(cfg: Config) -> str | None:
+    """The critic's read-only guarantee is its harness's sandbox; a sandbox that cannot run a
+    command leaves it grading blind, so refuse the run while a human is still watching."""
+    if "critic" not in cfg.active_roles:
+        return None
+    for harness_name, _model in cfg.role("critic").chain:
+        probe = getattr(make_harness(harness_name), "sandbox_problem", None)
+        problem = probe() if probe else None
+        if problem:
+            return (f"critic: {harness_name}'s read-only sandbox cannot run commands here ({problem}). "
+                    "On Ubuntu, let bwrap use user namespaces with an AppArmor profile "
+                    "(docs/sandbox.md), or give the critic another harness")
     return None
 
 
@@ -282,8 +298,10 @@ def cmd_run(args: argparse.Namespace) -> int:
             killed = kill_active()
             recorder.log(f"signal {signum}: {killed} child process(es) killed, exiting")
             st = recorder.read_status() or {}
-            st.update(state="killed", signal=signum)
+            st.update(state="killed", signal=signum,
+                      stop_reason=st.get("stop_reason") or f"terminated by signal {signum}")
             recorder.status(**{k: v for k, v in st.items() if k not in ("ts", "epoch")})
+            _finalize_view(repo, cfg, recorder.run_dir)
         finally:
             os._exit(128 + signum)
 
@@ -311,7 +329,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         critic = AgentCritic(
             pools["critic"], goal_text=goal_text, cwd=repo, timeout=crole.timeout_seconds,
             model=crole.model, transcript_path=lambda n, a: recorder.transcript_path(n, "critic", a),
-            log=recorder.log,
+            log=recorder.log, profile=profile_text(cfg.profile, "critic"),
         )
     else:
         critic = RulesCritic()
@@ -573,6 +591,41 @@ def cmd_refresh(args: argparse.Namespace) -> int:
     return 0
 
 
+def _finalize_view(repo: Path, cfg: Config, rd: Path, *, operator_stop: bool = False) -> None:
+    """Persist termination before best-effort rendering; never leave a live claim behind."""
+    rec = Recorder(rd, echo=lambda *_: None)
+    st = rec.read_status()
+    if not st:
+        return
+    if operator_stop:
+        terminal = st.get("state") in ("stopped", "killed")
+        st.update(state=st.get("state") if terminal else "killed",
+                  stop_reason=(st.get("stop_reason") if terminal else None) or "stopped by operator")
+        rec.status(**{k: v for k, v in st.items() if k not in ("ts", "epoch")})
+    graph = None
+    try:
+        graph = make_memory(cfg.memory, repo).graph()
+    except Exception:
+        pass
+    try:
+        path = repo / cfg.goal
+        if runview.render(rd, repo, goal_text=path.read_text() if path.exists() else "", graph=graph) is not None:
+            return
+    except Exception as exc:
+        rec.log(f"final view render failed: {exc!r}")
+    # A failed optional renderer must not preserve a false running page.
+    try:
+        import html
+        state = st.get("state", "unknown")
+        runview._write(rd / "view/live.json", json.dumps({"state": state, "iteration": st.get("iteration"),
+                       "version": f"terminal-{time.time_ns()}", "ts": time.time()}))
+        runview._write(rd / "view/index.html", '<!doctype html><meta charset="utf-8"><title>Run stopped</title>'
+                       '<h1>Run stopped</h1><p>' + html.escape(str(st.get("stop_reason") or state)) +
+                       '</p><p>The full report could not be rendered. Retained artifacts remain in the run directory.</p>')
+    except Exception as exc:
+        rec.log(f"final view fallback failed: {exc!r}")
+
+
 def cmd_stop(args: argparse.Namespace) -> int:
     repo = repo_root()
     cfg = load_config(args, repo)
@@ -581,8 +634,14 @@ def cmd_stop(args: argparse.Namespace) -> int:
     if not alive:
         print(f"run {cfg.run!r} is not running")
         _kill_launched(cfg, rd)
+        _finalize_view(repo, cfg, rd, operator_stop=True)
         _archive(repo, cfg, rd)
         return 0
+    rec = Recorder(rd, echo=lambda *_: None)
+    st = rec.read_status()
+    if st:
+        st["stop_reason"] = "stopped by operator"
+        rec.status(**{k: v for k, v in st.items() if k not in ("ts", "epoch")})
     os.kill(pid, signal.SIGTERM)
     for _ in range(40):
         time.sleep(0.25)
@@ -592,6 +651,7 @@ def cmd_stop(args: argparse.Namespace) -> int:
         os.kill(pid, signal.SIGKILL)
     _kill_launched(cfg, rd)
     print(f"stopped run {cfg.run!r} (pid {pid})")
+    _finalize_view(repo, cfg, rd, operator_stop=True)
     _archive(repo, cfg, rd)
     return 0
 

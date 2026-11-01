@@ -35,7 +35,7 @@ from . import criteria as progress
 from .config import Config
 from .gitguard import GitError, GitGuard
 from .loops import is_product_change
-from .recorder import Recorder
+from .recorder import Recorder, recorded_iterations
 from .usage import short_name
 
 HISTORY_DIR = Path(".ouroboros") / "history"
@@ -131,7 +131,7 @@ def gather(repo: Path, cfg: Config, run_dir: Path, *, machine: str | None = None
         models={n: f"{cfg.role(n).harness}:{cfg.role(n).model or 'default'}" for n in cfg.active_roles},
         iterations=len(commits),
         changed=sum(1 for c in commits if c.get("changed")),
-        recorded=sum(1 for c in commits if c.get("recorded")),
+        recorded=recorded_iterations(steps),
         reverts=len(reverts),
         bets=[s for s in steps if s.get("step") == "plan"],
         decisions=[d for d in decisions if d.get("verdict") in ("answer", "done_rejected", "stuck", "looping", "reject", "revert")],

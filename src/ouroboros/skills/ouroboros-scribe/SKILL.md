@@ -36,6 +36,8 @@ ouroboros mem record --title "<title>" --body body.md --impact "<claim-id>: <del
 - The body has exactly `## What`, `## Why`, `## Method`, `## Result`. Take them from
   the report and make them true to the diff: cut what the diff does not show. End
   `## Result` with the line `Critic: <verdict> — <reason>`.
+  Preserve reviewer-reported verification and its evidence verbatim in the result;
+  inspection, unavailable execution and rules fallback never become reproduction.
 - The impacts come from the report's `## Claims`, checked against the diff and the
   critic's verdict: `--impact "<claim-id>: <delta>"`, `--new "<kebab-name>: <delta>"`,
   or `--none "<reason>"`. Several are fine. The delta says what changed, not what was
@@ -57,7 +59,7 @@ ouroboros mem record --title "<title>" --body body.md --impact "<claim-id>: <del
 The run's live page is `{view_dir}/index.html`. Ouroboros renders the facts on it
 itself: the run, the loop's stage, the iteration, the criteria, the open problems,
 the usage and a timeline of every iteration with the critic's verdict. Do not repeat
-those. Your part is two files.
+those. Your part is the files below.
 
 **Write for an outsider.** The reader is an operator who opens this page once a month,
 among many runs, and does not know this code. They must see in ten seconds what the
@@ -75,32 +77,16 @@ Highlight the two or three phrases a skimmer must not miss, a few words each, as
 `==like this==`: the goal in the first paragraph, the best result or the blocker in
 the second. Nothing else is markup.
 
-**`{story_path}`: the findings.** An HTML fragment that shows what the run has
-achieved and found.
+{story}
 
-- Update it when this iteration produced something worth seeing: a number that
-  moved, a result table, a figure, a render, a milestone, a decision that changes
-  direction. When nothing new came out, leave it as it is.
-- Curate, do not append: it is the current picture, newest and most important first.
-  Replace a stale section instead of adding another one. Keep it under about 40 KB.
-- Each `<section>` starts with an `<h2>` that states the finding as a sentence
-  ("Looking ahead beats the simple bots by six times"), then one plain paragraph,
-  then the evidence: a figure, a table.
-- A fragment only: no `<html>`, `<head>`, `<body>`, `<style>` or `<script>`. Use
-  `<section>`, tables, `<figure>` with `<figcaption>`, and inline `<svg>` for small
-  charts. Classes you may use: `grid` (figures side by side), `chip`, `ok`, `warn`,
-  `bad`, `num` (right-aligned numbers), `src` (a small source line).
-- Inline SVG fills the width of its column, so give it a `viewBox` about 600 wide
-  and 11 to 13 px text, and use `currentColor` for marks so the page's colours apply.
-- Images and SVG files go in `{assets_dir}/` and are referenced as `assets/<name>`.
-  Copy them there; never link outside the view. Prefer small files.
-- Say where each number comes from, in a `<p class="src">` under it: the command,
-  the file, the record id.
+## 6. The report, when a draft is due
 
-## 6. Stop
+{publish}
+
+## 7. Stop
 
 Your final message is one line: the record id you wrote, and whether you folded or
-changed the summary or the story.
+changed the summary or the notebook, and whether you wrote the report.
 
 ## The critic's verdict
 

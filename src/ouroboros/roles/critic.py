@@ -19,6 +19,8 @@ from typing import Protocol
 
 from ..harness.base import Harness, Result
 
+VERIFICATIONS = ("not_reported", "inspection", "execution", "reproduction", "unavailable", "rules_only")
+
 VERDICTS = ("continue", "answer", "done_rejected", "done_accepted", "stuck", "looping", "reject")
 # Verdicts the older prompts produced, read as what they meant.
 _ALIASES = {"revert": "reject", "accept": "continue"}
@@ -46,8 +48,10 @@ VERDICT_SCHEMA = {
         "did": {"type": "string"},
         "doing": {"type": "string"},
         "fix_first": {"type": "string"},
+        "verification": {"type": "string", "enum": list(VERIFICATIONS)},
+        "verification_evidence": {"type": "string"},
     },
-    "required": ["verdict", "reply", "reason", "did", "doing", "fix_first"],
+    "required": ["verdict", "reply", "reason", "did", "doing", "fix_first", "verification", "verification_evidence"],
 }
 
 RULES_REPLY = (
@@ -60,9 +64,9 @@ DONE_REPLY = (
     "horizon ladder and do one unit of it."
 )
 STUCK_REPLY = (
-    "The last iterations changed nothing. Apply the exhaustion policy from the goal: "
-    "pick a rung of the horizon ladder that still has items, or propose three new "
-    "directions in your report, pick one, and do one unit of it now."
+    "The last iterations changed nothing. Pick an open done criterion or a rung of the "
+    "horizon ladder that still has items, or propose three new directions in your "
+    "report, pick one, and do one unit of it now."
 )
 LOOPING_REPLY = (
     "The last iterations changed files but moved nothing. Writing about the work is "
@@ -141,6 +145,8 @@ class Verdict:
     did: str = ""        # one sentence: the unit that just finished
     doing: str = ""      # one sentence: the unit the next iteration is starting
     fix_first: str = ""  # what the scribe must fix in the memory before it records
+    verification: str = "not_reported"  # reviewer-reported scope, not tool attestation
+    verification_evidence: str = ""
 
     @property
     def rejected(self) -> bool:
@@ -159,6 +165,12 @@ class RulesCritic:
     name = "rules"
 
     def judge(self, s: Signals) -> Verdict:
+        verdict = self._judge(s)
+        verdict.verification = "rules_only"
+        verdict.verification_evidence = "Deterministic rules; no independent inspection or execution."
+        return verdict
+
+    def _judge(self, s: Signals) -> Verdict:
         tail = s.text.strip()[-1500:]
         if s.error_streak >= 3:
             return Verdict("reject", REJECT_REPLY, f"same error {s.error_streak}x")
@@ -183,10 +195,15 @@ def load_template() -> str:
     return text
 
 
-def build_critic_prompt(*, goal_text: str, s: Signals, template: str | None = None) -> str:
-    tpl = template or load_template()
+def build_critic_prompt(*, goal_text: str, s: Signals, template: str | None = None, profile: str = "") -> str:
+    tpl = (template or load_template()).replace("{profile}", profile)
     hist = "\n".join(
-        f"- #{h.get('iteration')}: {h.get('verdict')} — {h.get('reason')}" for h in s.history[-HISTORY_WINDOW:]
+        f"- #{h.get('iteration')}: {h.get('verdict')} — {_one_line(h.get('reason'), 400)}"
+        f"\n  Direction: {_one_line(h.get('reply'), 1000)}"
+        f"\n  Next: {_one_line(h.get('doing'), 200)}"
+        f"\n  Verification: {_one_line(h.get('verification') or 'not_reported', 60)}; "
+        f"{_one_line(h.get('verification_evidence'), 400)}"
+        for h in s.history[-HISTORY_WINDOW:]
     ) or "(none yet)"
     return (
         tpl.replace("{iteration}", str(s.iteration))
@@ -227,7 +244,9 @@ def parse_verdict(text: str, source: str = "agent") -> Verdict | None:
         if isinstance(fix, list):
             fix = "\n".join(str(f) for f in fix)
         return Verdict(verdict, str(data.get("reply") or "").strip(), str(data.get("reason") or ""), source=source,
-                       did=_one_line(data.get("did")), doing=_one_line(data.get("doing")), fix_first=str(fix).strip())
+                       did=_one_line(data.get("did")), doing=_one_line(data.get("doing")), fix_first=str(fix).strip(),
+                       verification=data.get("verification") if data.get("verification") in VERIFICATIONS else "not_reported",
+                       verification_evidence=_one_line(data.get("verification_evidence"), 1200))
     return None
 
 
@@ -249,9 +268,11 @@ class AgentCritic:
         rules: RulesCritic | None = None,
         retries: int = 1,
         name: str | None = None,
+        profile: str = "",
     ) -> None:
         self.harness = harness
         self.goal_text = goal_text
+        self.profile = profile   # the run profile's guidance for the critic; '' for freeform
         self.cwd = cwd
         self.timeout = timeout
         self.model = model
@@ -265,7 +286,7 @@ class AgentCritic:
         self.last_results: list[Result] = []   # every call of the last judge, for the run's token count
 
     def judge(self, s: Signals) -> Verdict:
-        prompt = build_critic_prompt(goal_text=self.goal_text, s=s)
+        prompt = build_critic_prompt(goal_text=self.goal_text, s=s, profile=self.profile)
         self.last_cost = 0.0
         self.last_usage = None
         self.last_results = []

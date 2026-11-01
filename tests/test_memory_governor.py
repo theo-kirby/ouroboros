@@ -287,8 +287,8 @@ def test_critic_context_and_fingerprint_follow_claim_statuses(gov_repo):
     assert mem.frontier_fingerprint() is None          # no claims yet: unknown, not unmoved
     ctx = mem.critic_context()
     assert "(empty: no open gaps)" in ctx and "Unfolded records in the tail: 1" in ctx
-    fold_all(gov_repo, [{"new": "gap-a", "parent": "root", "title": "Gap A", "status": "open",
-                         "current": "- todo [rec: x]", "cites": [mem.directive_slug]}])
+    fold_all(gov_repo, [{"new": "gap-build-passes-clean-clone", "parent": "root", "title": "Gap A", "status": "open",
+                         "current": "<!-- ouroboros-criterion: gap-build-passes-clean-clone -->\n- todo [rec: x]", "cites": [mem.directive_slug]}])
     ctx = mem.critic_context()
     assert "[open] **Gap A**" in ctx and "Architecture" not in ctx and "tail: 0" in ctx
     fp = mem.frontier_fingerprint()
@@ -296,7 +296,7 @@ def test_critic_context_and_fingerprint_follow_claim_statuses(gov_repo):
     slug = next(n for n in snap(gov_repo)["nodes"].values() if n["title"] == "Gap A")["slug"]
     rec = mint(gov_repo, "made it work", mem.directive_slug, "--impact", f"{slug}: works now")
     assert mem.frontier_fingerprint() == fp             # a record alone moves nothing
-    fold_all(gov_repo, [{"slug": slug, "status": "working", "current": "- done", "cites": [rec]}])
+    fold_all(gov_repo, [{"slug": slug, "status": "working", "current": "<!-- ouroboros-criterion: gap-build-passes-clean-clone -->\n- done", "cites": [rec]}])
     assert mem.frontier_fingerprint() != fp
     assert "Gap A" not in mem.critic_context().split("Unfolded")[0]
 

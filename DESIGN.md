@@ -359,7 +359,7 @@ Triggers, in order:
 | The diff has a real defect against the quality bar | `reject`. The loop reverts this iteration's commits (when `git.revert_on_reject` is on; else the commit stays and gets no ok tag) and `reply` says what to fix. Style is not a defect; a wrong reject throws away good work. |
 | Ends with a question | `answer` it using the goal doc's **question policy**. Inject the answer. |
 | Claims "done" or "complete" | Check against the frontier. Usually `done_rejected` + "here is what is still open". |
-| No file changes for 3 iterations | `stuck`. Inject a nudge from the **exhaustion policy**. |
+| No file changes for 3 iterations | `stuck`. Redirect to an open criterion or a rung of the ladder. From the second `stuck` in a row, while no `done_accepted` has been seen, the engine prepends its own no-early-exit reply (section 21, pilots of 2026-10-30). |
 | Files change but nothing moves (section 6b) | `looping`. Name the loop with its evidence, then change the model. |
 | Same error 3 times in a row | `reject`: "that path is dead, record it as a dead end". |
 | Anything else | `continue`, with `reply` naming the next unit when it is not obvious. |
@@ -385,6 +385,9 @@ The loop never waits on the critic either.
 **Done is never trusted from the actor.** Only the critic can say
 `done_accepted`, and only when the goal doc's done criteria are met. Even then,
 the goal doc's **exhaustion policy** decides what happens next (section 13).
+The policy applies only then. Nothing an agent says ends a run, and an open
+criterion is never "exhausted": a route that ran dry is a reason to take the next
+one. The critic, actor and research profile skills say so; the stop rules end runs.
 
 ## 9. Harness drivers
 
@@ -536,6 +539,20 @@ read-only sandbox for Codex, `read,grep,find,ls` for Pi), returns strict JSON,
 and fails to rules, never open: a critic that crashes or returns garbage twice
 is replaced by the deterministic one for that iteration.
 
+For Codex the sandbox *is* the read-only guarantee. A read-only call runs under a
+permission profile that reads everything and writes only a private `TMPDIR` made for
+the call and removed after it (plain `-s read-only` froze `/tmp` too, so a critic
+could not run any test that makes a temporary file). The profile turns the network on,
+so a critic can start the repository's server and request a page; codex has no
+loopback-only mode, and the filesystem, not the network, is what keeps the critic
+read-only. It also passes
+`-c approval_policy="never"`: a user config with `approvals_reviewer = "auto_review"`
+otherwise approves `require_escalated` commands and runs them outside the sandbox.
+Preflight runs `codex sandbox -- true` (no model call) for a Codex critic and refuses
+the run when it fails, because a critic that cannot run a command grades blind. On
+Ubuntu that failure is `bwrap: loopback: Failed RTM_NEWADDR`; docs/sandbox.md has the
+AppArmor fix.
+
 ```yaml
 critic: agent
 scribe: agent
@@ -649,7 +666,7 @@ through an interview. Its sections are fixed; `goal.py` parses them:
                         granularity, not time. the critic steers from it.
 ## Constraints        — never do X. always keep Y green. stay inside dir Z.
 ## Question policy    — how to decide for me. e.g. "prefer the reversible option".
-## Exhaustion policy  — creative | maintain | report_done
+## Exhaustion policy  — creative | maintain | report_done; applies only after done_accepted
    - creative:  the actor is told to propose three directions, pick one, continue
    - maintain:  tests, flakes, docs, refactors, forever
    - report_done: the critic may accept done; loop idles and polls every idle_interval
@@ -677,9 +694,11 @@ the actor chain names first, by skill name when installed and inline otherwise.
 | `ouroboros-launch` | Starting one (built). Reads `RUNS.md` and the last digest's notes before anything else, pushes back on a charter criterion no single run can tick, runs `ouroboros preflight`, names the run and its stops, launches, and says what to watch. Most of what wastes a run is decided in the twenty minutes before it starts. |
 | `ouroboros-actor` | Internal. The role prompt for WORK and REPORT. Includes `ouroboros-orient`, the memory as the actor reads it. |
 | `ouroboros-critic` | Internal. The role prompt for CRITIC: the reviewer and the sleeping user. Returns strict JSON (section 8). |
-| `ouroboros-scribe` | Internal. The role prompt for SCRIBE: fix, fold when due, record, check, write the story. |
+| `ouroboros-scribe` | Internal. The role prompt for SCRIBE: fix, fold when due, record, check, keep the notebook, write the report when due. |
 | `ouroboros-fold` | Internal. The fold procedure, put into the scribe's prompt when a fold is due. |
 | `ouroboros-orient` | Internal. The memory as the actor reads it, put into the actor's prompt. |
+| `ouroboros-profile` | Internal. The research and development guidance for the actor and the critic, put into their prompts when `profile` is set (section 23). |
+| `ouroboros-publish` | Internal. The publication: the notebook, the paper and product templates, the figure contract and the final pass, put into the scribe's prompt (section 23). |
 | `ouroboros-reporter` | Internal. The digest prompt for the reporter, `ouroboros watch` (section 15). |
 
 Role prompts live as skills, not as Python strings, so you can edit them
@@ -699,7 +718,7 @@ without touching code and so a harness can load them natively.
   status.json                # state, iteration, harness, usage windows, elapsed, last verdict, limit blocks
   transcripts/NNNN-<role>[-attempt].json   # raw harness output (+ .stderr); roles: actor, critic, scribe (older runs: housekeeping, maintainer, planner)
   reverted/NNNN.patch        # what a revert threw away
-  view/index.html            # the run's live page; live.json, graph.html, summary.txt + story.html (the scribe's), assets/
+  view/index.html            # the run's live page; live.json, graph.html, summary.txt + story.html (the scribe's notebook) + paper.html (its report), assets/
   criteria.json              # the charter criteria met at the start and now (section 21)
   refresh.request            # left by `ouroboros refresh` until the loop takes it
   NEEDS_HUMAN.md             # only exists while something needs you (auth failure)
@@ -1008,6 +1027,7 @@ skill, editable by hand. Every key with its default:
 
 ```yaml
 run: run                    # branch ouroboros/<run>, run dir .ouroboros/runs/<run>
+profile: freeform           # research | development | freeform: role guidance and the report's template (section 23)
 goal: .ouroboros/goal.md    # the charter
 memory: auto                # auto | governor | files  (handoff = files)
 backend: headless           # headless | tmux (one window per harness call)
@@ -1055,6 +1075,16 @@ report:                     # the reporter, `ouroboros watch` (section 15)
   silent_after: 2h          # status.json this stale while the run says it is working
   poll: 30s
   max_chars: 1000           # one push notification; Pushover takes 1024
+publication:                # the run's report in the view (section 23)
+  template: auto            # the report written at the end (view/paper.html): auto | notebook | paper | product; auto: paper for research, product for development, else notebook (no report)
+  figures:
+    enabled: true           # false: no numbered figures, evidence as tables and inline charts
+    main_max: 5             # numbered main figures at most
+    panels: true            # each main figure gathers lettered panels (A, B, C...) behind one claim
+    supplementary: true     # unused plots listed as Figure S1, S2...
+  consolidate_every: null   # worked iterations between mid-run drafts of the report; null: only the final pass
+  final: true               # write the report when the run stops (not on an interrupt or a spend cap)
+  final_timeout: 45m        # the final pass's own limit (the scribe's usual one is 20m): it draws and revises figures
 ```
 
 A fallback is `{ harness: codex, model: null }`; the chain is the role's own
@@ -1093,6 +1123,7 @@ ouroboros/
     usage.py                # subscription windows: readings, the run's ledger, reserves
     loops.py                # motion-without-progress counters and the ladder (section 6b)
     criteria.py             # charter criteria against claims: what is met, and criteria.json
+    publication.py          # the report's template, the scribe's publication rules, the deterministic check (section 23)
     banner.py               # the ASCII serpent printed before the menu
     recorder.py             # jsonl, status.json, loop.log, NEEDS_HUMAN.md
     watch.py                # the reporter: triggers off the run directory, digests since the last one
@@ -1378,6 +1409,19 @@ Facts from the run, and what changed because of each.
 | Edited goal on restart was not recorded. | One directive per charter hash, parented on the previous one, declaring only the criteria it adds and naming the ones it drops. |
 | Outcome: 22 productive iterations, 14 record nodes, ADR-186..198, ~$81 API-equivalent, merged with a merge commit (173 commits, 132 of them empty). | The empty commits are why "no change, no commit" is a rule now. |
 
+### Benchmark pilots (2026-10-30)
+
+Two 2-hour production pilots on new benchmarks (a research question and a
+development build), codex for every role.
+
+| Observed | Change |
+|---|---|
+| The research critic endorsed "report_done under the exhaustion policy" at minute 48 with a criterion still open, after an inconclusive result on a narrow slice of the data; the actor then made eleven no-change turns, backing off up to 10 minutes each, for the last seventy minutes. The critic skill's own wording ("the finite exhaustion policy" as a steer, `stuck` redirecting "from the exhaustion policy") invited it. | The exhaustion policy applies only after `done_accepted` (critic, actor and research-profile skills). From the second `stuck` in a row with no `done_accepted` seen, the engine prepends a fixed no-early-exit reply. No new stop path: a run still ends on its stop rules, as section 12 requires. |
+| Codex's read-only sandbox never worked on the host: every sandboxed command failed with `bwrap: loopback: Failed RTM_NEWADDR` (Ubuntu's `apparmor_restrict_unprivileged_userns`). Early critics escalated each command and the user's auto-review approved it, so "read-only" reviews ran unsandboxed; later critics stopped escalating and graded eight iterations without reading anything. | Read-only codex calls pass `approval_policy="never"`; preflight probes `codex sandbox -- true` for a codex critic and refuses the run with the fix (docs/sandbox.md). |
+| With the sandbox fixed (second pilots), the transit critic still logged `verification=unavailable` on 9 of 21 reviews: `-s read-only` leaves no writable temporary directory, and the planner's tests make one. | Read-only codex calls use a permission profile with a private writable `TMPDIR`; the repository stays read-only. |
+| In the third transit pilot every critic review ran the tests, but 3 of 14 could not exercise `./serve`: the read-only sandbox had no sockets at all, loopback included. | The read-only profile enables the network (codex offers no loopback-only setting); the filesystem stays read-only. |
+| The second home-advantage pilot found the right whole-season estimate in its first iteration (−0.19 goals/match, interval clear of zero), demoted it for mixed admission rules, and headlined a narrow window whose interval spanned zero: "the decline is uncertain". The critic accepted. | Research profile: lead with the best-powered estimate; a demotion needs a numeric, signed bias argument, and the critic grades the swap itself. The paper's answer section carries the best-powered estimate. |
+
 ### Operator account refresh (2026-09-16)
 
 After changing a harness login or restoring credits, run `ouroboros refresh`
@@ -1420,3 +1464,141 @@ but labels the human-facing metric completed and includes source/unknown counts.
 Legacy reports can be regenerated with `ouroboros archive`; unknown is retained
 when historical memory evidence cannot be mapped reliably. This changes reporting,
 not critic verdicts, stop policy or scientific evidence requirements.
+
+
+### Research review corrections (2026-10-28)
+
+The October portfolio review reproduced four accounting/context failures.
+Criterion-bearing runs now fingerprint stable charter criterion identities and
+statuses, rather than all auxiliary claims; adding claims cannot reset mission
+stagnation. Historical no-criterion runs retain state-status tracking. This is
+a review signal, never an automatic stop: valuable intermediate evidence may
+justify continuation. Critic history includes prior steering and next actions.
+Verdicts retain reviewer-reported verification scope and evidence; legacy reviews
+are not_reported and deterministic fallbacks rules_only. These fields travel in
+receipts, scribe context and review details; they are not tool attestations or
+scientific approval. Recording counts deduplicate legacy commit and modern
+scribe receipts by iteration. Operator stop and SIGTERM render a terminal native
+view after writing status; renderer failure has a minimal terminal-page fallback.
+Finite completion/exhaustion semantics and the actor/critic/scribe structure are
+unchanged. Benchmark experiments compare continuation policies explicitly.
+
+
+## 22. Opt-in research topology evaluation (2026-10-29)
+
+Theo authorized a separate evaluation adapter for the chromatin screen: current
+three-role architecture, planner before each actor, one persistent freeflow agent,
+two alternating role-free peers, and two blind first passes followed by synthesis.
+The implementation and exact behavioral boundaries are in
+[experimental-runner.md](docs/experimental-runner.md). Production Engine/CLI defaults
+and sections20–21 are preserved. Experimental prompts live in
+skills/ouroboros-experiment/SKILL.md.
+
+All identities share the run's original wall/call/usage ceiling and model. Persistent
+identities cannot silently reset sessions. Only the active authorized writer records
+scientific memory through the existing mem interface. Generalists use the scribe
+permission principal; planner/critic remain read-only. No hidden model-backed
+reporter is added. The deterministic journal and native dashboard include all calls,
+failures and explicitly labeled completion claims. Scientific acceptance is external.
+
+Atomic pending/receipt/checkpoint state preserves counters, start time and cursor.
+Unknown in-flight work is never replayed; source/config/charter changes refuse resume.
+Recursive triage (Theo, 2026-11-01) adds a sixth opt-in topology: each cycle a
+proposer that sees only the code and one that sees only the memory graph propose the
+next unit independently and at the same time, a read-only merger turns them into one plan, and a fresh
+executor carries it out and records memory. Only a unanimous vote stops the run. The
+views are host-built copies, so the split is enforced by confinement, not the prompt.
+
+Integrity failures stop the experimental adapter rather than inheriting infinite
+production retries. Landlock confines subprocess/tool filesystem access and defaults
+to empty identity homes without exposing host credentials. Whole-run aggregate
+resources remain the outer cgroup's responsibility. Credential-free fixture validation
+is distinct from an authenticated real-model smoke test and a scientific pilot.
+
+## 23. Profiles and the publication (2026-10-30)
+
+Theo's runs are research ("is there a link between X and Y") or development ("work
+on this product until it does X"), and after 24 to 72 hours he reads one report. The
+report is the deliverable, and it should read like a paper, not a log. The 24h
+troodontid run showed what the notebook alone produces: 149 SVGs, 18 single-plot
+sections in rough time order, most headed by a hedge, and a summary that led with
+"2.296820 times MOR's muscle-area–lever-arm product". Journals force the opposite
+discipline: a few numbered figures, each gathering lettered panels behind one claim,
+which makes the author choose the story. Both changes below are config, so the
+evaluation screens can treat them as factors.
+
+**`profile`** (`research | development | freeform`, default freeform) inlines the
+matching sections of the `ouroboros-profile` skill into the actor's and the critic's
+prompts (`publication.profile_text`). Research asks for a stated expectation before
+every experiment, numbers with scale, definitions as tested code, independent
+checks, and negative results kept as findings. Its critic checks meaning as well as
+arithmetic, which is the failure the first evaluation campaign hit with an ambiguous
+quantile. It also may not accept done until the publication states the answer.
+Development asks for a product runnable from a clean checkout, used as a user would
+with saved screenshots, and measured. Freeform adds nothing, so existing runs are
+unchanged.
+
+**The notebook and the paper (2026-10-31).** Theo's review of the first topology
+screen: the run page works, but the scribe's text on it should read as a run book
+of cheap notes, and the paper should be written once, at the end, not kept polished
+through the run. Keeping it current cost too much (scribe calls were 40% of the
+planner arm's tokens) and tangled the critic's done with page freshness (the
+standard arm's critic rejected done four times, each time over a stale page, never
+over the science). So the two are separate files on one page:
+
+- **`view/story.html`, the notebook**, every iteration, whatever the template: the
+  current findings, each a sentence heading with terse notes, its number and its
+  plot, and a `tried` section of approaches that failed. Curated, not appended.
+- **`view/paper.html`, the report**, under `publication.template` (`paper`,
+  research's default; `product`, development's; `notebook` writes none). When a
+  template is set, the scribe also keeps the figure ledger `view/figures.json`
+  (file, claim, source, record, iteration) every iteration, so the report can find
+  every plot.
+- **When the report is written:** when the run stops, one more scribe call
+  (`final`) writes paper.html from the notebook, the ledger, the memory and the
+  repo, and rewrites the summary. It is skipped when the operator interrupted the
+  run or a spend cap stopped it, so a cap is never overshot by design. It is one
+  bounded call in a `try`, after the loop, with its own time limit
+  (`final_timeout`, default 45m, because it draws, looks at and revises the
+  figures), and its transcript is `<n>-scribe-final.json`. `consolidate_every` (default null) adds mid-run drafts
+  every N worked iterations, for long runs that should have a paper before they end.
+- **The page:** one HTML file with a Run / Paper toggle at the top, shown once
+  paper.html exists. It opens on the run while the run is live and on the paper
+  once it has stopped; a click overrides that for the tab.
+- **The critic** judges done on the science and the notebook. The research and
+  development profiles say so: the report comes after the run, and a missing or
+  stale report never withholds done.
+
+The figure contract (`publication.figures`): at most `main_max` main figures,
+`<figure class="main" data-panels="A B C">`, captions beginning "Figure N.", a source
+line, every panel cited in the text as `Fig. 1A`, and the plots that did not make a
+main figure listed as supplementary. `figures.enabled: false` keeps the templates and
+drops numbered figures. How to draw them comes from the figure lab
+(`research-projects/figure-lab`, 2026-10-31: one frozen data packet, one agent, one
+set of instructions per trial): figures that lead with the row-level data, the
+groups that matter coloured and labelled, beat rows of estimates and cartoon
+schematics. The `figures` section of the skill carries that, Theo's colour palette,
+and a plan, draw, overlap-check, look, revise loop; `final_timeout` gives the final
+pass the time for it.
+
+The report pass is a mode of the scribe, like the fold, not a fourth role: the
+three-role rule of section 20 stands. It is the most writing-heavy call in the loop,
+so a paper run should give the scribe a strong model.
+
+`publication.check` reads paper.html back deterministically after each report pass:
+sections present and in order, figure count, panels, captions, citations, sources,
+links to missing assets, and the ledger. What it finds reaches the next report pass
+(a draft's problems reach the final pass) as fix-first, and is logged as a `publish`
+step; the notebook updates in between never see it. It never
+blocks the loop. The checker enforces form, not quality: whether the story is the
+right one is for the critic and, finally, the reader.
+
+The experiment adapter (section 22) reads the same `profile` and `publication` keys,
+with stricter rules (`docs/experimental-runner.md`). Unknown keys are refused, and
+`consolidate_every` counts cycles. The report pass is never an extra call: it is
+folded into the scribe call after a critic's done, any writer call in the last
+stretch of the shared budget, and a generalist's turn that claims done. That keeps
+every arm's total budget the same. A notebook arm's prompt carries neither, so a
+control stays comparable. The adapter's fixed prompt no longer forbids gathering
+data: what an agent may fetch is the charter's to say, because the new benchmarks
+start agents from a bare question.

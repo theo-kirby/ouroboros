@@ -180,10 +180,10 @@ _NAMED = {
         "change is possible."
     ),
     "no_frontier": (
-        "The frontier has not moved in {streak} iterations. Nodes are not changing "
-        "status and no charter criterion is getting closer to ticked. Whatever you have "
-        "been doing, it is not advancing the goal. Pick one criterion from the charter's "
-        "done criteria, name it, and do the smallest thing that moves it."
+        "The charter criterion statuses have not moved in {streak} iterations. "
+        "Auxiliary results may still be useful; explain any decision-relevant evidence "
+        "before repeating the direction. Name one original criterion and choose a "
+        "discriminating experiment, synthesis, or the configured exhaustion policy."
     ),
 }
 

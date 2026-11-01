@@ -23,10 +23,13 @@ def build_actor_prompt(
     iteration: int,
     injected: str | None = None,
     template: str | None = None,
+    profile: str = "",
 ) -> str:
+    """`profile` is the run profile's guidance section (publication.profile_text), '' for freeform."""
     tpl = template or load_template()
     return (
-        tpl.replace("{iteration}", str(iteration))
+        tpl.replace("{profile}", profile)
+        .replace("{iteration}", str(iteration))
         .replace("{goal}", goal_text.strip() or "(no goal.md yet — run `ouroboros init`)")
         .replace("{orient}", memory.orient_prompt())
         .replace("{injected}", injected or "(none)")
