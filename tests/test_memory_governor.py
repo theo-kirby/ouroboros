@@ -418,3 +418,30 @@ def test_criterion_identity_survives_governor_generated_slug(gov_repo):
         "current":"replacement prose","cites":[review]}],"folded":[review]})
     assert ok,msg
     assert rows(store.snapshot(),GOAL_WITH_GAPS)[0]['met']
+
+
+def test_the_brief_reads_the_governor_graph_through_the_same_verb(gov_repo, monkeypatch, capsys):
+    """`ouroboros mem brief` on a governor graph: the same sections as the files store, from its snapshot."""
+    monkeypatch.setenv(ENV, "governor")
+    monkeypatch.chdir(gov_repo)
+    first = mint(gov_repo, "Measured the kernel", "root", "--new", "gap-fast: 1.9 s", "--new", "gap-exact: open",
+                 "--new", "environment: facts")
+    second = mint(gov_repo, "Failed: the decoder change broke two tests", first)
+    fold_all(gov_repo, claims=[
+        {"new": "gap-fast", "parent": "root", "title": "Runs fast", "status": "working",
+         "current": f"- the kernel runs N=10^18 in 1.9 s [rec: {first}]", "cites": [first]},
+        {"new": "gap-exact", "parent": "root", "title": "Exact output", "status": "open",
+         "current": f"- matches at N=178 [rec: {first}]", "cites": [first],
+         "negative": f"- ruled out: the browser checker, chromium cannot start here [rec: {first}]\n"
+                     f"- fix and resubmit: the decoder change broke two tests [rec: {second}]"},
+        {"new": "environment", "parent": "root", "title": "This host", "status": "working",
+         "current": f"- no network in the shell [rec: {first}]", "cites": [first]},
+    ])
+    monkeypatch.setenv("OUROBOROS_ROLE", "worker")
+    assert cli.main(["mem", "brief"]) == 0
+    out = capsys.readouterr().out
+    ruled, _, rest = out.partition("## Ruled out")[2].partition("## Failed, to fix and resubmit")
+    assert "1.9 s" in out and "keep the graph honest." in out and "`.ouroboros/goal.md`" in out
+    assert "chromium" in ruled and "decoder" not in ruled
+    assert "broke two tests" in rest and "no network in the shell" in rest
+    assert cli.main(["mem", "record", "--title", "x", "--none", "y"]) == 2, "the worker only reads"

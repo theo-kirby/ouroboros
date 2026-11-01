@@ -216,6 +216,178 @@ def orient_text(g: Graph, *, title: str, generator: str, recent: int = 8) -> str
     return "\n".join(out)
 
 
+# -- the brief (`ouroboros mem brief`) -------------------------------------------
+
+# What a newcomer needs to start a turn, at a size that does not grow with the run:
+# about 1.5-3k tokens however many claims and records there are. Built from the
+# orientation lab's prototype (research-projects/orientation-lab/scripts/brief.py,
+# 2026-11-01) on the stores' own snapshot instead of the files on disk.
+BRIEF_MAX_CHARS = 10000
+BRIEF_FRONTIER = 5
+BRIEF_BEST = 5
+BRIEF_RULED = 8
+BRIEF_FIX = 5
+BRIEF_ENV = 5
+BRIEF_FILES = 6
+ENVIRONMENT_CLAIM = "environment"   # the claim the writer keeps host facts in
+
+# Negative knowledge bullets the writer tags, so "do not retry" and "fix and resubmit"
+# never mean the same thing; an untagged bullet counts as ruled out only when it says so.
+_RULED_TAG = re.compile(r"^(?:ruled out|do not retry|dead end)\s*:\s*", re.IGNORECASE)
+_FIX_TAG = re.compile(r"^(?:fix and resubmit|fix(?: forward)?|resubmit)\s*:\s*", re.IGNORECASE)
+_CLOSES = re.compile(r"\b(avoid|do not|don't|rejected|inconclusive|failed|fails|timed? ?out|crash(?:ed|es)?|"
+                     r"cannot|can't|exhausted|ruled out|no gain|slower|denied|refused|abandon|dead end|"
+                     r"does not work|did not work|no speedup)\b", re.IGNORECASE)
+_HOST = re.compile(r"\b(host|network|offline|download|permission|denied|sandbox|CPU|cores|RAM|\d+ ?GB|"
+                   r"Python 3\.\d+|Linux|macOS|GPU|browser|chromium|internet|proxy|disk)\b", re.IGNORECASE)
+_NEXT = re.compile(r"\b(next (?:bounded |single |one )?(?:experiment|step|unit|test|diagnostic)|Next:)", re.IGNORECASE)
+_REC_TAG = re.compile(r"\s*\[rec:[^\]]*\]")
+_PATH = re.compile(r"`([A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)*\.[A-Za-z0-9]{1,8}|[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)+/?)`")
+
+
+def _clip(text: str, n: int) -> str:
+    text = one_line(text)
+    return text if len(text) <= n else text[: n - 1].rsplit(" ", 1)[0] + "…"
+
+
+def _bullets(sec: str) -> list[str]:
+    """A section's bullets (or paragraphs), without comments and `[rec: …]` tags."""
+    sec = re.sub(r"<!--.*?-->", "", sec or "", flags=re.S)
+    out = []
+    for part in re.split(r"\n\s*\n|\n(?=\s*[-*] )", sec):
+        part = _REC_TAG.sub("", re.sub(r"^\s*[-*]\s*", "", part.strip())).strip()
+        part = one_line(part)
+        if part and not part.startswith("_("):
+            out.append(part)
+    return out
+
+
+def _sentences(text: str) -> list[str]:
+    return [x.strip() for x in re.split(r"(?<=[.;])\s+(?=[A-Z0-9`'\"(])", text) if x.strip()]
+
+
+def mission_paragraph(goal_text: str, limit: int = 900) -> str:
+    """The charter's title and the first paragraph of its mission."""
+    title = re.search(r"^#\s+(.*)$", goal_text or "", re.MULTILINE)
+    mission = charter.section(goal_text or "", "mission")
+    para = one_line(mission.split("\n\n")[0]) if mission.strip() else ""
+    head = title.group(1).strip() if title else "Goal"
+    return head + ("\n\n" + _clip(para, limit) if para else "")
+
+
+def brief_text(g: Graph, *, goal_text: str, goal_path: str, max_chars: int = BRIEF_MAX_CHARS) -> str:
+    """`ouroboros mem brief`: the goal, the best results, the frontier, what was ruled out
+    (apart from what failed and is to be fixed and resubmitted), the host, and the files
+    the last unit touched. Every section has a fixed number of clipped items, and the
+    whole is cut at `max_chars`, so the brief is the same size on turn 3 and turn 300."""
+    out = ["# Brief: what you need to start this turn", "", "## Goal", "",
+           mission_paragraph(goal_text) if (goal_text or "").strip() else "(no charter text)", "",
+           f"The charter is `{goal_path}`: done criteria, horizon ladder, constraints, policies. "
+           "Read it when you need a criterion's exact wording.", ""]
+    if not g.ok:
+        out += ["## Memory", "", "(the memory could not be read; `ouroboros mem orient` says why)"]
+        return "\n".join(out) + "\n"
+    claims = g.claims("state")
+    env_claim = next((c for c in claims if c.get("slug") == ENVIRONMENT_CLAIM), None)
+    work = [c for c in claims if c is not env_claim]
+
+    # the best results: criteria first, then the newest claims, each by its newest number
+    working = [c for c in work if c.get("status") == "working"]
+    working.sort(key=lambda c: (not str(c.get("slug") or "").startswith("gap-"), -c.get("seq", 0)))
+    out += ["## Best results so far", ""]
+    for c in working[:BRIEF_BEST]:
+        cur = _bullets(section(c.get("content", ""), "Current"))
+        best = next((i for i in cur if re.search(r"\d", i)), cur[0] if cur else "")
+        out.append(f"- **{_clip(c.get('title', ''), 100)}** (`{c.get('slug')}`): {_clip(best, 300)}")
+    if not working:
+        out.append("- (nothing established yet)")
+    if len(working) > BRIEF_BEST:
+        out.append(f"- …and {len(working) - BRIEF_BEST} more working claims (`ouroboros mem orient`).")
+    out.append("")
+
+    # the frontier, in the order governor ranks it: broken, blocked, open
+    frontier = [c for st in FRONTIER_STATUSES for c in work if c.get("status") == st]
+    out += ["## Frontier (open, broken, blocked)", ""]
+    for c in frontier[:BRIEF_FRONTIER]:
+        body = c.get("content", "")
+        cur = _bullets(section(body, "Current"))
+        line = (f"- [{c.get('status')}] **{_clip(c.get('title', ''), 100)}** (`{c.get('slug')}`): "
+                f"{_clip(cur[0] if cur else '', 320)}")
+        nxt = [x for i in cur + _bullets(section(body, "Negative knowledge")) for x in _sentences(i) if _NEXT.search(x)]
+        if nxt and nxt[0] not in line:
+            line += f" Next: {_clip(re.sub(r'^Next:\s*', '', nxt[0]), 200)}"
+        out.append(line)
+    if not frontier:
+        out.append("- (nothing open: take the next rung of the charter's horizon ladder)")
+    if len(frontier) > BRIEF_FRONTIER:
+        out.append(f"- …and {len(frontier) - BRIEF_FRONTIER} more (`ouroboros mem orient`).")
+    out.append("")
+
+    # negative knowledge, split by what it asks of the next turn
+    ruled: list[str] = []
+    fix: list[str] = []
+    seen: set[str] = set()
+    for c in sorted(work, key=lambda c: -c.get("seq", 0)):
+        for item in _bullets(section(c.get("content", ""), "Negative knowledge")):
+            key = item.lower()[:80]
+            if key in seen:
+                continue
+            seen.add(key)
+            if _FIX_TAG.match(item):
+                fix.append(f"{_clip(_FIX_TAG.sub('', item), 240)} (`{c.get('slug')}`)")
+            elif _RULED_TAG.match(item) or _CLOSES.search(item):
+                ruled.append(f"{_clip(_RULED_TAG.sub('', item), 240)} (`{c.get('slug')}`)")
+    out += ["## Ruled out (do not retry without a new reason)", ""]
+    out += [f"- {x}" for x in ruled[:BRIEF_RULED]] or ["- (nothing recorded)"]
+    if len(ruled) > BRIEF_RULED:
+        out.append(f"- …and {len(ruled) - BRIEF_RULED} more in the claims' negative knowledge.")
+    out.append("")
+    records = g.records()
+    newest = records[-1] if records else None
+    failed = newest is not None and str(newest.get("title") or "").lower().startswith(("failed", "dead end"))
+    if fix or failed:
+        out += ["## Failed, to fix and resubmit (not ruled out)", ""]
+        if failed:
+            out.append(f"- The last turn: {_clip(newest.get('title', ''), 200)} (`{newest.get('slug')}`)")
+        out += [f"- {x}" for x in fix[:BRIEF_FIX]]
+        out.append("")
+
+    # the host: the writer's environment claim, else sentences that speak about it
+    env: list[str] = []
+    if env_claim is not None:
+        body = env_claim.get("content", "")
+        env = [_clip(i, 240) for i in _bullets(section(body, "Current")) + _bullets(section(body, "Negative knowledge"))]
+    else:
+        seen = set()
+        for c in work:
+            body = c.get("content", "")
+            for item in _bullets(section(body, "Current")) + _bullets(section(body, "Negative knowledge")):
+                for x in _sentences(item):
+                    if _HOST.search(x) and x.lower()[:80] not in seen:
+                        seen.add(x.lower()[:80])
+                        env.append(_clip(x, 240))
+    out += ["## Environment (this host)", ""]
+    out += [f"- {x}" for x in env[:BRIEF_ENV]] or ["- (nothing recorded)"]
+    out.append("")
+
+    # where the last unit worked: the paths its records name
+    files: list[str] = []
+    for r in reversed(records[-2:]):
+        for m in _PATH.finditer(r.get("content") or ""):
+            if m.group(1) not in files and not m.group(1).startswith((".ouroboros/", ".flywheel/")):
+                files.append(m.group(1))
+    if files:
+        out += ["## Files the last unit touched", "", *[f"- `{f}`" for f in files[:BRIEF_FILES]], ""]
+
+    last = f"`{newest.get('slug')}`: {_clip(newest.get('title', ''), 140)}" if newest else "(none)"
+    out.append(f"Memory: {len(claims)} claims, {len(records)} records; newest record {last}. "
+               "`ouroboros mem show <id>` reads one whole.")
+    text = "\n".join(out) + "\n"
+    if len(text) > max_chars:
+        text = text[: max_chars - 60].rsplit("\n", 1)[0] + "\n- …(brief trimmed; `ouroboros mem orient` has the rest)\n"
+    return text
+
+
 # -- the store interface -------------------------------------------------------
 
 class Store(Protocol):
@@ -232,6 +404,7 @@ class Store(Protocol):
     def fold(self, plan: dict) -> tuple[bool, str]: ...
     def check(self) -> tuple[bool, str]: ...
     def orient(self) -> str: ...
+    def brief(self, *, goal_text: str, goal_path: str) -> str: ...
     def render(self) -> bool: ...
 
 
@@ -453,6 +626,10 @@ class GraphMemory(BaseMemory):
             .replace("{tail_count}", str(count))
             + self._legacy_handoff()
         )
+
+    def brief(self, goal_path: str) -> str:
+        """`ouroboros mem brief` for the run's goal: what the worker's prompt carries."""
+        return self.store.brief(goal_text=self.goal_text, goal_path=goal_path)
 
     def _legacy_handoff(self) -> str:
         """The last file of the old handoff memory, while this memory is still young."""

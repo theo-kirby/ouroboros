@@ -28,10 +28,15 @@ FOLD_SHAPE = (
 
 
 ROLE_ENV = "OUROBOROS_ROLE"
+READ_VERBS = {"orient", "show", "brief"}
 VERBS_OF = {
-    "actor": {"orient", "show"},                                     # reads; the scribe records its unit
-    "scribe": {"orient", "show", "record", "fold", "check", "render"},
-    "critic": {"orient", "show", "check"},                           # read-only, like the rest of its tools
+    # the standard loop: the actor and the critic read; the scribe writes
+    "actor": READ_VERBS,                                             # reads; the scribe records its unit
+    "scribe": READ_VERBS | {"record", "fold", "check", "render"},
+    "critic": READ_VERBS | {"check"},                                # read-only, like the rest of its tools
+    # the worker-writer loop: the worker reads; the writer is the only memory writer
+    "worker": READ_VERBS,
+    "writer": READ_VERBS | {"record", "fold", "check", "render"},
 }
 
 
@@ -40,9 +45,11 @@ def allowed(verb: str, role: str | None) -> bool:
 
 
 def add_parser(sub) -> None:
-    m = sub.add_parser("mem", help="the run's memory: orient, show, record, fold, check, render")
+    m = sub.add_parser("mem", help="the run's memory: orient, brief, show, record, fold, check, render")
     verbs = m.add_subparsers(dest="verb", required=True)
     verbs.add_parser("orient", help="what is true now: frontier, tail, architecture, recent records")
+    verbs.add_parser("brief", help="what a newcomer needs to start a turn, in 1.5-3k tokens: goal, best result, "
+                                   "frontier, ruled out, fix and resubmit, the host, the last unit's files")
     s = verbs.add_parser("show", help="one record or claim, whole")
     s.add_argument("id")
     r = verbs.add_parser("record", help="append one record with its declared impact")
@@ -58,7 +65,8 @@ def add_parser(sub) -> None:
     verbs.add_parser("render", help="write STATE.md")
 
 
-def run(args: argparse.Namespace, repo: Path, configured: str) -> int:
+def run(args: argparse.Namespace, repo: Path, configured: str, goal: str = ".ouroboros/goal.md") -> int:
+    """`goal` is the charter's path in the repo (the config's `goal`), for `brief`."""
     role = os.environ.get(ROLE_ENV)
     if not allowed(args.verb, role):
         verbs = ", ".join(sorted(VERBS_OF.get(role, set()))) or "none"
@@ -70,6 +78,8 @@ def run(args: argparse.Namespace, repo: Path, configured: str) -> int:
         print(f"ouroboros mem: {exc}", file=sys.stderr)
         return 2
     try:
+        args.goal_path = goal
+        args.repo = repo
         return _VERBS[args.verb](store, args)
     except ValueError as exc:
         print(f"ouroboros mem {args.verb}: {exc}", file=sys.stderr)
@@ -82,6 +92,16 @@ def _read(path: str) -> str:
 
 def _orient(store, args) -> int:
     print(store.orient())
+    return 0
+
+
+def _brief(store, args) -> int:
+    path = Path(args.repo) / args.goal_path
+    try:
+        goal_text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        goal_text = ""
+    print(store.brief(goal_text=goal_text, goal_path=args.goal_path), end="")
     return 0
 
 
@@ -152,4 +172,4 @@ def _render(store, args) -> int:
     return 0
 
 
-_VERBS = {"orient": _orient, "show": _show, "record": _record, "fold": _fold, "check": _check, "render": _render}
+_VERBS = {"orient": _orient, "brief": _brief, "show": _show, "record": _record, "fold": _fold, "check": _check, "render": _render}

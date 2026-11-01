@@ -248,6 +248,7 @@ the command does whatever the store needs (`memcli.py`):
 |---|---|---|
 | `orient` | `governor orient` | the same text, rendered in Python (`graph.orient_text`) |
 | `show <id>` | the node from `governor snapshot` | the node file |
+| `brief` | `graph.brief_text` over `governor snapshot` (governor has no brief) | the same, over the files |
 | `record --title … (--impact \| --new \| --none)` | `governor record --json`; parent defaults to the newest record | writes `records/r-NNNN.md`; same default |
 | `fold` | the tail with its impacts (shared code) | the same |
 | `fold --apply FILE` | `governor fold --apply`, then `governor render -o STATE.md` | validates like governor, writes `claims/`, logs `folds/f-NNNN.json`, renders |
@@ -261,6 +262,21 @@ memory), `ouroboros-scribe` (recording) and `ouroboros-fold` (the fold procedure
 holds the directive, the reconcile cadence, the frontier fingerprint, the prompts
 and the critic's context, over either store's snapshot in governor's snapshot
 shape. A difference between the stores is a failing test, not a second prompt.
+
+**`brief` (2026-11-01)** is what a newcomer needs to start a turn, at a size that
+does not grow with the run (at most 10,000 characters, about 2.5k tokens; every
+section has a fixed number of clipped items): the charter's title and first mission
+paragraph with the charter by path; the best results (working claims, criteria
+first, each by its newest bullet that carries a number); up to five frontier items
+with their claim text and any stated next step; what is **ruled out** (negative
+knowledge tagged `ruled out:`, or untagged and saying so) kept apart from what
+**failed and is to be fixed and resubmitted** (tagged `fix and resubmit:`, and the
+newest record when it is titled `Failed:` or `Dead end:`); the host, from the
+`environment` claim when there is one; and the paths the last two records name. It
+is the orientation lab's prototype (`research-projects/orientation-lab`, arm B)
+on the stores' snapshot, plus the "files to start from" map that round 1 found
+missing. The worker-writer loop puts it in every worker prompt (section 24); every
+role may read it.
 
 No role runs git for the memory: the loop's commit after the scribe (`git add -A`)
 carries STATE.md and, in a files repo, the memory files.
@@ -513,9 +529,9 @@ Three roles run every iteration, in this order:
 
 | Role | Runs | `ouroboros mem` verbs |
 |---|---|---|
-| actor | every iteration; writes code and tests, ends with a report | `orient`, `show` |
-| critic | every iteration; read-only; the whole of section 8 (`critic: rules` drops the model call) | `orient`, `show`, `check` |
-| scribe | every iteration, after the verdict and any revert; records, folds when due, checks, writes the story (`scribe: rules` drops the model call; the loop then writes each record itself) | `orient`, `show`, `record`, `fold`, `check`, `render` |
+| actor | every iteration; writes code and tests, ends with a report | `orient`, `show`, `brief` |
+| critic | every iteration; read-only; the whole of section 8 (`critic: rules` drops the model call) | `orient`, `show`, `brief`, `check` |
+| scribe | every iteration, after the verdict and any revert; records, folds when due, checks, writes the story (`scribe: rules` drops the model call; the loop then writes each record itself) | `orient`, `show`, `brief`, `record`, `fold`, `check`, `render` |
 
 The engine sets `OUROBOROS_ROLE` for each call (and carries it, with
 `OUROBOROS_MEMORY`, into a tmux window); `ouroboros mem` refuses a verb outside the

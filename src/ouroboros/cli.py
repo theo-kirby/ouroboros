@@ -1079,8 +1079,8 @@ def build_parser() -> argparse.ArgumentParser:
 def cmd_mem(args: argparse.Namespace) -> int:
     repo = repo_root()
     path = repo / DEFAULT_CONFIG_PATH
-    configured = Config.load(path).memory if path.exists() else "auto"
-    return memcli.run(args, repo, configured)
+    cfg = Config.load(path) if path.exists() else Config()
+    return memcli.run(args, repo, cfg.memory, cfg.goal)
 
 
 def design_command(harness: str, skill_dir: Path, installed: bool) -> list[str]:
