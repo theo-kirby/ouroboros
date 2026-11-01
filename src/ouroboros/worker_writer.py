@@ -60,6 +60,14 @@ class WorkerWriterEngine(Engine):
             return
         self._turn_zero()
 
+    def _reload_goal(self) -> None:
+        """The standard reload; the worker reads the charter by path, so the notice points there."""
+        super()._reload_goal()
+        if self.injected and "Follow the current charter above." in self.injected:
+            self.injected = self.injected.replace(
+                "Follow the current charter above.",
+                f"Follow the current charter, `{self._charter_path()}`; the writer has the new version too.")
+
     # -- small helpers -------------------------------------------------------
     def _charter_path(self) -> str:
         return self._rel(self.goal_path) if self.goal_path is not None else self.config.goal
@@ -270,9 +278,10 @@ class WorkerWriterEngine(Engine):
         except Exception as exc:
             self.recorder.log(f"[{n}] writer bookkeeping raised {exc!r}")
         folded = self._folded(folded_before)
-        self.recorder.decision(iteration=n, verdict=verdict.verdict, reason=verdict.reason, reply=next_prompt or "",
-                               did=verdict.did, doing=verdict.doing, fix_first="", source=verdict.source,
-                               verification="not_reported", verification_evidence="", notes=verdict.reply or None)
+        # `prompt` (not the critic's `reply`) is the writer's next step; `notes` is what the loop adds above it.
+        self.recorder.decision(iteration=n, verdict=verdict.verdict, reason=verdict.reason, did=verdict.did,
+                               doing=verdict.doing, source=verdict.source, prompt=next_prompt or "",
+                               notes=verdict.reply or None)
         self.recorder.step(iteration=n, step="writer", verdict=verdict.verdict, source=verdict.source,
                            turn=reply.turn if reply else None, done=reply.done if reply else None,
                            reason=verdict.reason[:300], recorded=recorded, fold_due=True, folded=folded or None,

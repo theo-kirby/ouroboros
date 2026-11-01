@@ -25,8 +25,12 @@ LOG_LINES = 40
 # it lands on the critic's row so an old run still reads. The `reconcile` and `plan`
 # steps of the retired maintainer and planner belong to no stage.
 STAGES = ("actor", "commit", "critic", "scribe")
-STATE_TO_STAGE = {"work": "actor", "critique": "critic", "oversee": "critic", "scribe": "scribe"}
-STEP_TO_STAGE = {"actor": "actor", "critique": "critic", "oversee": "critic", "scribe": "scribe"}
+# The worker-writer loop's two roles are stages of their own (status `loop: worker-writer`),
+# made when its steps appear, so a standard run's stages stay the four above.
+STATE_TO_STAGE = {"work": "actor", "critique": "critic", "oversee": "critic", "scribe": "scribe", "write": "writer"}
+WW_STATE_TO_STAGE = {"work": "worker", "write": "writer"}
+STEP_TO_STAGE = {"actor": "actor", "critique": "critic", "oversee": "critic", "scribe": "scribe",
+                 "worker": "worker", "writer": "writer"}
 
 
 # ---------------------------------------------------------------- transcript events
@@ -195,7 +199,7 @@ class Iteration:
     error: str | None = None
 
 
-ROLE_ORDER = ("actor", "critic", "scribe")
+ROLE_ORDER = ("actor", "critic", "scribe", "worker", "writer")
 
 
 @dataclass
@@ -476,13 +480,13 @@ def derive_iterations(steps: list[dict]) -> tuple[list[Iteration], dict[str, Sta
         prev_ts = ts or prev_ts
         stage = STEP_TO_STAGE.get(step or "")
         if stage:
-            st = stages[stage]
+            st = stages.setdefault(stage, StageStat())
             st.count += 1
             st.total += gap
             st.last = gap
         if it is None:
             continue
-        if step == "actor":
+        if step in ("actor", "worker"):
             it.actor_seconds = gap
             it.error = s.get("error") or None
         elif step == "commit":
@@ -497,6 +501,9 @@ def derive_iterations(steps: list[dict]) -> tuple[list[Iteration], dict[str, Sta
         elif step == "revert":
             it.reverted = True
         elif step == "scribe":
+            it.recorded = bool(s.get("recorded"))
+        elif step == "writer":   # the worker-writer loop: the verdict and the record in one call
+            it.verdict = s.get("verdict") or it.verdict or ""
             it.recorded = bool(s.get("recorded"))
     return [iters[k] for k in sorted(iters)], stages
 
@@ -613,7 +620,8 @@ def load_snapshot(run_dir: Path, *, repo: Path, stop_after_s: float | None = Non
     decisions = _read_jsonl(run_dir / "critic.jsonl") or _read_jsonl(run_dir / "overseer.jsonl")
     iterations, stages = derive_iterations(steps)
     state = (status or {}).get("state", "?")
-    stage = STATE_TO_STAGE.get(state, state)
+    stage = (WW_STATE_TO_STAGE.get(state) if (status or {}).get("loop") == "worker-writer" else None) \
+        or STATE_TO_STAGE.get(state, state)
     stage_since = float((status or {}).get("stage_since") or (status or {}).get("epoch") or now)
 
     feed: list[Event] = []

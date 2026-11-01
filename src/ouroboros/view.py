@@ -50,8 +50,12 @@ TIMELINE_OPEN = 30
 TIMELINE_MAX = 400
 JSONL_TAIL_BYTES = 4_000_000
 MISSION_LIMIT = 600
-LIVE_STATES = ("starting", "work", "critique", "scribe", "idle", "backoff", "refreshed")
+LIVE_STATES = ("starting", "work", "critique", "scribe", "write", "idle", "backoff", "refreshed")
 STAGES = (("work", "actor"), ("critique", "critic"), ("scribe", "scribe"))
+# The worker-writer loop (status `loop: worker-writer`) has two stages. The page draws
+# them in the first two slots: the worker's `work`, and the writer's `write` in the
+# critic's place (it judges the turn there, and records it in the same call).
+WW_STAGES = (("work", "worker"), ("critique", "writer"))
 
 # Verdict -> chip class. The word is always shown too: color is never the only signal.
 VERDICT_CLASS = {
@@ -60,9 +64,19 @@ VERDICT_CLASS = {
     "reject": "bad", "revert": "bad",
 }
 STATUS_CLASS = {"working": "ok", "open": "warn", "broken": "bad", "blocked": "bad", "superseded": "mute"}
-STATE_CLASS = {"work": "on", "critique": "on", "scribe": "on", "starting": "on", "idle": "mute",
+STATE_CLASS = {"work": "on", "critique": "on", "scribe": "on", "write": "on", "starting": "on", "idle": "mute",
                "refreshed": "mute", "backoff": "warn", "stopped": "mute", "killed": "bad"}
 STATE_WORD = {"work": "actor", "critique": "critic", "scribe": "scribe"}
+WW_STATE_WORD = {"work": "worker", "write": "writer", "critique": "writer"}
+
+
+def _ww(status: dict) -> bool:
+    """A run of the worker-writer loop (DESIGN.md section 24)."""
+    return status.get("loop") == "worker-writer"
+
+
+def _words(status: dict) -> dict:
+    return WW_STATE_WORD if _ww(status) else STATE_WORD
 
 _AGO = "\x00ago\x00"          # stands in for now-dependent text while the version hash is made
 _PLACEHOLDER = re.compile(r"\{\{(\w+)\}\}")
@@ -277,7 +291,12 @@ def _iterations(steps: list[dict], decisions: list[dict], status: dict, graph: G
         step = st.get("step")
         if step in ("commit", "critique", "scribe") and ts is not None:
             it["ts"][step] = ts
-        if step == "commit":
+        if step == "writer":   # the worker-writer loop: the verdict and the record in one call
+            if ts is not None:
+                it["ts"]["critique"] = it["ts"]["scribe"] = ts
+            it["verdict"] = st.get("verdict")
+            it["fold"] = bool(st.get("folded")) and bool(st.get("recorded"))
+        elif step == "commit":
             it["changed"] = bool(st.get("changed"))
         elif step == "critique":
             it["verdict"] = st.get("verdict")
@@ -287,7 +306,7 @@ def _iterations(steps: list[dict], decisions: list[dict], status: dict, graph: G
             it["fold"] = bool(st.get("fold_due")) and bool(st.get("recorded"))
         elif step == "loop":
             it["signal"] = st.get("signal")
-        elif step in ("actor", "engine_error") and st.get("error"):
+        elif step in ("actor", "worker", "engine_error") and st.get("error"):
             it["error"] = st.get("error")
         if ts is not None:
             it["end"] = max(it.get("end", ts), ts)
@@ -430,7 +449,7 @@ ACT_WORDS = {"thinking": "thinking", "tool": "using a tool", "command": "running
 def _activity(status: dict) -> dict | None:
     """What the running call does now (`activity.live`, written by the loop's heartbeat), while a stage runs."""
     act = status.get("activity")
-    if str(status.get("state") or "") not in dict(STAGES) or not isinstance(act, dict):
+    if str(status.get("state") or "") not in (*dict(STAGES), "write") or not isinstance(act, dict):
         return None
     return act if act.get("kind") in ACT_WORDS else None
 
@@ -445,6 +464,9 @@ def _loop(status: dict, its: list[dict]) -> str:
     centre is drawn, so the page still reads without the script.
     """
     state = str(status.get("state") or "")
+    ww = _ww(status)
+    if ww and state == "write":
+        state = "critique"   # the writer's slot on the dial
     n = _int(status.get("iteration"))
     epoch, elapsed = _float(status.get("epoch")), _float(status.get("elapsed_s"))
     row = next((i for i in its if i["n"] == n), None)
@@ -452,7 +474,8 @@ def _loop(status: dict, its: list[dict]) -> str:
     started = epoch - elapsed if epoch is not None and elapsed is not None else None
     start = row["start"] if row and row.get("start") is not None else (before[-1].get("end") if before else started)
     ts = row["ts"] if row else {}
-    keys = [k for k, _ in STAGES]
+    stages_ = WW_STAGES if ww else STAGES
+    keys = [k for k, _ in stages_]
     begin = {"work": start, "critique": ts.get("commit"), "scribe": ts.get("critique")}
     end = {"work": ts.get("commit"), "critique": ts.get("critique"), "scribe": ts.get("scribe")}
     since = _float(status.get("stage_since"))
@@ -475,8 +498,12 @@ def _loop(status: dict, its: list[dict]) -> str:
             "start": round(start) if start is not None else None, "stages": stages, "past": past,
             "verdict": VERDICT_CLASS.get(str((row or {}).get("verdict") or ""), "") if ts.get("critique") else "",
             "kind": kind, "shells": _int((act or {}).get("background"), 0) or 0}
-    word = STATE_WORD.get(state, state) or "–"
-    label = "The loop as a dial: actor, then critic, then scribe" + (f"; now the {STATE_WORD[state]}" if state in STATE_WORD else "")
+    if ww:
+        spec.update(keys=keys, names=dict(stages_))
+    words = _words(status)
+    word = words.get(state, state) or "–"
+    label = (f"The loop as a dial: {', then '.join(name for _, name in stages_)}"
+             + (f"; now the {words[state]}" if state in words else ""))
     return (f'<svg class="ring dial" data-state="{_e(state)}" data-activity="{_e(kind)}" data-dial="{_e(json.dumps(spec))}"'
             f' viewBox="-44 -22 388 340" role="img" aria-label="{_e(label)}">'
             f'<text x="150" y="120" text-anchor="middle" class="cl">iteration</text>'
@@ -629,7 +656,9 @@ def _done(graph: Graph | None, goal_text: str) -> str:
 
 NOW_WORDS = {"work": "The actor is doing the work", "critique": "The critic is checking the work",
              "scribe": "The scribe is writing it down", "idle": "Between iterations", "refreshed": "Between iterations",
-             "starting": "Starting up", "backoff": "Waiting", "stopped": "Stopped", "killed": "Stopped"}
+             "starting": "Starting up", "backoff": "Waiting", "stopped": "Stopped", "killed": "Stopped",
+             "write": "The writer is checking the work and writing it down"}
+WW_NOW_WORDS = {**NOW_WORDS, "work": "The worker is doing the work"}
 
 
 def _now(status: dict, decisions: list[dict], goal_text: str) -> str:
@@ -646,7 +675,7 @@ def _now(status: dict, decisions: list[dict], goal_text: str) -> str:
     judged = _int(last.get("iteration")) == n
     doing, did = str(last.get("doing") or ""), str(last.get("did") or "")
     main, sub = "", ""
-    if state in ("work", "critique") and not judged:
+    if state in ("work", "critique", "write") and not judged:
         main = doing or ("Reading the charter and the memory, to make a first change." if n <= 1 else "")
     elif state == "backoff":
         main = f"For {_duration(status.get('seconds'))}: {status.get('why') or 'a harness asked the run to wait'}."
@@ -661,8 +690,8 @@ def _now(status: dict, decisions: list[dict], goal_text: str) -> str:
     if not main:
         main = charter.mission(goal_text or "").strip() or "–"
     live = state in LIVE_STATES and state not in ("idle", "refreshed")
-    kicker = NOW_WORDS.get(state, state or "Unknown")
-    if state in dict(STAGES) and n:
+    kicker = (WW_NOW_WORDS if _ww(status) else NOW_WORDS).get(state, state or "Unknown")
+    if state in (*dict(STAGES), "write") and n:
         kicker += f" · iteration {n}"
     act = _activity(status)
     doing_now = ""
@@ -741,14 +770,16 @@ def _decisions(decisions: list[dict]) -> str:
     for d in reversed(last):
         v = str(d.get("verdict") or "?")
         body = []
-        for key, label in (("doing", "Doing"), ("did", "Did"), ("fix_first", "Fix first"), ("reply", "Reply to the actor")):
+        for key, label in (("doing", "Doing"), ("did", "Did"), ("fix_first", "Fix first"), ("reply", "Reply to the actor"),
+                           ("notes", "From the loop"), ("prompt", "Next prompt")):
             text = d.get(key)
             if text:
                 body.append(f"<dt>{label}</dt><dd>{_e(text)}</dd>")
         if d.get("source"):
             body.append(f"<dt>Source</dt><dd>{_e(d['source'])}</dd>")
-        body.append(f"<dt>Reviewer-reported verification</dt><dd>{_e(d.get('verification') or 'not_reported')}: "
-                    f"{_e(d.get('verification_evidence') or '')}</dd>")
+        if "prompt" not in d:   # the worker-writer loop's writer reports no verification scope
+            body.append(f"<dt>Reviewer-reported verification</dt><dd>{_e(d.get('verification') or 'not_reported')}: "
+                        f"{_e(d.get('verification_evidence') or '')}</dd>")
         doing = f'<span class="sub">{_md(_clip(str(d["doing"]), 200))}</span>' if d.get("doing") else ""
         items.append(
             f'<li><details id="{_id("d", d.get("iteration"))}"><summary>'
@@ -851,10 +882,13 @@ def _progress(its: list[dict], status: dict) -> str:
             g.append(f'<text class="ax" x="{x + bw / 2:.1f}" y="{base + 36}" text-anchor="middle">{it["n"]}</text>')
         g.append("</g></a>")
     g.append("</svg>")
-    legend = ('<p class="legend"><span><i class="s-actor"></i>actor</span><span><i class="s-critic"></i>critic</span>'
-              '<span><i class="s-scribe"></i>scribe</span><span><i class="v ok"></i>kept</span>'
-              '<span><i class="v warn"></i>held back</span><span><i class="v bad"></i>reverted</span>'
-              '<span><i class="fold"></i>memory folded</span></p>')
+    roles = ('<span><i class="s-actor"></i>worker</span><span><i class="s-critic"></i>writer</span>' if _ww(status) else
+             '<span><i class="s-actor"></i>actor</span><span><i class="s-critic"></i>critic</span>'
+             '<span><i class="s-scribe"></i>scribe</span>')
+    legend = (f'<p class="legend">{roles}<span><i class="v ok"></i>kept</span>'
+              '<span><i class="v warn"></i>held back</span>'
+              + ('<span><i class="v bad"></i>failed</span>' if _ww(status) else '<span><i class="v bad"></i>reverted</span>')
+              + '<span><i class="fold"></i>memory folded</span></p>')
     rows = []
     for it in reversed(its):
         d = it.get("decision") or {}
@@ -870,7 +904,9 @@ def _progress(its: list[dict], status: dict) -> str:
             _chip(f"loop: {it['signal']}", "warn") if it.get("signal") else "",
             _chip("error", "bad") if it.get("error") and not v else "") if x)
         body = "".join(f"<dt>{k}</dt><dd>{x}</dd>" for k, x in (
-            ("Critic", _md(_clip(str(why), 600))), ("Next", _md(_clip(str(d.get("doing") or ""), 400))),
+            ("Writer" if "prompt" in d else "Critic", _md(_clip(str(why), 600))),
+            ("Next", _md(_clip(str(d.get("doing") or ""), 400))),
+            ("Next prompt", _md(_clip(str(d.get("prompt") or ""), 600))),   # the worker-writer loop's
             ("Record", rec.strip())) if x)
         rows.append(
             f'<li><details class="it" id="it-{it["n"]}"><summary><span class="num n">{it["n"]}</span>'

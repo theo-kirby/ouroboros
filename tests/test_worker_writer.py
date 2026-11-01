@@ -247,3 +247,82 @@ def test_the_writer_does_the_final_report_pass(repo):
     assert len(writer.prompts) == 3 and "write the report" in writer.prompts[-1]
     assert writer.calls[-1].get("json_schema") is None and writer.calls[0].get("json_schema") is not None
     assert any(s["step"] == "publish_final" for s in steps(eng))
+
+
+# -- the run page, the TUI and the live activity name the two roles ------------------
+
+def _set_state(eng, **fields):
+    st = eng.recorder.read_status()
+    eng.recorder.status(**{**{k: v for k, v in st.items() if k not in ("ts", "epoch")}, **fields})
+
+
+def test_the_run_page_names_the_worker_and_the_writer(repo):
+    from ouroboros import view
+    eng = make_ww(repo, FakeHarness([], default=works_json()), FakeHarness([], default=writes("measure it")),
+                  max_iterations=2)
+    eng.run()
+    _set_state(eng, state="write", iteration=2)
+    page = view.render(eng.recorder.run_dir, repo, goal_text=GOAL, graph=eng.memory.graph(), alive=True).read_text()
+    assert "worker, then writer; now the writer" in page
+    assert "&quot;names&quot;: {&quot;work&quot;: &quot;worker&quot;, &quot;critique&quot;: &quot;writer&quot;}" in page
+    assert '<i class="s-actor"></i>worker</span><span><i class="s-critic"></i>writer</span>' in page
+    assert "The writer is checking the work" in page
+    assert "Next prompt" in page and "measure it" in page
+    assert "Reviewer-reported verification" not in page
+
+
+def test_the_tui_reads_a_worker_writer_run(repo):
+    from ouroboros.tui.state import derive_iterations, load_snapshot
+    eng = make_ww(repo, FakeHarness([], default=works_json()),
+                  FakeHarness([writes("u1"), writes("u2", turn="failed"), writes("u3")]), max_iterations=2)
+    eng.run()
+    its, stages = derive_iterations(steps(eng))
+    assert [(i.n, i.verdict, i.recorded, i.changed) for i in its if i.n] == [(1, "reject", True, True),
+                                                                              (2, "continue", True, True)]
+    assert stages["worker"].count == 2 and stages["writer"].count == 3
+    _set_state(eng, state="write")
+    snap = load_snapshot(eng.recorder.run_dir, repo=repo, roles={"worker": [("fake", None)], "writer": [("fake", None)]})
+    assert snap.stage == "writer"
+    _set_state(eng, state="work")
+    assert load_snapshot(eng.recorder.run_dir, repo=repo).stage == "worker"
+
+
+def test_the_live_activity_follows_the_writer(tmp_path):
+    from ouroboros import activity
+    t = tmp_path / "transcripts"
+    t.mkdir()
+    (t / "0003-writer.json").write_text('{"type": "item.started", "item": {"type": "command_execution", "id": "c1", '
+                                        '"command": "ouroboros mem fold"}}\n')
+    (t / "0003-writer.prompt.txt").write_text("not a transcript")
+    act = activity.live(tmp_path, 3, "write")
+    assert act["kind"] == "command" and "mem fold" in act["what"]
+    assert activity.live(tmp_path, 3, "work")["kind"] == "thinking", "no worker transcript yet"
+
+
+def test_the_reporter_names_the_writer_when_it_accepts_done(repo):
+    """The reporter reads a worker-writer run's files as it reads any run's: the writer's done is a done."""
+    from test_watch import Clock, FakeRun, kinds, make_watcher
+    clock = Clock()
+    fake = FakeRun(repo, clock)
+    w, out = make_watcher(fake, clock)
+    w.check()
+    fake.n += 1
+    fake.step(step="writer", verdict="done_accepted", recorded=True)
+    fake._append("critic.jsonl", {"iteration": fake.n, "verdict": "done_accepted", "reason": "every criterion holds",
+                                  "did": "d", "doing": "n", "prompt": "polish the docs"})
+    fake.status(state="idle", last_verdict="done_accepted", loop="worker-writer")
+    events = w.check()
+    assert kinds(events) == ["done_accepted"] and "the writer accepted done" in events[0].title
+
+
+def test_a_revised_charter_reaches_the_writer_and_the_worker_is_pointed_at_it(repo):
+    def operator_edits(cwd, prompt):   # stands in for the operator editing the charter between turns
+        (cwd / ".ouroboros" / "goal.md").write_text(GOAL.replace("keep going.", "keep going, and faster."))
+        return works_json()(cwd, prompt)
+
+    worker = FakeHarness([operator_edits], default=works_json())
+    writer = FakeHarness([], default=writes("u"))
+    eng = make_ww(repo, worker, writer, max_iterations=2)
+    eng.run()
+    assert "Follow the current charter, `.ouroboros/goal.md`" in worker.prompts[1]
+    assert "keep going, and faster." in writer.prompts[-1] and "keep going, and faster." in worker.prompts[1]

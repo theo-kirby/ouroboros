@@ -1721,8 +1721,17 @@ blocked on this host. The call asks the harness for its JSON schema
 `reject` (with nothing reverted: the standard loop's fix-forward case), `stuck` is
 `stuck`, and `done: true` is `done_accepted`. So the stop rules (`on_done_accepted`,
 `max_stuck`), the stuck backoff, the no-early-exit rule, the loop detector and its
-model rotation, the `ok` tags (not on a failed turn), the run page, the TUI and the
-reporter all work unchanged. **Nothing is reverted**: a failed turn stays on the
+model rotation (on the worker's chain), the `ok` tags (not on a failed turn), the
+limit board and `ouroboros refresh` (over the worker's and the writer's pools), the
+budget (each call counted under its role) and the reporter all work unchanged.
+**The views name the two roles** when `status.json` says `loop: worker-writer`:
+the run page's dial has two stages, worker then writer (the writer in the critic's
+slot, where the verdict tick goes), the timeline's legend says worker and writer
+and "failed" for a failed turn, and an iteration opens on the writer's reason and
+the next prompt (a decision carries `prompt` and the loop's `notes`, no `reply` and
+no verification scope); the TUI's pipeline reads worker -> writer, and the live
+activity follows the `writer` transcript in the `write` state. **Nothing is
+reverted**: a failed turn stays on the
 branch, recorded as failed, and the next prompt fixes it forward (a revert switch
 may come back).
 

@@ -497,7 +497,8 @@ class Watcher:
             else:
                 streak.update(verdict="", n=0)
             if v == "done_accepted":
-                events.append(Event("done_accepted", f"{run}: the critic accepted done at #{d.get('iteration')}",
+                who = "writer" if "prompt" in d else "critic"   # a worker-writer decision carries the next prompt
+                events.append(Event("done_accepted", f"{run}: the {who} accepted done at #{d.get('iteration')}",
                                     str(d.get("reason") or "")[:400], priority=0, digest=True))
 
         limited = self.cursor.setdefault("limited", {})
