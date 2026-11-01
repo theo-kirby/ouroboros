@@ -16,7 +16,7 @@ from pathlib import Path
 
 from ..criteria import tag_fold
 
-from .graph import Graph, GraphMemory
+from .graph import Graph, GraphMemory, brief_text
 
 
 def _main_checkout(repo: Path) -> Path:
@@ -191,6 +191,10 @@ class GovernorStore:
     def orient(self) -> str:
         code, text = self.gov("orient")
         return text if code == 0 else f"(governor orient failed: {text.strip()[-1000:]})"
+
+    def brief(self, *, goal_text: str, goal_path: str) -> str:
+        """Governor has no brief of its own: the same text, from its snapshot."""
+        return brief_text(self.snapshot(), goal_text=goal_text, goal_path=goal_path)
 
     def render(self) -> bool:
         code, out = self.gov("render", "-o", str(self.state_md))

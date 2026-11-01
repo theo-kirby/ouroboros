@@ -396,7 +396,7 @@ footer{margin-top:40px;padding-top:8px;border-top:1px solid var(--rule);color:va
   // One turn is the smallest round span that holds this iteration and the three before it; the
   // band fills from twelve o'clock by stage, the hand is now, the tick the critic's verdict, and
   // the thin inner rings are the iterations before, on the same clock.
-  var KEYS = ["work", "critique", "scribe"], NAMES = {work: "actor", critique: "critic", scribe: "scribe"};
+  var STD_KEYS = ["work", "critique", "scribe"], STD_NAMES = {work: "actor", critique: "critic", scribe: "scribe"};
   var TURNS = [300, 600, 900, 1800, 3600, 7200, 14400, 28800, 57600];
   var CX = 150, CY = 150, R = 108, BAND = 22, PAST = [86, 75, 64];
   function f1(x) { return x.toFixed(1); }
@@ -419,6 +419,7 @@ footer{margin-top:40px;padding-top:8px;border-top:1px solid var(--rule);color:va
     if (!svg) return;
     var d;
     try { d = JSON.parse(svg.getAttribute("data-dial")); } catch (e) { return; }
+    var KEYS = d.keys || STD_KEYS, NAMES = d.names || STD_NAMES;   // the worker-writer loop has two stages
     var now = d.live || !d.at ? Date.now() / 1000 : d.at;
     var t = d.start != null ? Math.max(0, now - d.start) : 0;
     var need = t, out = ['<circle class="track" cx="' + CX + '" cy="' + CY + '" r="' + R + '"/>'];

@@ -121,3 +121,36 @@ def critique(v: str, reply: str = "", fix_first: str = "", reason: str = "r") ->
     import json
     return lambda cwd, prompt: Result(text=json.dumps({"verdict": v, "reply": reply, "reason": reason,
                                                        "did": "d", "doing": "c", "fix_first": fix_first}), cost_usd=0.02)
+
+
+# -- the worker-writer loop ------------------------------------------------------
+
+def worker_report(did: str, **extra) -> str:
+    """The worker's final message: one JSON object."""
+    import json
+    return json.dumps({"did": did, "files": ["work.txt"], "result": "more", "evidence": "-", "claims": [],
+                       "failed": "", "blocked": "", "assumed": "", "next": "", **extra})
+
+
+def works_json(did: str = "did a unit", log: list | None = None) -> Behavior:
+    """A worker: one line of work, committed by the loop, and a JSON report."""
+    def b(cwd: Path, prompt: str) -> Result:
+        if log is not None:
+            log.append(("worker", prompt))
+        (cwd / "work.txt").open("a").write(did + "\n")
+        return Result(text=worker_report(did), session_id="w1", cost_usd=0.5, turns=3)
+    return b
+
+
+def writes(prompt: str = "do the next unit", *, turn: str = "ok", done: bool = False, title: str | None = None,
+           log: list | None = None) -> Behavior:
+    """A writer: one record (as `ouroboros mem record` would write it) and its JSON reply."""
+    import json
+
+    def b(cwd: Path, text: str) -> Result:
+        if log is not None:
+            log.append(("writer", text))
+        _record(cwd, title or f"writer: {prompt[:40]}")
+        return Result(text=json.dumps({"turn": turn, "done": done, "reason": f"turn {turn}", "did": "d",
+                                       "doing": "n", "prompt": prompt}), cost_usd=0.1)
+    return b

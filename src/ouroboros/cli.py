@@ -17,7 +17,7 @@ from pathlib import Path
 from . import __version__, launch, tmux
 from .banner import render as render_banner
 from .budget import BudgetClock
-from .config import DEFAULT_CONFIG_PATH, Config
+from .config import DEFAULT_CONFIG_PATH, Config, ConfigError
 from .engine import Engine
 from .gitguard import GitError, GitGuard
 from . import history
@@ -34,6 +34,8 @@ from .recorder import Recorder
 from . import watch as watcher
 from .roles.critic import AgentCritic, RulesCritic
 from .roles.scribe import Scribe
+from .roles.writer import Writer
+from .worker_writer import WorkerWriterEngine
 from .publication import profile_text
 from . import view as runview
 
@@ -140,9 +142,9 @@ def load_config(args: argparse.Namespace, repo: Path) -> Config:
     if getattr(args, "run_name", None):
         cfg.run = args.run_name
     if getattr(args, "harness", None):
-        cfg.roles.setdefault("actor", cfg.role("actor")).harness = args.harness
+        cfg.roles.setdefault(cfg.primary_role, cfg.role(cfg.primary_role)).harness = args.harness
     if getattr(args, "model", None):
-        cfg.roles.setdefault("actor", cfg.role("actor")).model = args.model
+        cfg.roles.setdefault(cfg.primary_role, cfg.role(cfg.primary_role)).model = args.model
     if getattr(args, "for_", None):
         cfg.stop.after = args.for_
     if getattr(args, "max_iterations", None) is not None:
@@ -166,6 +168,25 @@ def load_config(args: argparse.Namespace, repo: Path) -> Config:
     return cfg
 
 
+def loop_switch_problem(cfg: Config, repo: Path) -> str | None:
+    """A run that already has iterations keeps the loop it started with.
+
+    worker-writer became the default (2026-11-01), so an older config without `loop.kind`
+    would otherwise continue a standard run as a worker-writer one."""
+    run_yml = run_dir_for(repo, cfg.run) / "run.yml"
+    if not run_yml.exists():
+        return None
+    try:
+        import yaml
+        before = (((yaml.safe_load(run_yml.read_text()) or {}).get("loop") or {}).get("kind")) or "standard"
+    except Exception:
+        return None
+    if before == cfg.loop.kind:
+        return None
+    return (f"run {cfg.run!r} started as loop: {before} and this config says loop: {cfg.loop.kind}; "
+            f"set `loop: {before}` in the config to continue it, or start a new run with --run-name")
+
+
 def preflight(cfg: Config, repo: Path) -> str | None:
     """Everything that can refuse a run, checked before we detach into tmux."""
     git = GitGuard(repo, cfg.branch)
@@ -177,6 +198,12 @@ def preflight(cfg: Config, repo: Path) -> str | None:
         return "repository has no commits yet; make an initial commit first"
     if git.is_dirty() and not cfg.git.allow_dirty:
         return "working tree is dirty; commit, stash, or pass --allow-dirty"
+    problem = cfg.problem()   # flags may have changed what the file said
+    if problem:
+        return problem
+    problem = loop_switch_problem(cfg, repo)
+    if problem:
+        return problem
     goal_path = repo / cfg.goal
     if not goal_path.exists() or not goal_path.read_text().strip():
         return f"no goal at {goal_path}; run `ouroboros init` and fill it in"
@@ -324,6 +351,15 @@ def cmd_run(args: argparse.Namespace) -> int:
         if not tmux_usable():
             recorder.log("backend tmux requested but no run session is reachable; calls run headless")
     pools = _pools(cfg, recorder.log)
+    if cfg.worker_writer:
+        wrole = cfg.role("writer")
+        writer = Writer(pools["writer"], cwd=repo, timeout=wrole.timeout_seconds, model=wrole.model,
+                        transcript_path=lambda n, a: recorder.transcript_path(n, "writer", a), log=recorder.log)
+        engine = WorkerWriterEngine(
+            config=cfg, repo=repo, harness=pools["worker"], memory=memory, writer=writer,
+            git=git, recorder=recorder, budget=BudgetClock(cfg.stop), goal_text=goal_text, goal_path=goal_path,
+        )
+        return _run_engine(engine, repo, cfg, recorder)
     if cfg.critic == "agent":
         crole = cfg.role("critic")
         critic = AgentCritic(
@@ -343,6 +379,10 @@ def cmd_run(args: argparse.Namespace) -> int:
         config=cfg, repo=repo, harness=pools["actor"], memory=memory, critic=critic, scribe=scribe,
         git=git, recorder=recorder, budget=BudgetClock(cfg.stop), goal_text=goal_text, goal_path=goal_path,
     )
+    return _run_engine(engine, repo, cfg, recorder)
+
+
+def _run_engine(engine: Engine, repo: Path, cfg: Config, recorder: Recorder) -> int:
     # a re-run of the same run name continues where the last one stopped
     prior = recorder.read_jsonl(recorder.iterations)
     last_iter = max((int(r.get("iteration") or 0) for r in prior), default=0)
@@ -701,7 +741,7 @@ def cmd_status(args: argparse.Namespace) -> int:
 # `oversee`, `reconcile` and `plan` are steps older runs wrote for the overseer,
 # maintainer and planner, roles the loop no longer has; their cost still counts.
 ROLE_OF_STEP = {"commit": "actor", "critique": "critic", "scribe": "scribe", "oversee": "overseer",
-                "reconcile": "maintainer", "plan": "planner"}
+                "reconcile": "maintainer", "plan": "planner", "writer": "writer"}
 
 
 def _cost_by_role(steps: list[dict], decisions: list[dict]) -> tuple[dict[str, float], int]:
@@ -709,7 +749,7 @@ def _cost_by_role(steps: list[dict], decisions: list[dict]) -> tuple[dict[str, f
     by_role: dict[str, float] = {}
     uncosted = 0
     for s in steps:
-        role = ROLE_OF_STEP.get(s.get("step", ""))
+        role = ROLE_OF_STEP.get(s.get("step", "")) if s.get("step") != "commit" else (s.get("role") or "actor")
         if role is None:
             continue
         if s.get("cost"):
@@ -949,19 +989,39 @@ def skill_targets(*, user: bool, home: Path | None = None) -> list[Path]:
     return out
 
 
-def cmd_skills(args: argparse.Namespace) -> int:
+# The skills a person invokes. Every other ouroboros-* skill is a role prompt the loop
+# inlines into its calls; an installed copy only goes stale, and agents found and read
+# one every turn (orientation study, 2026-11-01), so those are never installed.
+USER_SKILLS = ("ouroboros-checkup", "ouroboros-design", "ouroboros-launch")
+
+
+def install_skills(target: Path) -> tuple[list[Path], list[Path]]:
+    """Copy the user skills into `target`; remove every other ouroboros-* folder there. (installed, removed)"""
     src = resources.files("ouroboros.skills")
+    target.mkdir(parents=True, exist_ok=True)
+    removed = []
+    for old in sorted(target.glob("ouroboros-*")):
+        if old.is_dir() and old.name not in USER_SKILLS:
+            shutil.rmtree(old)
+            removed.append(old)
+    installed = []
+    for name in USER_SKILLS:
+        dest = target / name
+        if dest.exists():
+            shutil.rmtree(dest)
+        shutil.copytree(str(src.joinpath(name)), dest)
+        installed.append(dest)
+    return installed, removed
+
+
+def cmd_skills(args: argparse.Namespace) -> int:
     targets = [Path(args.target)] if args.target else skill_targets(user=args.user)
     for t in targets:
-        t.mkdir(parents=True, exist_ok=True)
-        for skill in src.iterdir():
-            if not skill.is_dir():
-                continue
-            dest = t / skill.name
-            if dest.exists():
-                shutil.rmtree(dest)
-            shutil.copytree(str(skill), dest)
-            print(f"installed {dest}")
+        installed, removed = install_skills(t)
+        for p in removed:
+            print(f"removed {p}")
+        for p in installed:
+            print(f"installed {p}")
     return 0
 
 
@@ -1038,7 +1098,7 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--harness", choices=["claude", "codex", "pi"])
     d.set_defaults(fn=cmd_design)
 
-    sk = sub.add_parser("skills", help="install the ouroboros-* skills for claude, codex, and pi")
+    sk = sub.add_parser("skills", help="install the user skills (checkup, design, launch) for claude, codex, and pi; remove stale role-prompt copies")
     sk.add_argument("action", choices=["install"])
     sk.add_argument("--user", action="store_true", help="install to ~/.claude, ~/.codex, ~/.pi/agent, ~/.agents skill dirs")
     sk.add_argument("--target")
@@ -1059,8 +1119,8 @@ def build_parser() -> argparse.ArgumentParser:
 def cmd_mem(args: argparse.Namespace) -> int:
     repo = repo_root()
     path = repo / DEFAULT_CONFIG_PATH
-    configured = Config.load(path).memory if path.exists() else "auto"
-    return memcli.run(args, repo, configured)
+    cfg = Config.load(path) if path.exists() else Config()
+    return memcli.run(args, repo, cfg.memory, cfg.goal)
 
 
 def design_command(harness: str, skill_dir: Path, installed: bool) -> list[str]:
@@ -1138,7 +1198,11 @@ def main(argv: list[str] | None = None) -> int:
         render_banner()
         return interactive_menu(parser)
     args = parser.parse_args(argv)
-    return args.fn(args)
+    try:
+        return args.fn(args)
+    except ConfigError as exc:   # an unknown loop or handoff, or roles that do not go together
+        print(f"ouroboros: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

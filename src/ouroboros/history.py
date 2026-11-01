@@ -306,7 +306,7 @@ def front_matter(facts: RunFacts) -> list[str]:
         f"merged: {facts.merged or 'no'}",
         f"branch: {facts.branch}",
         f"memory: {facts.memory}",
-        f"actor: {facts.models.get('actor', '?')}",
+        f"actor: {facts.models.get('actor') or facts.models.get('worker', '?')}",
         "---",
     ]
 

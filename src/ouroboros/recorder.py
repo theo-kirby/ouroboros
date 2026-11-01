@@ -16,7 +16,7 @@ def _ts() -> str:
 def recorded_iterations(steps: list[dict]) -> int:
     """Successful recording receipts, once per iteration (including legacy commits)."""
     return len({s.get("iteration") for s in steps
-                if s.get("step") in ("commit", "scribe") and s.get("recorded")
+                if s.get("step") in ("commit", "scribe", "writer") and s.get("recorded")
                 and s.get("iteration") is not None})
 
 

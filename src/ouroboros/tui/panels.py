@@ -29,18 +29,18 @@ DOT = "●"
 # `revert` is what older runs called a reject.
 BLOCKED = {"stuck", "looping", "reject", "revert", "done_rejected"}
 STATE_PAIR = {
-    "work": PAIR_GREEN, "critique": PAIR_CYAN, "oversee": PAIR_CYAN,
+    "work": PAIR_GREEN, "critique": PAIR_CYAN, "oversee": PAIR_CYAN, "write": PAIR_CYAN,
     "idle": PAIR_DIM, "backoff": PAIR_RED, "starting": PAIR_DIM, "stopped": PAIR_RED,
 }
 # The engine state each stage of the pipeline is drawn in.
-_STAGE_STATE = {"actor": "work", "critic": "critique"}
-_PIPELINE = ("actor", "critic")
+_STAGE_STATE = {"actor": "work", "critic": "critique", "worker": "work", "writer": "write"}
+_PIPELINE = ("actor", "critic", "worker", "writer")
 
 
 def _pipeline_of(s: Snapshot) -> tuple[str, ...]:
     """The roles this run actually calls, in order. A role that is off is not a stage."""
     active = tuple(r for r in _PIPELINE if r in (s.roles or {}))
-    return active if active else _PIPELINE
+    return active if active else _PIPELINE[:2]
 
 
 class Painter:
@@ -196,7 +196,7 @@ def draw_run(p: Painter, rect: Rect, s: Snapshot) -> None:
         cx = x
         p.text(y + 1, cx, "harness ", t.attr(PAIR_DIM)); cx += 8
         active = st.get("harness", "?")
-        chain = s.chains.get("actor") or [active]
+        chain = s.chains.get("actor") or s.chains.get("worker") or [active]
         for i, name in enumerate(chain):
             if i:
                 p.text(y + 1, cx, " → ", t.attr(PAIR_INACTIVE)); cx += 3
@@ -532,7 +532,7 @@ def draw_time(p: Painter, rect: Rect, s: Snapshot, num: int) -> None:
 
 
 # ---------------------------------------------------------------- harnesses
-_ROLE_SHORT = {"actor": "act", "critic": "crit"}
+_ROLE_SHORT = {"actor": "act", "critic": "crit", "worker": "work", "writer": "write"}
 
 
 def _roles_line(r, width: int) -> str:

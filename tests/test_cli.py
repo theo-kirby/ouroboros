@@ -126,6 +126,18 @@ def test_skill_targets_follow_installed_harnesses(tmp_path):
     assert cli.skill_targets(user=False) == cli.PROJECT_SKILL_DIRS
 
 
+def test_install_skills_installs_user_skills_and_drops_role_prompts(tmp_path):
+    stale = tmp_path / "ouroboros-actor"          # a role prompt from an older install
+    stale.mkdir()
+    (stale / "SKILL.md").write_text("Record before you stop.")
+    (tmp_path / "ouroboros-planner").mkdir()      # a skill that no longer exists
+    (tmp_path / "other-skill").mkdir()            # not ours: left alone
+    installed, removed = cli.install_skills(tmp_path)
+    assert sorted(p.name for p in tmp_path.iterdir()) == sorted([*cli.USER_SKILLS, "other-skill"])
+    assert {p.name for p in removed} == {"ouroboros-actor", "ouroboros-planner"}
+    assert all((p / "SKILL.md").exists() for p in installed)
+
+
 def _git_repo(path: Path) -> None:
     import subprocess
     subprocess.run(["git", "init", "-q", str(path)], check=True)
@@ -169,7 +181,7 @@ def test_preflight_reports_logins(tmp_path, monkeypatch, capsys):
 def test_preflight_refuses_a_critic_whose_sandbox_cannot_run(monkeypatch):
     from ouroboros.config import RoleConfig
     from ouroboros.harness.codex import CodexHarness
-    cfg = Config(run="t", roles={"critic": RoleConfig(harness="codex")})
+    cfg = Config(run="t", loop="standard", roles={"critic": RoleConfig(harness="codex")})
     monkeypatch.setattr(CodexHarness, "sandbox_problem", lambda self: "bwrap: loopback: Failed RTM_NEWADDR")
     problem = cli.readonly_sandbox_problem(cfg)
     assert problem.startswith("critic: codex") and "RTM_NEWADDR" in problem and "docs/sandbox.md" in problem

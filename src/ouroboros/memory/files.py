@@ -37,7 +37,7 @@ import yaml
 
 from ..criteria import tag_fold
 
-from .graph import KEBAB, STATUSES, Graph, GraphMemory, orient_text, render_state
+from .graph import KEBAB, STATUSES, Graph, GraphMemory, brief_text, orient_text, render_state
 
 RECORD_KEYS = ("id", "kind", "title", "parents", "at", "node_id", "digest")
 CLAIM_KEYS = ("id", "kind", "title", "status", "parents", "seq", "node_id", "digest")
@@ -450,6 +450,9 @@ class FilesStore:
 
     def orient(self) -> str:
         return orient_text(self.snapshot(), title=self._title(), generator="ouroboros mem render")
+
+    def brief(self, *, goal_text: str, goal_path: str) -> str:
+        return brief_text(self.snapshot(), goal_text=goal_text, goal_path=goal_path)
 
     def render(self) -> bool:
         self.prepare()

@@ -292,3 +292,93 @@ def test_criterion_identity_survives_evidenced_fold_and_renaming(store):
         "current":"new prose", "cites":[rid2]}],"folded":[rid2]})
     assert ok,msg
     assert rows(store.snapshot(),GOAL)[0]['met']
+
+
+# -- the brief -------------------------------------------------------------------
+
+def _seed_brief(store):
+    """Two records and four claims: a result with a number, two frontier items, the host."""
+    body = BODY.replace("x\n", "changed `src/sim.py` and `tests/test_sim.py`\n", 1)
+    store.record(title="Measured the kernel", body=body, parent="root", impacts=[],
+                 news=[("gap-fast", "1.9 s"), ("gap-exact", "open"), ("decoder", "open"), ("environment", "facts"),
+                       ("constraints", "the charter's")], none=None)
+    store.record(title="Failed: the decoder change broke two tests", body=BODY, parent="r-0001", impacts=[], news=[],
+                 none="a failed unit")
+    ok, msg = store.fold({"claims": [
+        {"new": "gap-fast", "parent": "root", "title": "Runs fast", "status": "working",
+         "current": "- the kernel runs N=10^18 in 1.9 s [rec: r-0001]", "cites": ["r-0001"]},
+        {"new": "gap-exact", "parent": "root", "title": "Exact output", "status": "open",
+         "current": "- matches at N=178; Next: diff the checksums at N=10^6 [rec: r-0001]", "cites": ["r-0001"],
+         "negative": "- ruled out: the browser checker — chromium cannot start on this host [rec: r-0001]\n"
+                     "- fix and resubmit: the decoder change broke two tests in tests/test_sim.py [rec: r-0002]"},
+        {"new": "decoder", "parent": "root", "title": "Decoder", "status": "broken",
+         "current": "- two tests fail [rec: r-0002]", "cites": ["r-0002"]},
+        {"new": "environment", "parent": "root", "title": "This host", "status": "working",
+         "current": "- no network in the shell [rec: r-0001]\n- Python 3.12, 4 GB cap [rec: r-0001]", "cites": ["r-0001"]},
+        {"new": "constraints", "parent": "root", "title": "Constraints", "status": "working",
+         "current": "- keep the tests green [rec: r-0001]", "cites": ["r-0001"]},
+    ], "folded": ["r-0001", "r-0002"]})
+    assert ok, msg
+
+
+def test_the_brief_keeps_ruled_out_apart_from_fix_and_resubmit(store):
+    _seed_brief(store)
+    text = store.brief(goal_text=GOAL, goal_path=".ouroboros/goal.md")
+    sections = {s.split("\n", 1)[0]: s for s in text.split("\n## ")}
+    assert "ship it." in sections["Goal"] and "`.ouroboros/goal.md`" in sections["Goal"]
+    best = sections["Best results so far"]
+    assert "1.9 s" in best and "This host" not in best and "Constraints" not in best
+    assert "keep the tests green" in sections["Constraints (short; the charter has them whole)"]
+    frontier = sections["Frontier (open, broken, blocked)"]
+    assert frontier.index("[broken]") < frontier.index("[open]"), "broken before open, as governor ranks it"
+    assert "Next: diff the checksums" in frontier
+    ruled = sections["Ruled out (do not retry without a new reason)"]
+    fix = sections["Failed, to fix and resubmit (not ruled out)"]
+    assert "chromium cannot start" in ruled and "decoder" not in ruled
+    assert "broke two tests" in fix and "chromium" not in fix and "The last turn: Failed:" in fix
+    assert "no network in the shell" in sections["Environment (this host)"]
+    assert "`src/sim.py`" in sections["Files the last unit touched"]
+
+
+def test_the_brief_does_not_grow_with_the_run(store):
+    """Three hundred claims and a long tail: the brief stays inside its 1.5-3k token budget."""
+    _seed_brief(store)
+    claims = []
+    for i in range(300):
+        claims.append({"new": f"claim-{i}", "parent": "root", "title": f"Claim number {i} " + "word " * 30,
+                       "status": ("open", "working", "broken")[i % 3],
+                       "current": f"- result {i}: " + "detail " * 80 + " [rec: r-0003]",
+                       "negative": f"- ruled out: approach {i} failed " + "because " * 40 + " [rec: r-0003]\n"
+                                   f"- fix and resubmit: patch {i} " + "again " * 40 + " [rec: r-0003]",
+                       "cites": ["r-0003"]})
+    store.record(title="Many", body=BODY, parent="r-0002", impacts=[], news=[(c["new"], "x") for c in claims], none=None)
+    ok, msg = store.fold({"claims": claims, "folded": ["r-0003"]})
+    assert ok, msg
+    text = store.brief(goal_text=GOAL, goal_path="g.md")
+    assert 2000 < len(text) <= 10000, len(text)   # ~0.5-2.5k tokens at four characters a token
+    assert "…and" in text
+
+
+def test_the_cli_prints_the_brief_and_every_role_may_read_it(repo, monkeypatch, capsys):
+    monkeypatch.setenv(ENV, "files")
+    (repo / ".ouroboros" / "goal.md").write_text(GOAL)
+    _seed_brief(FilesStore(repo))
+    for role in ("actor", "critic", "scribe", "worker", "writer"):
+        monkeypatch.setenv("OUROBOROS_ROLE", role)
+        assert mem_cli(repo, monkeypatch, "brief") == 0
+        out = capsys.readouterr().out
+        assert out.startswith("# Brief") and "ship it." in out and "`.ouroboros/goal.md`" in out
+
+
+def test_the_worker_only_reads_and_the_writer_writes(repo, monkeypatch, capsys):
+    monkeypatch.setenv(ENV, "files")
+    monkeypatch.setenv("OUROBOROS_ROLE", "worker")
+    for verb in ("orient", "brief"):
+        assert mem_cli(repo, monkeypatch, verb) == 0
+    for args in (("record", "--title", "t", "--none", "x"), ("fold", "--apply", "-"), ("check",), ("render",)):
+        assert mem_cli(repo, monkeypatch, *args, stdin=BODY) == 2
+        assert "the worker does not" in capsys.readouterr().err
+    assert not list((repo / ".ouroboros/graph/records").glob("*.md"))
+    monkeypatch.setenv("OUROBOROS_ROLE", "writer")
+    assert mem_cli(repo, monkeypatch, "record", "--title", "t", "--none", "x", stdin=BODY) == 0
+    assert mem_cli(repo, monkeypatch, "check") == 0

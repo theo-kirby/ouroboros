@@ -24,10 +24,12 @@ either without recording why there.
   Python string. Placeholders are `{name}`.
 - **One memory surface.** Agents reach memory only through `ouroboros mem`. A new
   verb or rule goes into both stores in the same commit, with a test on each.
-- **Production: three roles, one writer.** The loop has an actor, a critic and a scribe,
-  nothing else. Only the scribe writes the memory, and only its fold writes state;
-  the actor and the critic only read it. `memcli.VERBS_OF` enforces that per role:
-  keep the prompts in step with it.
+- **Production: two loops, one memory writer either way.** `loop: worker-writer`
+  (the default since 2026-11-01; `worker_writer.py`, DESIGN.md section 24) has a
+  worker and a writer, nothing else: only the writer writes the memory; the worker
+  only reads it. `loop: standard` has an actor, a critic and a scribe, nothing else:
+  only the scribe writes the memory, and only its fold writes state; the actor and the
+  critic only read it. `memcli.VERBS_OF` enforces that per role: keep the prompts in step with it.
 - **The charter is read-only to agents.** Nothing in this repo may write
   `.ouroboros/goal.md` of a target repo.
 - **No empty commits, no history rewrites** in target repos. Reverts are
@@ -42,7 +44,7 @@ either without recording why there.
 See `DESIGN.md` section 17. Short form: `cli.py` (commands, signals),
 `engine.py` (the state machine), `config.py`, `goal.py` (charter parser),
 `harness/` (drivers, pool, backends), `memory/` (graph.py, the model and loop logic; governor.py and files.py, the two stores), `memcli.py` (`ouroboros mem`),
-`roles/` (prompt assembly and JSON parsing), `gitguard.py`, `budget.py`,
+`worker_writer.py` (the worker-writer loop), `roles/` (prompt assembly and JSON parsing), `gitguard.py`, `budget.py`,
 `recorder.py`, `loops.py` (the loop detector), `launch.py` and `tmux.py` (where `run` puts
 the loop), `watch.py` and `notify.py` (the reporter), `view.py` (the run page),
 `history.py` (digests and RUNS.md), `tui/`, `skills/`.
