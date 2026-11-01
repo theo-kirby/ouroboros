@@ -13,7 +13,7 @@
 --ok:#2ca02c;--ok-bg:#d5f0cd;--warn:#ff7f0e;--warn-bg:#fde2c6;--bad:#d62728;--bad-bg:#fdd5d2;
 --ok-t:#238323;--warn-t:#b1580c;--bad-t:#d62728;--blocked:#e377c2;
 --actor:#08519c;--critic:#4292c6;--scribe:#9ecae1;--code:#f1eee6;
---g-met:#edc443;--g-open:#fe933c;--g-broken:#e05148;--g-blocked:#e78dcc;--rec:linear-gradient(90deg,#3170b0,#679ac8,#9ec4e0);
+--g-met:#EE9F4F;--g-open:#E0B04A;--g-broken:#B5473A;--g-blocked:#D46A8C;--rec:linear-gradient(90deg,#3D6FB0,#8C9FD1,#A3C4D9);
 --serif:"Iowan Old Style","Charter","Palatino Linotype","Book Antiqua",Georgia,serif;
 --sans:"Avenir Next","Helvetica Neue",system-ui,-apple-system,"Segoe UI",sans-serif;
 --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace}
@@ -21,7 +21,7 @@
 --ok:#62c05b;--ok-bg:#1c361e;--warn:#ff9d43;--warn-bg:#4a2f17;--bad:#eb605f;--bad-bg:#411b1d;
 --ok-t:#62c05b;--warn-t:#ff9d43;--bad-t:#eb605f;--blocked:#ed97ca;
 --actor:#c6dbef;--critic:#6baed6;--scribe:#2171b5;--code:#222326;
---g-met:#fbd96d;--g-open:#fead66;--g-broken:#f38168;--g-blocked:#f6bedc;--rec:linear-gradient(90deg,#cddff1,#8db3d6,#4d88bb)}
+--g-met:#EE9F4F;--g-open:#E0B04A;--g-broken:#B5473A;--g-blocked:#D46A8C;--rec:linear-gradient(90deg,#A3C4D9,#8C9FD1,#3D6FB0)}
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--paper);color:var(--ink);font:17px/1.55 var(--serif);overflow-wrap:anywhere}
@@ -128,7 +128,10 @@ main{counter-reset:sec}
 .sec>h2{counter-increment:sec;font-size:1.45rem;font-weight:600;margin:0 0 12px;padding-top:10px;border-top:1px solid var(--rule)}
 .sec>h2::before{content:counter(sec);font:600 .8rem var(--sans);color:var(--acc);margin-right:.7em;vertical-align:.25em}
 .two{display:grid;gap:0 40px;grid-template-columns:1fr}
-@media (min-width:860px){.two{grid-template-columns:1.25fr 1fr}}
+@media (min-width:860px){.two{grid-template-columns:1.25fr 1fr}
+  /* the two columns share rows: heading, head, rows, foot, so their rows start level (view.py _column) */
+  .two{grid-template-rows:auto auto 1fr auto}.two>.sec{display:grid;grid-row:span 4;grid-template-rows:subgrid;align-content:start}}
+.col-head>:last-child{margin-bottom:10px}.col-foot:empty{display:none}
 
 .chip{display:inline-block;padding:0 6px;border:1px solid currentColor;border-radius:2px;font-size:.7rem;font-weight:600;
 letter-spacing:.06em;text-transform:uppercase;line-height:1.6;white-space:nowrap;color:var(--mute);text-decoration:none;vertical-align:.1em}
@@ -227,7 +230,7 @@ ul.its>li:last-child{border-bottom:0}
 .it dl.more dd{margin:0}
 details.older>summary{cursor:pointer;color:var(--acc);font:.88rem var(--sans);padding:8px 0}
 .graphfig{margin:0 calc(50% - min(600px, 50vw - 16px))}  /* wider than the text column, up to 1200px */
-iframe.graph{display:block;width:100%;height:min(720px,85vh);border:0;background:var(--paper)}
+iframe.graph{display:block;width:100%;height:min(600px,72vh);border:0;background:var(--paper)}
 .graphfig figcaption{text-align:center}
 .graphfig .legend{margin-top:6px;justify-content:center}
 /* the graph's tools, under its legend */
@@ -250,19 +253,25 @@ iframe.graph{display:block;width:100%;height:min(720px,85vh);border:0;background
 .fnd.gone>h3,.fnd.gone .fnd-sum{color:var(--mute)}
 .fnd-graph{margin:0 0 12px;padding:8px 10px 6px;background:var(--faint);border-radius:6px}
 .fnd-graph .cap{margin-top:2px}
-svg.ev{width:100%;height:auto;display:block;font-family:var(--sans)}
-.ev .band{fill:transparent}.ev .row:hover .band{fill:var(--paper)}
-.ev .lane{stroke:var(--rule);stroke-width:1}
-.ev .cl{font-size:12.5px;fill:var(--ink)}.ev .cl.gone{fill:var(--mute);text-decoration:line-through}
-.ev .it{font-size:10.5px;fill:var(--mute)}
-.ev .hit{fill:transparent}.ev .colm:hover .hit{fill:var(--paper);opacity:.7}
-.ev .rec{fill:#3170b0}:root[data-theme="dark"] .ev .rec{fill:#8db3d6}
-.ev .lin{fill:none;stroke:var(--mute);stroke-width:1.1;opacity:.7}
-.ev .cite{fill:var(--faint);stroke:var(--mute);stroke-width:1.2}
-.ev .hitd{stroke:var(--paper);stroke-width:1.5}
-.ev .st-working{fill:var(--g-met)}.ev .st-open{fill:var(--g-open)}.ev .st-broken{fill:var(--g-broken)}
-.ev .st-blocked{fill:var(--g-blocked)}.ev .st-superseded{fill:var(--rule)}
-.ev [data-focus]{cursor:pointer}
+/* a finding's part of the graph: a row per claim, a track for the whole run, a mark where a record changed it (view.py _evidence) */
+.ev{font:.8rem/1.3 var(--sans);color:var(--ink)}
+.ev-row{display:grid;grid-template-columns:minmax(0,17rem) minmax(0,1fr);gap:0 16px;align-items:center;min-height:22px;padding:1px 4px;border-radius:4px;cursor:pointer}
+.ev-row:hover{background:var(--paper)}.ev-row.on{background:var(--acc-bg)}
+.ev-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-left:calc(var(--d,0) * 13px)}
+.ev-name.gone{color:var(--mute);text-decoration:line-through}
+.ev-name .st{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px;vertical-align:-.5px}
+.ev-track{position:relative;height:13px;margin:0 6px}
+.ev-track::before{content:"";position:absolute;left:0;right:0;top:6px;border-top:1px solid var(--rule)}
+.ev-mark{position:absolute;top:1px;height:11px;border-radius:6px;box-shadow:0 0 0 1.5px var(--faint)}
+.ev-mark.cite{background:var(--faint)!important;box-shadow:inset 0 0 0 1.5px var(--mute)}
+.ev .pick{position:absolute;top:1px;width:11px;height:11px;margin-left:-5.5px;border-radius:50%}
+.ev .pick:hover,.ev .pick.on{box-shadow:0 0 0 1.5px var(--ink)}
+.ev-axis{cursor:default;min-height:18px}.ev-axis:hover{background:none}
+.ev-axis .ev-track{height:16px}.ev-axis .ev-track::before{top:0;border-color:var(--mute)}
+.ev-axis .ev-track span{position:absolute;top:3px;transform:translateX(-50%);font-size:.68rem;color:var(--mute);white-space:nowrap}
+.ev .st-working{background:var(--g-met)}.ev .st-open{background:var(--g-open)}.ev .st-broken{background:var(--g-broken)}
+.ev .st-blocked{background:var(--g-blocked)}.ev .st-superseded{background:var(--rule)}
+@media (max-width:640px){.ev-row{grid-template-columns:minmax(0,1fr);padding:3px 4px}.ev-axis>span:first-child{display:none}}
 .fnd-vis{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(360px,100%),1fr));gap:14px 24px;align-items:start;margin:0 0 8px}
 .fnd-vis figure{margin:0}.fnd-vis img{width:100%;height:auto;display:block;border:1px solid var(--faint);border-radius:4px;background:#fff}
 .fnd-novis{font:.82rem var(--sans);margin:0 0 8px}
@@ -273,9 +282,10 @@ svg.ev{width:100%;height:auto;display:block;font-family:var(--sans)}
 .focus-note{margin:0 0 6px;font:.86rem var(--sans);color:var(--ink)}
 .focus-note[hidden]{display:none}
 .sec-cont{margin:18px 0 0;min-width:0}
+.intro{margin:0 0 12px;max-width:none}
 .chart .col.on rect,.chart .col.picked rect{stroke:var(--ink);stroke-width:1.2}
 ul.its>li.on{background:var(--acc-bg)}ul.its>li.picked{box-shadow:inset 3px 0 0 var(--acc)}
-.ev .colm.on .hit,.ev .row.on .band{fill:var(--acc-bg);opacity:1}
+
 /* Run / Paper: one page, two modes (view.py _modes); the paper is the report written at the end */
 .modes{display:inline-flex;gap:2px;margin:4px 0 18px;padding:3px;border-radius:8px;background:var(--faint);font:.86rem var(--sans)}
 .modes button{font:inherit;border:0;border-radius:6px;padding:5px 16px;background:transparent;color:var(--mute);cursor:pointer}
@@ -286,7 +296,7 @@ ul.its>li.on{background:var(--acc-bg)}ul.its>li.picked{box-shadow:inset 3px 0 0 
 .paper>section>h2{font-size:1.45rem;line-height:1.3;margin:1.4em 0 .5em}
 .paper>section:first-of-type>h2{font-size:1.75rem;margin-top:.3em}
 footer{margin-top:40px;padding-top:8px;border-top:1px solid var(--rule);color:var(--mute);font:.76rem var(--sans)}
-@media (max-width:640px){main{padding:18px 16px 56px}body{font-size:16px}.logo{width:44px;height:44px}.kick{font-size:.82rem}iframe.graph{height:480px}.figs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.lede p{font-size:1.05rem}.it dl.more{grid-template-columns:1fr;padding-left:0}.it dl.more dd{margin-bottom:6px}
+@media (max-width:640px){main{padding:18px 16px 56px}body{font-size:16px}.logo{width:44px;height:44px}.kick{font-size:.82rem}iframe.graph{height:420px}.figs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.lede p{font-size:1.05rem}.it dl.more{grid-template-columns:1fr;padding-left:0}.it dl.more dd{margin-bottom:6px}
 .gauge{grid-template-columns:1fr auto}.cells{grid-column:1/-1;order:3}.gs{grid-column:1/-1;order:4;margin-top:2px}.fig dd{font-size:1.3rem}}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
@@ -306,7 +316,7 @@ footer{margin-top:40px;padding-top:8px;border-top:1px solid var(--rule);color:va
 <section class="sec" aria-labelledby="h-frontier"><h2 id="h-frontier">Open problems</h2>{{frontier}}</section>
 </div>
 <section class="sec story" id="findings" aria-labelledby="h-story"><h2 id="h-story">Findings</h2>{{story}}</section>
-<section class="sec" id="graph-sec" data-v="{{graph_version}}" aria-labelledby="h-graph"><h2 id="h-graph">Memory graph and timeline</h2>{{graph}}</section>
+<section class="sec" id="graph-sec" data-v="{{graph_version}}" aria-labelledby="h-graph"><h2 id="h-graph">Memory graph and timeline</h2><p class="intro">The run's memory: a record of every iteration, and the claims those records support. Click a column in the timeline, or a finding's <em>Show in the graph</em>, and the graph brings those nodes forward; click a node and the timeline marks the iterations that wrote or changed it.</p>{{graph}}</section>
 <section class="sec-cont" id="timeline" aria-label="Timeline">{{progress}}<script id="run-map" type="application/json">{{run_map}}</script></section>
 <article class="paper story" aria-label="Paper">{{paper}}</article>
 <footer>{{generated}}</footer>
@@ -490,7 +500,7 @@ footer{margin-top:40px;padding-top:8px;border-top:1px solid var(--rule);color:va
     setFocus(el.getAttribute("data-focus"), !inChart);
     if (inChart) {
       var n = el.getAttribute("data-focus").slice(3), d = document.getElementById("it-" + n);
-      if (d) d.open = true;
+      for (; d; d = d.parentElement) if (d.tagName === "DETAILS") d.open = true;   // and "older iterations" round it
     }
   });
   window.addEventListener("message", function (e) {

@@ -63,7 +63,7 @@ def test_a_finding_rests_on_its_claims_what_hangs_under_them_and_their_records(r
     assert [r["id"] for r in records] == ["r-0001", "r-0002"]
 
 
-def test_the_page_draws_each_finding_title_summary_graph_visuals_notes(repo, run):
+def test_the_page_draws_each_finding_title_summary_visuals_graph_notes(repo, run):
     g = tree_store(repo).snapshot()
     (run / "view" / "assets" / "rules.png").write_bytes(PNG)
     write(run, [GOOD, dict(GOOD, id="old", title="An overturned idea", status="retracted", visuals=[], notes="")])
@@ -71,9 +71,9 @@ def test_the_page_draws_each_finding_title_summary_graph_visuals_notes(repo, run
     html = page(run)
     sec = html.split('id="h-story"', 1)[1].split('id="graph-sec"', 1)[0]
     f1 = sec.split('id="finding-grammar-rules"', 1)[1].split("</article>", 1)[0]
-    order = [f1.index(x) for x in ("Three grammar rules", "Rules 1-3 parse", '<svg class="ev"', 'src="assets/rules.png"',
+    order = [f1.index(x) for x in ("Three grammar rules", "Rules 1-3 parse", 'src="assets/rules.png"', '<div class="ev"',
                                    'class="fnd-notes"')]
-    assert order == sorted(order), "title, summary, the graph, the visuals, the notes"
+    assert order == sorted(order), "title, summary, the visuals, the graph, the notes"
     assert "<li>ran <code>pytest</code></li>" in f1 and "<pre><code>python -m x</code></pre>" in f1
     assert 'data-focus="f:grammar-rules"' in f1 and 'data-focus="n:grammar"' in f1
     assert "fast-path-helps" in f1 or "A fast path halves the time" in f1
@@ -125,3 +125,12 @@ def test_ouroboros_plot_runs_a_script_with_seaborn_into_the_assets(tmp_path):
     assert proc.returncode == 0, proc.stderr
     assert (tmp_path / "assets" / "bars.png").exists()
     assert "every colour in the palette" in proc.stdout
+
+
+def test_the_check_says_when_the_summary_is_too_long(repo, run):
+    summary = findings.path(run).parent / "summary.txt"
+    summary.write_text("What it is for. Why. How.\n\nWhere it stands. Next.")
+    assert findings.check_summary(run) == []
+    summary.write_text("One. Two. Three. Four.\n\nFive. Six. Seven.\n\nEight.")
+    got = "\n".join(findings.check(run, None))
+    assert "3 paragraphs" in got and "paragraph 1 is 4 sentences; at most 3" in got and "paragraph 2 is 3 sentences; at most 2" in got
