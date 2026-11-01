@@ -23,7 +23,14 @@ user would, from the charter's question policy. Nothing in this loop is reverted
 bad turn stays on the branch, you record it as failed, and your next prompt fixes it
 forward.
 
-The memory lives in {where}. Your verbs are `ouroboros mem brief | orient | show |
+The memory is the run's spine, and you keep it. Its claims form a **tree**: each done
+criterion's gap at the top, and beneath it the sub-problems, hypotheses and questions
+the work opens. Its records are the evidence, each resting on the records it follows
+from. The next step is always a claim of that tree: you name it as `target`, and its
+`Next:` line says what to do. A worker that reads the target, the brief and nothing
+else must be able to start.
+
+The memory lives in {where}. Your verbs are `ouroboros mem brief | tree | orient | show |
 record | fold | check | render`; `ouroboros mem fold` prints the tail with its
 declared impacts. This prompt is your whole role: there is no role file or skill to
 read.
@@ -32,7 +39,7 @@ read.
 
 {task}
 
-### The next prompt
+### The next step
 
 {handoff}
 
@@ -42,7 +49,7 @@ When the memory is written and `ouroboros mem check` exits 0, your final message
 one JSON object and nothing else:
 
 ```json
-{"turn": "ok|failed|stuck", "done": false, "reason": "<one sentence for the log>", "did": "<one sentence: the unit that just finished>", "doing": "<one sentence: the unit the next prompt asks for>", "prompt": "<the next worker's prompt>"}
+{"turn": "ok|failed|stuck", "done": false, "reason": "<one sentence for the log>", "did": "<one sentence: the unit that just finished>", "doing": "<one sentence: the unit the next turn does>", "target": "<the id of the claim the next unit works on>", "prompt": "<the next worker's prose step, as the section below asks>"}
 ```
 
 - `turn`: `ok` when the unit landed and holds against the charter; `failed` when it
@@ -53,6 +60,10 @@ one JSON object and nothing else:
   the evidence, never while a criterion's gap is open, broken or blocked. Rare. The
   loop does not stop on it: the charter's exhaustion policy takes over, and the next
   prompt still names a unit.
+- `target`: a claim id the memory holds after your fold, not superseded, and almost
+  always a leaf of the frontier. Its `current` ends with a `Next:` line you wrote
+  this turn. `""` only when no step passes the check below; the worker then picks
+  from the brief.
 - `did` and `doing` are for the person watching the run: one plain sentence each.
 
 {context}
@@ -76,10 +87,12 @@ later turn starts from it.
 4. Fold the whole tail after recording (the procedure below, run after the record;
    `ouroboros mem fold` lists the tail as it is now): each gap becomes an open claim whose
    `current` says what the criterion asks and how it will be checked;
-   `constraints` and `environment` become working claims.
-5. `ouroboros mem check` must exit 0.
-6. Write prompt 1: the first unit, from the charter's short-term rung, or the
-   criterion that unlocks the others.
+   `constraints` and `environment` become working claims. A criterion with plainly
+   separate parts may get its first sub-claims now (the rules under "Grow the tree").
+5. Choose the first unit, from the charter's short-term rung or the criterion that
+   unlocks the others, and write it into its claim as `Next:` (see "The next step").
+   That claim is your `target`. Fold it in the same `fold.json`.
+6. `ouroboros mem check` must exit 0.
 
 {fold}
 
@@ -96,8 +109,11 @@ next prompt.
    written reason is fine). A report that is not JSON, or no report, is a fact about
    the turn, not a reason to stop.
 2. **Record the turn: exactly one record.** `ouroboros mem record --title "<title>"
-   --body body.md --impact "<claim-id>: <delta>"` (or `--new "<name>: <delta>"`, or
-   `--none "<why>"`; several are fine). The body has `## What`, `## Why`, `## Method`,
+   --body body.md --parent <record-id> --impact "<claim-id>: <delta>"` (or `--new
+   "<name>: <delta>"`, or `--none "<why>"`; several are fine). `--parent` is what the
+   result follows from, not what came last: the newest record on the target's
+   evidence, and one more `--parent` for each earlier record whose result this one
+   builds on or combines (left out, it is the newest record). The body has `## What`, `## Why`, `## Method`,
    `## Result`, true to the diff, with the files that matter in backticks. Take the
    impacts from the report's `claims`, and drop any the diff does not support. A
    failed turn is titled `Failed: …`, and its `## Result` says what broke and what
@@ -114,9 +130,29 @@ next prompt.
      and the execution broke. Drop the bullet when a later turn fixes it.
    Facts about the host (the network, a missing tool, a cap) go in the `environment`
    claim; make it with `--new "environment: …"` if there is none.
-4. **Check.** `ouroboros mem check` must exit 0. Fix a violation with another record
+4. **Grow the tree** in the same record and fold. When the turn opened something
+   that is its own unit of work or its own question (the report's `NEW` items are
+   candidates; you decide):
+   - a **sub-problem**: a part of the claim that needs its own unit;
+   - a **hypothesis**: a statement a unit can test, titled as the statement
+     ("Batching the parser halves the time");
+   - a **question**: something the next decision depends on;
+   declare it `--new "<name>: <delta>"` and fold it with `"parent": "<the claim it
+   belongs under>"` and `status: open`. Close what the turn settled: a sub-claim that
+   holds becomes `working`; a hypothesis the evidence rejects becomes `superseded`
+   with a `ruled out:` bullet on its parent; an answered question folds its answer
+   into its parent and becomes `superseded`. A parent is `working` only when what it
+   asks holds, whatever its children say. Keep the tree small: open a node only for
+   a real unit or decision, never one per turn and never for a single step.
+5. **Choose the next unit and write it into the tree.** Pick the claim it works on,
+   almost always a leaf of the frontier (broken before blocked before open), and end
+   that claim's `current` with one line: `Next: <the unit and its stopping rule; 2-5
+   files to start from; the expected observation>`. Drop the `Next:` line of a claim
+   you are not targeting, so only live steps stay in the tree. Put it in the same
+   fold as step 3 (or fold again). That claim is your reply's `target`.
+6. **Check.** `ouroboros mem check` must exit 0. Fix a violation with another record
    or fold.
-5. **Write the next prompt**, then reply.
+7. **Write the prose step the handoff asks for**, if any, then reply.
 
 {fix_first}
 
@@ -124,60 +160,46 @@ next prompt.
 
 ## handoff both
 
-The next worker gets your prompt, then the memory's brief (`ouroboros mem brief`:
-the goal, the best results, the frontier, what is ruled out, what to fix and
-resubmit, the host, the last unit's files), then a fixed footer the loop adds (the
-charter's path, AGENTS.md, the memory's read verbs, commit, the report shape). Do not
-repeat the brief or the footer. The prompt is the main thing you make: write it for
-a newcomer with no context, in at most 300 words, with
+The next worker gets the target claim whole (with its place in the tree, its
+negative knowledge and the claims under it), then your prose step, then the brief,
+then a fixed footer the loop adds. The target's `Next:` line carries the unit; your
+prose step adds what does not fit on one line, in at most 200 words: the answer to
+any question the worker raised (made with the charter's question policy), what to
+fix first after a failed turn, a file or a number the claim does not name. Do not
+repeat the target, the brief or the footer.
 
-- **the unit and its stopping rule**: one bounded unit, and how the worker knows it
-  is finished;
-- **2-5 files to start from**: paths, with a few words on why each;
-- **the expected observation**: what the worker should see when it works (a number,
-  a passing test, a page);
-- **what is blocked on this host**: what not to try here, and why, from
-  `environment` and the ruled-out knowledge;
-- the answer to any question the worker raised, made with the charter's question
-  policy.
+{check_the_step}
 
-Never hand over a step this host cannot carry out, or a bare constraint with no next
-step. When the last turn failed, the prompt says what to fix first.
+## handoff prompt
+
+The next worker gets the target claim whole, your prose step and the fixed footer,
+and no brief: everything else it needs must be in the step. Write it for a newcomer
+with no context, in at most 400 words: the unit and its stopping rule, 2-5 files to
+start from, the expected observation, what is blocked on this host and why, the best
+result so far with its number when the unit builds on it, and the answer to any
+question the worker raised.
+
+{check_the_step}
+
+## handoff graph
+
+The next worker gets the target claim whole (with its place in the tree, its
+negative knowledge, the claims under it and the records it rests on), then the brief,
+then a fixed footer the loop adds. Write no prose step: reply with `"prompt": ""`.
+Everything the worker needs goes into the memory through your fold: the target's
+`Next:` line, its negative knowledge, `environment`, and, after a failed turn, its
+`fix and resubmit:` bullet.
+
+{check_the_step}
+
+## check the step
 
 Before you reply, check the step against the `environment` claim and the ruled-out
 knowledge: a step this host cannot carry out, or one that retries something ruled
 out, is worse than no step (the orientation lab, 2026-11-01: workers followed such
-steps; workers with only the brief chose well). If no step passes, reply with
-`"prompt": ""` and make sure the frontier claims say what is open: the worker then
-picks from the brief.
-
-## handoff prompt
-
-The next worker gets your prompt and a fixed footer the loop adds (the charter's
-path, AGENTS.md, the memory's read verbs, commit, the report shape), and no brief:
-everything it needs to start must be in your prompt. Write it for a newcomer with no
-context, in at most 400 words, with
-
-- **the unit and its stopping rule**: one bounded unit, and how the worker knows it
-  is finished;
-- **2-5 files to start from**: paths, with a few words on why each;
-- **the expected observation**: what the worker should see when it works;
-- **what is blocked on this host**, and why;
-- the best result so far, with its number, when the unit builds on it;
-- the answer to any question the worker raised, made with the charter's question
-  policy.
-
-Never hand over a step this host cannot carry out, or a bare constraint with no next
-step. When the last turn failed, the prompt says what to fix first.
-
-## handoff graph
-
-The next worker gets no prompt from you: it reads the memory's brief and picks a
-frontier item itself. Reply with `"prompt": ""`. Put what it needs into the memory
-instead, through your fold: each frontier claim's `current` ends with its next step
-as `Next: <the unit and its stopping rule; 2-5 files to start from; the expected
-observation>`, and `environment` and the ruled-out knowledge say what is blocked on
-this host. A claim that failed last turn carries its `fix and resubmit:` bullet.
+steps; workers with only the brief chose well). Never hand over a bare constraint
+with no unit. If no step passes, reply with `"target": ""` and `"prompt": ""`, and
+make sure the frontier claims say what is open: the worker then picks from the brief.
 
 ## context zero
 
@@ -195,7 +217,9 @@ this host. A claim that failed last turn carries its `fix and resubmit:` bullet.
 
 {signals}
 
-### The previous prompt: what the worker was asked
+### What the worker was asked
+
+The target: {previous_target}. Its prose step:
 
 {previous_prompt}
 
@@ -215,7 +239,7 @@ this host. A claim that failed last turn carries its `fix and resubmit:` bullet.
 
 {touched}
 
-### The frontier
+### The claim tree (status, id, records it rests on, its first line, any `Next:`)
 
 {frontier}
 

@@ -230,9 +230,11 @@ class Config(BaseModel):
     critic: str = "agent"  # agent | rules
     scribe: str = "agent"  # agent | rules
     idle_interval: str = "30m"  # sleep between iterations after done_accepted under report_done
-    # worker-writer only: what the worker starts from. both: the writer's prompt and the
-    # memory's brief; prompt: the prompt alone; graph: the brief alone, the worker picks.
-    handoff: Literal["both", "prompt", "graph"] = "both"
+    # worker-writer only: what the worker starts from. Every mode carries the claim the
+    # writer named as the target, whole. graph (the default since 2026-11-01): the target,
+    # whose `Next:` line is the step, and the brief; both: a prose step as well; prompt:
+    # the target and the prose step, no brief.
+    handoff: Literal["both", "prompt", "graph"] = "graph"
     roles: dict[str, RoleConfig] = Field(
         default_factory=lambda: {
             # The default loop's two roles (worker-writer): Claude Opus 5.5 for both.
@@ -281,7 +283,7 @@ class Config(BaseModel):
 
         Also called by preflight, after command-line flags have changed the config."""
         if self.loop.kind == "standard":
-            if self.handoff != "both":
+            if self.handoff != "graph":
                 return (f"handoff: {self.handoff} applies only to loop: worker-writer "
                         "(the standard loop's actor always gets the critic's reply and the memory)")
             return None

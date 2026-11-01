@@ -329,7 +329,7 @@ def test_the_brief_keeps_ruled_out_apart_from_fix_and_resubmit(store):
     best = sections["Best results so far"]
     assert "1.9 s" in best and "This host" not in best and "Constraints" not in best
     assert "keep the tests green" in sections["Constraints (short; the charter has them whole)"]
-    frontier = sections["Frontier (open, broken, blocked)"]
+    frontier = sections["Frontier (the open leaves of the claim tree: broken, blocked, open)"]
     assert frontier.index("[broken]") < frontier.index("[open]"), "broken before open, as governor ranks it"
     assert "Next: diff the checksums" in frontier
     ruled = sections["Ruled out (do not retry without a new reason)"]

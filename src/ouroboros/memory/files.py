@@ -37,7 +37,7 @@ import yaml
 
 from ..criteria import tag_fold
 
-from .graph import KEBAB, STATUSES, Graph, GraphMemory, brief_text, orient_text, render_state
+from .graph import KEBAB, STATUSES, Graph, GraphMemory, brief_text, orient_text, record_parents, render_state
 
 RECORD_KEYS = ("id", "kind", "title", "parents", "at", "node_id", "digest")
 CLAIM_KEYS = ("id", "kind", "title", "status", "parents", "seq", "node_id", "digest")
@@ -230,7 +230,7 @@ class FilesStore:
             return ""
         return out.stdout.strip() if out.returncode == 0 else ""
 
-    def record(self, *, title: str, body: str, parent: str | None, impacts: list[tuple[str, str]],
+    def record(self, *, title: str, body: str, parent: str | list[str] | None, impacts: list[tuple[str, str]],
                news: list[tuple[str, str]], none: str | None) -> tuple[str | None, str]:
         g = self.snapshot()
         problems = []
@@ -256,9 +256,10 @@ class FilesStore:
                 problems.append(f"new claim name `{name}` is not kebab-case")
             elif name in g.nodes:
                 problems.append(f"`{name}` already exists; declare `--impact \"{name}: …\"` instead")
-        parent = parent or "root"
-        if parent != "root" and (g.nodes.get(parent) or {}).get("kind") != "record":
-            problems.append(f"parent `{parent}` is not a record (give a record id, or `root`)")
+        parents = record_parents(parent)
+        for p in parents:
+            if p != "root" and (g.nodes.get(p) or {}).get("kind") != "record":
+                problems.append(f"parent `{p}` is not a record (give a record id, or `root`)")
         if problems:
             return None, "\n".join(f"- {p}" for p in problems)
         numbers = [n.get("seq", 0) for n in g.records()]
@@ -276,7 +277,7 @@ class FilesStore:
         lines += [f"- {slug} — {' '.join(d.split())}" for slug, d in impacts]
         lines += [f"- NEW {name} — {' '.join(d.split())}" for name, d in news]
         content = "\n".join(lines) + "\n"
-        meta = {"id": nid, "kind": "record", "title": title, "parents": [parent], "at": at,
+        meta = {"id": nid, "kind": "record", "title": title, "parents": parents, "at": at,
                 "node_id": str(uuid.uuid4()), "digest": _digest(content)}
         self.prepare()
         (self.records_dir / f"{nid}.md").write_text(_dump(meta, RECORD_KEYS, content))

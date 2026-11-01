@@ -62,7 +62,7 @@ def test_a_rules_role_calls_no_model():
 
 def test_the_worker_writer_loop_is_the_default_on_claude_opus():
     cfg = Config()
-    assert cfg.loop.kind == "worker-writer" and cfg.handoff == "both" and cfg.worker_writer
+    assert cfg.loop.kind == "worker-writer" and cfg.handoff == "graph" and cfg.worker_writer
     assert cfg.active_roles == ["worker", "writer"] and cfg.primary_role == "worker"
     for role in ("worker", "writer"):
         assert cfg.role(role).chain[0] == ("claude", "claude-opus-5-5")
@@ -98,7 +98,7 @@ def test_worker_writer_roles_have_defaults_when_the_config_names_none(tmp_path):
     ("loop: actor-critic\n", "is not a loop"),
     ("loop: {kind: keeper}\n", "loop.kind"),
     ("loop: worker-writer\nhandoff: brief\n", "handoff"),
-    ("loop: standard\nhandoff: graph\n", "applies only to loop: worker-writer"),
+    ("loop: standard\nhandoff: both\n", "applies only to loop: worker-writer"),
     ("loop: worker-writer\ncritic: rules\n", "critic: rules does not apply"),
     ("loop: worker-writer\nscribe: rules\n", "scribe: rules does not apply"),
     ("loop: worker-writer\nroles:\n  worker: {resume_for: 3}\n", "start fresh every turn"),

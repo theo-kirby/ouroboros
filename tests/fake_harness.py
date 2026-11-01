@@ -143,7 +143,7 @@ def works_json(did: str = "did a unit", log: list | None = None) -> Behavior:
 
 
 def writes(prompt: str = "do the next unit", *, turn: str = "ok", done: bool = False, title: str | None = None,
-           log: list | None = None) -> Behavior:
+           log: list | None = None, target: str = "") -> Behavior:
     """A writer: one record (as `ouroboros mem record` would write it) and its JSON reply."""
     import json
 
@@ -152,5 +152,5 @@ def writes(prompt: str = "do the next unit", *, turn: str = "ok", done: bool = F
             log.append(("writer", text))
         _record(cwd, title or f"writer: {prompt[:40]}")
         return Result(text=json.dumps({"turn": turn, "done": done, "reason": f"turn {turn}", "did": "d",
-                                       "doing": "n", "prompt": prompt}), cost_usd=0.1)
+                                       "doing": "n", "target": target, "prompt": prompt}), cost_usd=0.1)
     return b

@@ -69,9 +69,14 @@ writer cannot leave out:
   alongside the diff; rebuilding everything from the diff alone is expensive.
 - **Writer -> worker: the prompt.** Optional, because whether a written next step
   beats orienting from the graph alone is an open question. One config key:
-  - `handoff: both`: prompt, then orient from the graph (default);
+  - `handoff: both`: prompt, then orient from the graph;
   - `handoff: graph`: no prompt; the worker reads the frontier and picks;
   - `handoff: prompt`: the prompt only, no graph orientation asked for.
+
+  **Since 2026-11-01** the step is a claim: the writer names a `target` and writes
+  its `Next:` line into the graph, every mode gives the worker that claim whole,
+  and `graph` (target plus brief, no prose) is the default. DESIGN.md sections 7a
+  and 24 have the claim tree this rests on.
 
 ### Config sketch
 

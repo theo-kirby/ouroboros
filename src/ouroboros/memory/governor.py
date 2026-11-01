@@ -16,7 +16,7 @@ from pathlib import Path
 
 from ..criteria import tag_fold
 
-from .graph import Graph, GraphMemory, brief_text
+from .graph import Graph, GraphMemory, brief_text, record_parents
 
 
 def _main_checkout(repo: Path) -> Path:
@@ -142,9 +142,11 @@ class GovernorStore:
             return Graph(None)
 
     # -- the verbs -------------------------------------------------------
-    def record(self, *, title: str, body: str, parent: str | None, impacts: list[tuple[str, str]],
+    def record(self, *, title: str, body: str, parent: str | list[str] | None, impacts: list[tuple[str, str]],
                news: list[tuple[str, str]], none: str | None) -> tuple[str | None, str]:
-        args = ["record", "--json", "--title", title, "--body", "-", "--parent", parent or "root"]
+        args = ["record", "--json", "--title", title, "--body", "-"]
+        for p in record_parents(parent):
+            args += ["--parent", p]
         for slug, delta in impacts:
             args += ["--impact", f"{slug}: {delta}"]
         for name, delta in news:

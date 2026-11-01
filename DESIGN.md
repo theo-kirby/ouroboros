@@ -229,14 +229,23 @@ differs:
 | `governor` | `memory/governor.py`, the `governor` CLI | the Flywheel repository, `.flywheel/` | no; only STATE.md |
 | `files` | `memory/files.py`, Python, no dependency | `.ouroboros/graph/` (records, claims, folds, STATE.md) | yes, on the run branch |
 
-`auto` picks `governor` when `.flywheel/db.sqlite` is at the checkout or its main
-checkout and `governor` is on `PATH`, else `files`. `handoff`, the old name of the
-fallback, reads as `files`. Ouroboros does not run `flywheel repo:init` or
-`governor init` for you.
+**Governor on a local Flywheel repository is the standard store, and files is the
+fallback** (2026-11-01, Theo; the older Hypergraph protocol is deprecated). `auto`
+picks `governor` when `.flywheel/db.sqlite` is at the checkout or its main checkout
+and `governor` is on `PATH`. When there is none, `run` creates one before the
+memory starts (`memory.bootstrap`): with `flywheel` and `governor` both on `PATH`
+and no files memory with records in the repo, it runs `flywheel repo:init` and
+`governor init --title <the charter's title>` at the main checkout. A repo whose
+runs used the files store keeps it, and a failed init leaves `auto` on files, with
+a line on the terminal; nothing stops the run. Flywheel keeps its bootstrap lock in
+`.flywheel-runtime-locks/` in the checkout's parent directory; that is Flywheel's
+choice, not configurable. `memory: governor` creates the graph the same way;
+`memory: files` never does. `handoff`, the old name of the fallback, reads as
+`files`.
 
-Governor is optional. The files store is plain Python: it needs no Node, no
-Flywheel and no Governor, and the run's page draws its graph from a vendored copy
-of Governor's embed (section 15). Governor lives beside this repo at `../governor`
+The files store is plain Python: it needs no Node, no Flywheel and no Governor,
+and the run's page draws its graph from a vendored copy of Governor's embed
+(section 15). Governor lives beside this repo at `../governor`
 (https://github.com/theo-kirby/governor).
 
 ### 7a. `ouroboros mem`: the only surface an agent sees
@@ -249,7 +258,8 @@ the command does whatever the store needs (`memcli.py`):
 | `orient` | `governor orient` | the same text, rendered in Python (`graph.orient_text`) |
 | `show <id>` | the node from `governor snapshot` | the node file |
 | `brief` | `graph.brief_text` over `governor snapshot` (governor has no brief) | the same, over the files |
-| `record --title … (--impact \| --new \| --none)` | `governor record --json`; parent defaults to the newest record | writes `records/r-NNNN.md`; same default |
+| `tree` | `graph.tree_text` over `governor snapshot`: the claim tree as an outline | the same, over the files |
+| `record --title … [--parent R]… (--impact \| --new \| --none)` | `governor record --json`, one `--parent` per parent; the parent defaults to the newest record | writes `records/r-NNNN.md` with every parent; same default |
 | `fold` | the tail with its impacts (shared code) | the same |
 | `fold --apply FILE` | `governor fold --apply`, then `governor render -o STATE.md` | validates like governor, writes `claims/`, logs `folds/f-NNNN.json`, renders |
 | `check` | `governor check --json` | the same rules (below) in Python |
@@ -277,6 +287,23 @@ is the orientation lab's prototype (`research-projects/orientation-lab`, arm B)
 on the stores' snapshot, plus the "files to start from" map that round 1 found
 missing. The worker-writer loop puts it in every worker prompt (section 24); every
 role may read it.
+
+**The claim tree (2026-11-01).** Claims form a tree: a fold may give a new claim
+any claim as its `parent` (both stores already allowed it; nothing used it). The
+writer hangs sub-problems, hypotheses and questions under the gap they serve, and
+the frontier an agent picks from is the tree's **open leaves** (`frontier_leaves`:
+frontier claims with no frontier claim under them; a gap whose sub-claims are open
+is reached through them). The brief lists those leaves with their parent, `mem tree`
+prints the whole outline, and `target_text` gives one claim whole with its path from
+the top, the claims under it and the records it rests on. A record may follow from
+several records (`--parent` repeated), so evidence that combines two experiments
+says so. Claims the loop reads by name (`environment`, `constraints`) carry a
+`<!-- ouroboros-claim: name -->` marker that every fold keeps, as criteria carry
+theirs, because Governor mints its own slugs (`environment` becomes
+`wild-star-6005`); before the marker, the brief found them only on the files store.
+Why: the graphs of 26 screen and smoke runs (2026-11-01) were a checklist and a
+log: 6-11 claims, all the charter's criteria plus `constraints` and `environment`,
+none nested, records a single chain, and findings packed into a gap's text.
 
 No role runs git for the memory: the loop's commit after the scribe (`git add -A`)
 carries STATE.md and, in a files repo, the memory files.
@@ -1662,8 +1689,8 @@ other than 1 is refused):
 
 | Role | Each turn | `ouroboros mem` verbs |
 |---|---|---|
-| worker | does one unit from the next-step prompt and the brief, commits, ends with a JSON report | `orient`, `show`, `brief` |
-| writer | reviews the worker's turn against the charter, records it, folds, checks, returns the next prompt and a done flag in strict JSON; the only memory writer | the scribe's: `orient`, `show`, `brief`, `record`, `fold`, `check`, `render` |
+| worker | does one unit on the target claim, from its `Next:` line and the brief, commits, ends with a JSON report | `orient`, `show`, `brief`, `tree` |
+| writer | reviews the worker's turn against the charter, records it, grows and folds the claim tree, checks, names the next target, returns it and a done flag in strict JSON; the only memory writer | the scribe's: `orient`, `show`, `brief`, `tree`, `record`, `fold`, `check`, `render` |
 
 ```
 turn 0   writer   charter -> seed the memory (gaps open, constraints, environment) -> prompt 1
@@ -1680,11 +1707,24 @@ One iteration is worker -> commit -> writer -> commit, and the steps it logs are
 `.prompt.txt`. The writer's last prompt is kept in the run directory as
 `next-prompt.md`, so a continued run starts from it and skips turn 0.
 
+**The next step is a claim (2026-11-01).** The writer's reply names a `target`, a
+claim id, and its fold ends that claim's `current` with `Next: <the unit and its
+stopping rule; 2-5 files to start from; the expected observation>`, dropping the
+`Next:` lines of claims it is not targeting. The engine keeps the target beside the
+prompt (`next-target.txt` in the run directory) and, at the worker's turn, gives
+it whole from the memory (`graph.target_text`). A target the memory does not hold,
+or one superseded, is logged and dropped: the worker picks from the frontier. The
+writer is given the claim tree with the last target marked, the worker's report
+names the claim it worked on (`target`) and anything the work opened (`NEW` items),
+and each decision logs `worked_on` and `target`. So the step lives in the graph,
+where the next writer, the brief, the run page and the report read it, instead of
+in a prose prompt only the next worker sees.
+
 **The worker's prompt** is assembled by `roles/worker.py` from the
 `ouroboros-worker` skill, in this order: what the loop itself has to say (`# From
 the loop`: the loop detector's evidence, the exhaustion policy after a done, an
-error to recover from, the no-early-exit rule), the writer's next step (`# Your next
-step`), the brief (`ouroboros mem brief`, section 7a), and a footer the engine
+error to recover from, the no-early-exit rule), the target claim (`# Your target`),
+the writer's prose step (`# Your next step`, unless `graph`), the brief (`ouroboros mem brief`, section 7a), and a footer the engine
 appends, never the writer: the charter's path (it is never inlined), where AGENTS.md
 is or that there is none, "this prompt is your whole role", the exact read verbs,
 the unit rules, commit your work, and the report shape. `handoff` chooses what comes
@@ -1692,12 +1732,13 @@ before the footer:
 
 | `handoff` | the worker gets | why |
 |---|---|---|
-| `both` (default) | the next step, then the brief | the orientation lab's arm B: today's cost at 37% fewer prompt tokens |
-| `prompt` | the next step only | everything it needs must be in the prompt |
-| `graph` | the brief only; it picks a frontier item | is a written next step better than the graph? The writer returns an empty prompt and writes `Next:` into the frontier claims instead |
+| `graph` (default since 2026-11-01) | the target claim, whose `Next:` line is the step, then the brief | the lab's best arm was the graph without a prose step (7.7 of 8 against 6.9); a target keeps the writer's choice of unit |
+| `both` | the target, a prose step of at most 200 words for what does not fit on the claim, then the brief | the comparison arm |
+| `prompt` | the target and a prose step, no brief | everything else must be in the step |
 
-When the writer gave no prompt (it failed, or under `graph`), the brief is always
-there and the worker is told to pick from its frontier.
+When the writer named no target and wrote no step (it failed, or no step passed
+its check), the brief is always there and the worker is told to pick from its
+frontier.
 
 **A step is checked before it is tried** (orientation lab round 2, 2026-11-01: on
 five late states with weak next steps, workers given the step tried what this host
@@ -1730,7 +1771,18 @@ broke), which the brief shows in separate sections. Host facts go in an
 which the brief shows apart from results. Its next prompt names the unit and its
 stopping rule, 2-5 files to start from, the expected observation, and what is
 blocked on this host. The call asks the harness for its JSON schema
-(`{turn: ok|failed|stuck, done, reason, did, doing, prompt}`).
+(`{turn: ok|failed|stuck, done, reason, did, doing, target, prompt}`).
+
+**The writer grows the tree.** Each review may open a sub-problem, a hypothesis
+(titled as the statement it tests) or a question under the claim it belongs to,
+and closes what the turn settled: a sub-claim that holds becomes `working`, a
+rejected hypothesis `superseded` with a `ruled out:` bullet on its parent, an
+answered question folds into its parent. A parent is `working` only when what it
+asks holds. Records name the records they follow from: the newest on the target's
+evidence, plus any whose result they combine. The report pass reads the tree
+(`mem tree`): findings are working claims with their records, what did not work
+comes from superseded hypotheses and `ruled out:` bullets, next steps from the open
+leaves.
 
 **What a turn means to the rest of the loop.** `ok` is `continue`, `failed` is
 `reject` (with nothing reverted: the standard loop's fix-forward case), `stuck` is

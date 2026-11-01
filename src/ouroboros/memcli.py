@@ -18,7 +18,7 @@ from pathlib import Path
 
 from .memory import store_for_cli
 import os
-from .memory.graph import Graph, parse_pair, tail_listing
+from .memory.graph import Graph, parse_pair, tail_listing, tree_text
 
 FOLD_SHAPE = (
     '{"claims": [{"slug": "<claim-id>", "status": "working", "current": "- … [rec: <record-id>]", '
@@ -28,7 +28,7 @@ FOLD_SHAPE = (
 
 
 ROLE_ENV = "OUROBOROS_ROLE"
-READ_VERBS = {"orient", "show", "brief"}
+READ_VERBS = {"orient", "show", "brief", "tree"}
 VERBS_OF = {
     # the standard loop: the actor and the critic read; the scribe writes
     "actor": READ_VERBS,                                             # reads; the scribe records its unit
@@ -45,17 +45,20 @@ def allowed(verb: str, role: str | None) -> bool:
 
 
 def add_parser(sub) -> None:
-    m = sub.add_parser("mem", help="the run's memory: orient, brief, show, record, fold, check, render")
+    m = sub.add_parser("mem", help="the run's memory: orient, brief, tree, show, record, fold, check, render")
     verbs = m.add_subparsers(dest="verb", required=True)
     verbs.add_parser("orient", help="what is true now: frontier, tail, architecture, recent records")
     verbs.add_parser("brief", help="what a newcomer needs to start a turn, in 1.5-3k tokens: goal, best result, "
                                    "frontier, ruled out, fix and resubmit, the host, the last unit's files")
+    verbs.add_parser("tree", help="the claim tree as an outline: status, id, records each rests on, any Next: line")
     s = verbs.add_parser("show", help="one record or claim, whole")
     s.add_argument("id")
     r = verbs.add_parser("record", help="append one record with its declared impact")
     r.add_argument("--title", required=True)
     r.add_argument("--body", default="-", help="a file, or - for stdin (the default)")
-    r.add_argument("--parent", help="the causal parent record (default: the newest record)")
+    r.add_argument("--parent", action="append", default=[], metavar="RECORD",
+                   help="a record this one follows from; repeat it when the result rests on several "
+                        "(default: the newest record)")
     r.add_argument("--impact", action="append", default=[], metavar="'<claim>: <delta>'")
     r.add_argument("--new", action="append", default=[], metavar="'<name>: <delta>'")
     r.add_argument("--none", metavar="REASON")
@@ -105,6 +108,15 @@ def _brief(store, args) -> int:
     return 0
 
 
+def _tree(store, args) -> int:
+    g: Graph = store.snapshot()
+    if not g.ok:
+        print("ouroboros mem tree: the memory could not be read (`ouroboros mem orient` says why)", file=sys.stderr)
+        return 2
+    print(tree_text(g, limit=60000))
+    return 0
+
+
 def _show(store, args) -> int:
     g: Graph = store.snapshot()
     n = g.by_slug(args.id)
@@ -122,11 +134,11 @@ def _record(store, args) -> int:
     impacts = [parse_pair(x, "--impact") for x in args.impact]
     news = [parse_pair(x, "--new") for x in args.new]
     body = _read(args.body)
-    parent = args.parent
-    if not parent:
+    parents = [p for p in (args.parent or []) if p and p.strip()]
+    if not parents:
         records = store.snapshot().records()
-        parent = records[-1].get("slug") if records else "root"
-    slug, message = store.record(title=args.title, body=body, parent=parent, impacts=impacts, news=news,
+        parents = [records[-1].get("slug") if records else "root"]
+    slug, message = store.record(title=args.title, body=body, parent=parents, impacts=impacts, news=news,
                                  none=args.none)
     if slug is None:
         print(f"nothing written:\n{message}", file=sys.stderr)
@@ -172,4 +184,4 @@ def _render(store, args) -> int:
     return 0
 
 
-_VERBS = {"orient": _orient, "brief": _brief, "show": _show, "record": _record, "fold": _fold, "check": _check, "render": _render}
+_VERBS = {"orient": _orient, "brief": _brief, "show": _show, "tree": _tree, "record": _record, "fold": _fold, "check": _check, "render": _render}

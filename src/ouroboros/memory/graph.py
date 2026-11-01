@@ -27,6 +27,7 @@ from typing import Protocol
 
 from .base import BaseMemory
 from .. import goal as charter
+from ..criteria import identity, name_of
 
 FRONTIER_STATUSES = ("broken", "blocked", "open")
 STATUSES = ("open", "working", "broken", "blocked", "superseded")
@@ -144,6 +145,128 @@ class Graph:
         out = [self.nodes[e["target"]] for e in self.edges
                if e.get("source") == claim["id"] and (self.nodes.get(e.get("target", "")) or {}).get("kind") == "record"]
         return sorted(out, key=lambda n: -n.get("seq", 0))
+
+
+# -- the claim tree ------------------------------------------------------------
+#
+# Claims form a tree under the root: a done criterion's gap at the top, the
+# sub-problems, hypotheses and questions the work opens beneath it. The frontier a
+# worker picks from is that tree's open leaves, and a next step is a claim.
+
+def claim_parent(g: Graph, c: dict) -> dict | None:
+    """The claim `c` hangs under, or None when it sits at the root or under a component."""
+    for p in c.get("parents") or []:
+        n = g.nodes.get(p)
+        if n is not None and n.get("kind") == c.get("kind") and not g.is_component(n):
+            return n
+    return None
+
+
+def claim_children(g: Graph, c: dict) -> list[dict]:
+    """The live claims directly under `c`, oldest first."""
+    kids = [n for n in g.nodes.values() if n.get("kind") == c.get("kind") and c["id"] in (n.get("parents") or [])]
+    return sorted(kids, key=lambda n: n.get("seq", 0))
+
+
+def claim_path(g: Graph, c: dict) -> list[dict]:
+    """The claims from the top of the tree down to `c`, `c` included."""
+    out, seen, cur = [], set(), c
+    while cur is not None and cur["id"] not in seen:
+        seen.add(cur["id"])
+        out.append(cur)
+        cur = claim_parent(g, cur)
+    return list(reversed(out))
+
+
+def frontier_leaves(g: Graph, claims: list[dict] | None = None) -> list[dict]:
+    """The frontier's leaves, broken before blocked before open: frontier claims with no
+    frontier claim under them. A gap whose sub-claims are open is reached through them."""
+    claims = g.claims("state") if claims is None else claims
+    out = []
+    for st in FRONTIER_STATUSES:
+        for c in claims:
+            if c.get("status") == st and not any(k.get("status") in FRONTIER_STATUSES for k in claim_children(g, c)):
+                out.append(c)
+    return out
+
+
+def tree_text(g: Graph, *, limit: int = 8000, mark: str | None = None) -> str:
+    """The claim tree as an outline: status, title, id, the first line of `current`, how
+    many records it rests on, and any `Next:` it carries. Superseded claims are counted,
+    not shown. `mark` (a claim id) is flagged as the current target."""
+    if not g.ok:
+        return "(the memory could not be read)"
+    lines: list[str] = []
+    seen: set[str] = set()
+
+    def walk(parent: str | None, depth: int) -> None:
+        if parent is None:
+            kids = [c for c in g.claims("state") if claim_parent(g, c) is None]
+        else:
+            kids = claim_children(g, g.nodes[parent])
+        for c in kids:
+            if c["id"] in seen or c.get("status") == "superseded":
+                continue
+            seen.add(c["id"])
+            cur = _bullets(section(c.get("content", ""), "Current"))
+            nxt = next((x for i in cur for x in _sentences(i) if x.startswith("Next:")), "")
+            flag = "  ← target" if mark and mark in (c["id"], c.get("slug")) else ""
+            lines.append(f"{'  ' * depth}- [{c.get('status') or '-'}] **{_clip(c.get('title', ''), 90)}** "
+                         f"(`{g.label(c['id'])}`, {len(g.cites(c))} rec){flag}: {_clip(cur[0] if cur else '', 160)}"
+                         + (f" {_clip(nxt, 200)}" if nxt and (not cur or nxt not in cur[0]) else ""))
+            walk(c["id"], depth + 1)
+
+    walk(None, 0)
+    gone = sum(1 for c in g.claims("state") if c.get("status") == "superseded")
+    if gone:
+        lines.append(f"- _{gone} superseded claim(s) not shown._")
+    text = "\n".join(lines) or "(no claims yet)"
+    if len(text) > limit:
+        text = text[: limit - 60].rsplit("\n", 1)[0] + "\n- …(tree trimmed; `ouroboros mem orient` has it whole)"
+    return text
+
+
+TARGET_CHARS = 5000
+
+
+def target_claim(g: Graph, slug: str | None) -> dict | None:
+    """The claim a next step names, when it is one a worker can take (not superseded)."""
+    if not slug or not g.ok:
+        return None
+    c = g.by_slug(slug.strip().strip("`"))
+    if c is None or c.get("kind") != "state" or g.is_component(c) or c.get("status") == "superseded":
+        return None
+    return c
+
+
+def target_text(g: Graph, slug: str | None) -> str:
+    """The worker's target, whole: where it sits in the tree, its text with its negative
+    knowledge, the claims under it, and the records it rests on. "" when there is none."""
+    c = target_claim(g, slug)
+    if c is None:
+        return ""
+    path = claim_path(g, c)
+    body = (c.get("content") or "").strip()
+    if len(body) > TARGET_CHARS:
+        body = body[:TARGET_CHARS] + f"\n… (`ouroboros mem show {g.label(c['id'])}` for the rest)"
+    out = [f"## {c.get('title', '')} (`{g.label(c['id'])}`, {c.get('status') or 'no status'})", ""]
+    if len(path) > 1:
+        out += ["Under: " + " › ".join(f"{_clip(p.get('title', ''), 70)} (`{g.label(p['id'])}`)" for p in path[:-1]), ""]
+    out += [body, ""]
+    kids = [k for k in claim_children(g, c) if k.get("status") != "superseded"]
+    if kids:
+        out += ["### The claims under it", ""]
+        for k in kids:
+            cur = _bullets(section(k.get("content", ""), "Current"))
+            out.append(f"- [{k.get('status')}] **{_clip(k.get('title', ''), 90)}** (`{g.label(k['id'])}`): "
+                       f"{_clip(cur[0] if cur else '', 200)}")
+        out.append("")
+    recs = g.cites(c)[:4]
+    if recs:
+        out += ["### The records it rests on, newest first", ""]
+        out += [f"- `{g.label(r['id'])}` {_clip(r.get('title', ''), 140)}" for r in recs]
+        out.append("")
+    return "\n".join(out).strip() + "\n"
 
 
 # -- rendering (governor's lib/render.ts, in Python) ---------------------------
@@ -290,8 +413,8 @@ def brief_text(g: Graph, *, goal_text: str, goal_path: str, max_chars: int = BRI
         out += ["## Memory", "", "(the memory could not be read; `ouroboros mem orient` says why)"]
         return "\n".join(out) + "\n"
     claims = g.claims("state")
-    env_claim = next((c for c in claims if c.get("slug") == ENVIRONMENT_CLAIM), None)
-    rules = next((c for c in claims if c.get("slug") == CONSTRAINTS_CLAIM), None)
+    env_claim = next((c for c in claims if name_of(c) == ENVIRONMENT_CLAIM), None)
+    rules = next((c for c in claims if name_of(c) == CONSTRAINTS_CLAIM), None)
     work = [c for c in claims if c is not env_claim and c is not rules]
     if rules is not None:
         kept = [f"- {_clip(x, 200)}" for x in _bullets(section(rules.get("content", ""), "Current"))[:BRIEF_CONSTRAINTS]]
@@ -299,25 +422,27 @@ def brief_text(g: Graph, *, goal_text: str, goal_path: str, max_chars: int = BRI
 
     # the best results: criteria first, then the newest claims, each by its newest number
     working = [c for c in work if c.get("status") == "working"]
-    working.sort(key=lambda c: (not str(c.get("slug") or "").startswith("gap-"), -c.get("seq", 0)))
+    working.sort(key=lambda c: (identity(c) is None, -c.get("seq", 0)))
     out += ["## Best results so far", ""]
     for c in working[:BRIEF_BEST]:
         cur = _bullets(section(c.get("content", ""), "Current"))
         best = next((i for i in cur if re.search(r"\d", i)), cur[0] if cur else "")
-        out.append(f"- **{_clip(c.get('title', ''), 100)}** (`{c.get('slug')}`): {_clip(best, 300)}")
+        out.append(f"- **{_clip(c.get('title', ''), 100)}** (`{g.label(c['id'])}`): {_clip(best, 300)}")
     if not working:
         out.append("- (nothing established yet)")
     if len(working) > BRIEF_BEST:
         out.append(f"- …and {len(working) - BRIEF_BEST} more working claims (`ouroboros mem orient`).")
     out.append("")
 
-    # the frontier, in the order governor ranks it: broken, blocked, open
-    frontier = [c for st in FRONTIER_STATUSES for c in work if c.get("status") == st]
-    out += ["## Frontier (open, broken, blocked)", ""]
+    # the frontier's leaves, in the order governor ranks it: broken, blocked, open
+    frontier = frontier_leaves(g, work)
+    out += ["## Frontier (the open leaves of the claim tree: broken, blocked, open)", ""]
     for c in frontier[:BRIEF_FRONTIER]:
         body = c.get("content", "")
         cur = _bullets(section(body, "Current"))
-        line = (f"- [{c.get('status')}] **{_clip(c.get('title', ''), 100)}** (`{c.get('slug')}`): "
+        up = claim_parent(g, c)
+        under = f" (under **{_clip(up.get('title', ''), 60)}**, `{g.label(up['id'])}`)" if up is not None else ""
+        line = (f"- [{c.get('status')}] **{_clip(c.get('title', ''), 100)}** (`{g.label(c['id'])}`){under}: "
                 f"{_clip(cur[0] if cur else '', 320)}")
         nxt = [x for i in cur + _bullets(section(body, "Negative knowledge")) for x in _sentences(i) if _NEXT.search(x)]
         if nxt and nxt[0] not in line:
@@ -405,13 +530,24 @@ class Store(Protocol):
 
     def prepare(self) -> None: ...
     def snapshot(self) -> Graph: ...
-    def record(self, *, title: str, body: str, parent: str | None, impacts: list[tuple[str, str]],
+    def record(self, *, title: str, body: str, parent: str | list[str] | None, impacts: list[tuple[str, str]],
                news: list[tuple[str, str]], none: str | None) -> tuple[str | None, str]: ...
     def fold(self, plan: dict) -> tuple[bool, str]: ...
     def check(self) -> tuple[bool, str]: ...
     def orient(self) -> str: ...
     def brief(self, *, goal_text: str, goal_path: str) -> str: ...
     def render(self) -> bool: ...
+
+
+def record_parents(parent: str | list[str] | tuple | None) -> list[str]:
+    """A record's parents, in order and without repeats: one id, several, or the root."""
+    items = [parent] if isinstance(parent, str) else list(parent or [])
+    out: list[str] = []
+    for p in items:
+        p = str(p or "").strip().strip("`")
+        if p and p not in out:
+            out.append(p)
+    return out or ["root"]
 
 
 def parse_pair(text: str, flag: str) -> tuple[str, str]:

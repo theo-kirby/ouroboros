@@ -445,3 +445,43 @@ def test_the_brief_reads_the_governor_graph_through_the_same_verb(gov_repo, monk
     assert "chromium" in ruled and "decoder" not in ruled
     assert "broke two tests" in rest and "no network in the shell" in rest
     assert cli.main(["mem", "record", "--title", "x", "--none", "y"]) == 2, "the worker only reads"
+
+
+def test_the_claim_tree_on_governor_through_the_same_verbs(gov_repo, monkeypatch, capsys):
+    """A sub-claim under a gap, a record resting on two records, `mem tree`, the target view,
+    and the host claim found by name although governor minted it a slug."""
+    import io
+    from ouroboros.memory.governor import GovernorStore
+    from ouroboros.memory.graph import frontier_leaves, target_text
+    monkeypatch.setenv(ENV, "governor")
+    monkeypatch.chdir(gov_repo)
+    a = mint(gov_repo, "Experiment A", "root", "--new", "gap-parse: open", "--new", "environment: host")
+    b = mint(gov_repo, "Experiment B", a)
+    (gov_repo / "fold.json").write_text(json.dumps({"claims": [
+        {"new": "gap-parse", "parent": "root", "title": "It parses", "status": "open",
+         "current": f"- asks [rec: {a}]", "cites": [a]},
+        {"new": "environment", "parent": "root", "title": "This host", "status": "working",
+         "current": f"- no GPU on this host [rec: {a}]", "cites": [a]}], "folded": [a, b]}))
+    assert cli.main(["mem", "fold", "--apply", "fold.json"]) == 0
+    capsys.readouterr()
+    gap = next(n["slug"] for n in snap(gov_repo)["nodes"].values() if n.get("title") == "It parses")
+    monkeypatch.setattr("sys.stdin", io.StringIO(BODY))
+    assert cli.main(["mem", "record", "--title", "A and B", "--parent", a, "--parent", b,
+                     "--new", "grammar: opened"]) == 0
+    c = capsys.readouterr().out.split()[0]
+    assert sorted(node(gov_repo, c)["parents"]) == sorted([node(gov_repo, a)["id"], node(gov_repo, b)["id"]])
+    (gov_repo / "fold.json").write_text(json.dumps({"claims": [
+        {"new": "grammar", "parent": gap, "title": "The grammar covers the spec", "status": "open",
+         "current": f"- 3 of 9 [rec: {c}]\n- Next: rules 4-6 [rec: {c}]", "cites": [c]}], "folded": [c]}))
+    assert cli.main(["mem", "fold", "--apply", "fold.json"]) == 0
+    capsys.readouterr()
+    monkeypatch.setenv("OUROBOROS_ROLE", "worker")
+    assert cli.main(["mem", "tree"]) == 0
+    tree = capsys.readouterr().out
+    assert "- [open] **It parses**" in tree and "  - [open] **The grammar covers the spec**" in tree
+    g = GovernorStore(gov_repo).snapshot()
+    assert [n["title"] for n in frontier_leaves(g)] == ["The grammar covers the spec"]
+    grammar = next(n["slug"] for n in g.nodes.values() if n.get("title") == "The grammar covers the spec")
+    assert "Under: It parses" in target_text(g, grammar) and "Next: rules 4-6" in target_text(g, grammar)
+    assert cli.main(["mem", "brief"]) == 0
+    assert "no GPU on this host" in capsys.readouterr().out.split("## Environment", 1)[1]

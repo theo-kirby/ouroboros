@@ -71,6 +71,14 @@ supports, and the three to five steps of evidence that carry a reader to it. The
 structure below holds that story; it is not a list of everything the run did.
 Leave out work that does not serve it; the memory and the supplementary list keep it.
 
+**Build it on the claim tree.** `ouroboros mem tree` prints the memory's claims as
+the run grew them: each done criterion's gap, and under it the sub-problems,
+hypotheses and questions the work opened, with how many records each rests on. The
+story is that tree: the findings are its working claims, each traced to the records
+it rests on (cite the claim id beside the record id); what did not work comes from
+its superseded hypotheses and `ruled out:` bullets; the open leaves and their
+`Next:` lines are what the run would do next.
+
 **Write for an outsider.** Plain words first, technical detail second. Explain
 every term the first time it appears. Give each important number a reading ("one
 match in five", "twice as fast") beside the figure. Say what the reader should
