@@ -48,20 +48,27 @@ class ExperimentPublication(PublicationConfig):
 
 # Who keeps the publication, and whose profile guidance each identity gets.
 GENERALISTS = ('researcher','peer_a','peer_b','solver_a','solver_b')
-WRITERS = ('scribe',)+GENERALISTS
-PROFILE_ROLES = {'actor':('actor',),'critic':('critic',),'planner':('critic',),
+WRITERS = ('scribe','executor')+GENERALISTS
+# Triage: each proposer sees one host-built view of the work, never the other's proposal.
+PROPOSERS = ('proposer_code','proposer_graph')
+READONLY = ('planner','critic','merger')+PROPOSERS
+PROFILE_ROLES = {'actor':('actor',),'critic':('critic',),'planner':('critic',),'merger':('critic',),
+                 'executor':('actor',),**{p:('critic',) for p in PROPOSERS},
                  **{g:('actor','critic') for g in GENERALISTS}}
+# What the code proposer never sees: memory, the notebook and report, history, environments.
+HIDDEN_FROM_CODE = {'.git','.ouroboros','.flywheel','.governor','.venv','venv','node_modules','__pycache__'}
 
 
 class ExperimentConfig(BaseModel):
     model_config = ConfigDict(extra='forbid', frozen=True)
     run: str = 'experiment'
-    topology: Literal['standard','planner','freeflow','peers','blind'] = 'standard'
+    topology: Literal['standard','planner','freeflow','peers','blind','triage'] = 'standard'
     harness: str = 'codex'
     model: str
     memory: Literal['files','governor'] = 'files'
     after_seconds: float = Field(default=7200, gt=0, allow_inf_nan=False)
     timeout_seconds: float = Field(default=1200, gt=0, allow_inf_nan=False)
+    propose_timeout_seconds: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     max_calls: int = Field(default=60, gt=0)
     max_cycles: int = Field(default=20, gt=0)
     max_tokens: int | None = Field(default=None, gt=0)
@@ -84,7 +91,8 @@ class ExperimentConfig(BaseModel):
 
     @model_validator(mode='after')
     def known_guidance(self):
-        names={'actor','critic','scribe','planner','researcher','peer_a','peer_b','solver_a','solver_b'}
+        names={'actor','critic','scribe','planner','researcher','peer_a','peer_b','solver_a','solver_b',
+               'merger','executor',*PROPOSERS}
         if self.guidance.keys()-names:
             raise ValueError('unknown guidance identity')
         if not self.run or Path(self.run).name != self.run or self.run in ('.','..'):
@@ -210,6 +218,7 @@ class ExperimentRunner:
         if self.config.topology=='freeflow': return ['researcher']
         if self.config.topology=='peers': return ['peer_a','peer_b']
         if self.config.topology=='planner': return ['planner','actor','critic','scribe']
+        if self.config.topology=='triage': return [*PROPOSERS,'merger','executor']
         return ['actor','critic','scribe']
 
     def save(self): atomic(self.checkpoint,self.state)
@@ -234,6 +243,46 @@ class ExperimentRunner:
     def _workspace(self,agent):
         return agent if agent.startswith('solver_') else 'shared'
 
+    def _cwd(self,agent):
+        return self._proposer_view(agent) if agent in PROPOSERS else self.workspaces[self._workspace(agent)]
+
+    def _proposer_view(self,agent):
+        return self.control/'views'/agent
+
+    def _build_view(self,agent):
+        """A fresh copy, rebuilt before every proposal: the code without memory, or the memory without code.
+
+        Under Landlock the proposer can read only this copy, never the workspace."""
+        import shutil
+        target=self._proposer_view(agent)
+        if target.exists():shutil.rmtree(target)
+        (target/'.ouroboros').mkdir(parents=True)
+        (target/'.ouroboros/goal.md').write_text(self.goal)
+        # Its own empty repository, so tools that look upward for a checkout stop here.
+        __import__('subprocess').run(['git','init','-q'],cwd=target,check=True)
+        if agent=='proposer_code':
+            for root,dirs,files in os.walk(self.repo):
+                here=Path(root)
+                dirs[:]=[d for d in dirs if d not in HIDDEN_FROM_CODE and not (here/d).is_symlink()]
+                for name in files:
+                    source=here/name;relative=source.relative_to(self.repo)
+                    if source.is_symlink() or (relative==Path('STATE.md') and self.config.memory=='governor'):continue
+                    (target/relative).parent.mkdir(parents=True,exist_ok=True)
+                    shutil.copyfile(source,target/relative)
+            return
+        memory=self.memories['shared']
+        g=memory.graph()
+        lines=['# The project graph','',memory.store.orient().strip(),'','# Every node','']
+        for n in sorted(g.nodes.values(),key=lambda n:(n.get('kind') or '',n.get('seq') or 0)):
+            lines+=[f"## {g.label(n['id'])}: {n.get('title') or ''}",
+                    f"kind: {n.get('kind')}; status: {n.get('status')}; parents: "
+                    +', '.join(g.label(p) for p in n.get('parents') or []),'',(n.get('content') or '').strip(),'']
+        (target/'GRAPH.md').write_text('\n'.join(lines))
+        store=self.repo/'.ouroboros/graph'
+        if self.config.memory=='files' and store.is_dir():   # so `ouroboros mem orient/show` works in the view
+            shutil.copytree(store,target/'.ouroboros/graph',symlinks=False,
+                            ignore=lambda d,names:[n for n in names if (Path(d)/n).is_symlink()])
+
     def _persistent(self,agent):
         return agent in ('researcher','peer_a','peer_b','solver_a','solver_b')
 
@@ -249,21 +298,39 @@ class ExperimentRunner:
         return None
 
     def _prompt(self,agent,key):
-        readonly=agent in ('planner','critic')
-        writer=agent in ('scribe','researcher','peer_a','peer_b','solver_a','solver_b')
-        authority=('Read-only tools and memory: ouroboros mem orient/show/check. Do not edit files.' if readonly
+        readonly=agent in READONLY
+        writer=agent in WRITERS
+        authority=('Read-only tools on a copy of the code only. You cannot see the memory graph, the notebook or the history. Do not edit files.' if agent=='proposer_code'
+                   else 'Read-only tools on the memory graph only (GRAPH.md, ouroboros mem orient/show). You cannot see the code or data. Do not edit files.' if agent=='proposer_graph'
+                   else 'Read-only tools and memory: ouroboros mem orient/show/check. Do not edit files.' if readonly
                    else 'You are the sole active memory writer; use ouroboros mem record/fold/check/render.' if writer
                    else 'Work on code/data/report; memory is read-only through ouroboros mem orient/show. The scribe records.')
         responsibility={'planner':'plan the next actor turn','actor':'execute one research unit',
                         'critic':'independently review evidence and decide completion',
                         'scribe':'record the critic judgment and maintain memory/publication',
-                        'researcher':'all research responsibilities, including self-review'}.get(agent,
+                        'researcher':'all research responsibilities, including self-review',
+                        'proposer_code':'propose the next unit of work from the code alone',
+                        'proposer_graph':'propose the next unit of work from the memory graph alone',
+                        'merger':'merge the independent proposals into one plan for the executor',
+                        'executor':'carry out the merged plan and record it'}.get(agent,
                         'all research responsibilities with no permanent specialized role')
         # Blind first passes receive no shared or other solver reports/handoffs.
         context=({'own_report':self.state['reports'].get(agent,'')} if key!='shared' else
                  {'handoff':self.state['handoff'],'reports':self.state['reports'],'blind_exports':self.state.get('blind_exports',{})})
+        # Triage passes only what each step needs: nothing to a proposer, the proposals to the
+        # merger, the plan to the executor. Proposers never see each other's proposals.
+        if agent in PROPOSERS:context={}
+        elif agent=='merger':
+            context={'proposals':{p:v['proposal'] for p,v in self.state.get('proposals',{}).items()},
+                     'stop_proposed_by':[p for p,v in self.state.get('proposals',{}).items() if v['stop']],
+                     'last_executor_report':self.state['reports'].get('executor','')}
+        elif agent=='executor':
+            context={'plan':self.state['handoff'],'closing':self.state['done_pending']}
+        memory=('(none: you see only the code)' if agent=='proposer_code' else
+                '(read GRAPH.md in your working directory)' if agent=='proposer_graph' and self.config.memory=='governor'
+                else self.memories[key].orient_prompt())
         values={'identity':agent,'responsibility':responsibility,'authority':authority,'goal':self.goal,
-                'memory':self.memories[key].orient_prompt(),'context':json.dumps(context),
+                'memory':memory,'context':json.dumps(context),
                 'budget':json.dumps({'seconds':max(0,self.config.after_seconds-(self.now()-self.state['started_at'])),
                                      'calls':self.config.max_calls-self.state['calls'],
                                      'tokens_used':self.state['tokens'],'cost_usd_equivalent':self.state['cost_usd']}),
@@ -385,12 +452,12 @@ class ExperimentRunner:
         prefix=[sys.executable,'-I',str(Path(__file__).with_name('experiment_sandbox.py')),
                 '--cpu',str(min(os.sched_getaffinity(0))),'--memory-bytes',str(self.config.memory_bytes)]
         for read in reads:prefix += ['--read',str(read)]
-        prefix += ['--read' if agent in ('critic','planner') else '--write',str(self.workspaces[key]),
-                   '--write',str(home),'--']
+        cwd=self._cwd(agent)   # a proposer gets its read-only copy, and no workspace path at all
+        prefix += ['--read' if agent in READONLY else '--write',str(cwd),'--write',str(home),'--']
         self.state['pending']['confinement']={'kind':'landlock','abi':abi(),
             'read_paths':[str(p) for p in reads],
-            'workspace_access':'readonly' if agent in ('critic','planner') else 'readwrite',
-            'workspace':str(self.workspaces[key]),'identity_home':str(home),
+            'workspace_access':'readonly' if agent in READONLY else 'readwrite',
+            'workspace':str(cwd),'identity_home':str(home),
             'cpu_affinity':[min(os.sched_getaffinity(0))],'address_limit_bytes':self.config.memory_bytes}
         self.save()
         token=COMMAND_PREFIX.set(tuple(prefix))
@@ -407,23 +474,25 @@ class ExperimentRunner:
         except (OSError,ValueError):
             self.state['stop_reason']='input_modified';self.save();return
         agent=self._stage();key=self._workspace(agent);call=self.state['calls']+1
+        if agent in PROPOSERS:self._build_view(agent)
         prompt=self._prompt(agent,key)
         pending={'call':call,'agent':agent,'workspace':key,'started_at':self.now(),'publish_due':self._publish_due(agent),
                  'head_before':self.guards[key].head(),'prompt_sha256':digest(prompt),'resume':self.state['sessions'].get(agent) if self._persistent(agent) else None}
         self.state['pending']=pending;self.save()
         self.recorder.transcript_path(call,agent).with_suffix('.prompt.txt').write_text(prompt)
-        principal='critic' if agent in ('critic','planner') else 'actor' if agent=='actor' else 'scribe'
+        principal='critic' if agent in READONLY else 'actor' if agent=='actor' else 'scribe'
         self.publish(agent)
-        timeout=min(self.config.timeout_seconds,max(0,self.config.after_seconds-(self.now()-self.state['started_at'])))
+        limit=self.config.propose_timeout_seconds if agent in PROPOSERS and self.config.propose_timeout_seconds else self.config.timeout_seconds
+        timeout=min(limit,max(0,self.config.after_seconds-(self.now()-self.state['started_at'])))
         if timeout<=0:
             self.state['pending']=None;self.state['stop_reason']='deadline';self.save();return
         start=self.now()
         usage_before=resource.getrusage(resource.RUSAGE_CHILDREN)
         try:
             with role_env(principal), environment({ENV:self.config.memory,'OUROBOROS_EXPERIMENT_AGENT':agent}), self._confinement(agent,key):
-                result=self.harness.run(prompt,cwd=self.workspaces[key],timeout=timeout,
+                result=self.harness.run(prompt,cwd=self._cwd(agent),timeout=timeout,
                     resume=pending['resume'],model=self.config.model,json_schema=SCHEMA,
-                    tools='readonly' if agent in ('critic','planner') else None,
+                    tools='readonly' if agent in READONLY else None,
                     log_path=self.recorder.transcript_path(call,agent))
         except (KeyboardInterrupt,SystemExit):
             kill_active();self.state['stop_reason']='interrupted_inflight';self.save();raise
@@ -472,8 +541,18 @@ class ExperimentRunner:
         except (ValueError,TypeError):response=None
         if receipt['ok'] and response:
             s['failures']=0;s['reports'][agent]=response['report']
-            if key=='shared':s['handoff']=response['handoff']
+            if agent in PROPOSERS:
+                # A proposal is the report; done is a vote to stop. Only a unanimous vote stops the run.
+                s.setdefault('proposals',{})[agent]={'proposal':response['report'],'stop':response['done']}
+            elif key=='shared':s['handoff']=response['handoff']
             if agent=='critic':s['done_pending']=response['done']
+            if agent=='merger':
+                votes=s.get('proposals',{})
+                s['done_pending']=set(votes)==set(PROPOSERS) and all(v['stop'] for v in votes.values())
+            if agent=='executor':
+                if s['done_pending']:
+                    s['done_source']='proposers_unanimous';s['stop_reason']=s['stop_reason'] or 'done_claimed'
+                s['proposals']={}
             if agent in ('researcher','peer_a','peer_b') and response['done']:
                 s['done_source']='self_review' if agent=='researcher' else 'peer_claim'
                 s['stop_reason']=s['stop_reason'] or 'done_claimed'
@@ -482,11 +561,11 @@ class ExperimentRunner:
             if agent.startswith('solver_') and (s['cursor']+1)%self.config.blind_calls==0:
                 self._freeze_solver(agent,key)
             s['cursor']+=1
-            if agent in ('scribe','researcher','peer_a','peer_b'):s['cycle']+=1
+            if agent in ('scribe','researcher','peer_a','peer_b','executor'):s['cycle']+=1
             self._check_publication(receipt)
         else:
             s['failures']+=1
-            if key=='shared':s['handoff']=f"Previous {agent} call failed or returned invalid JSON; recover. {receipt['error'] or ''}"
+            if key=='shared' and agent not in PROPOSERS:s['handoff']=f"Previous {agent} call failed or returned invalid JSON; recover. {receipt['error'] or ''}"
             if s['failures']>=self.config.max_failures:s['stop_reason']=s['stop_reason'] or 'failure_limit'
         # A missing memory record never becomes an invented scientific acceptance.
         # The deterministic host journal retains the full call even if the writer failed.
@@ -497,7 +576,7 @@ class ExperimentRunner:
             self.recorder.decision(iteration=s['cycle']+1,verdict='done_accepted' if response['done'] else 'continue',
                                    reason=response['report'],reply=response['handoff'],source='experimental_critic',
                                    verification='not_reported',verification_evidence='External evaluation remains separate.')
-        if agent not in ('critic','planner'):
+        if agent not in READONLY:
             try:self.guards[key].commit(f'experiment {self.config.run} call{s["calls"]}: {agent}')
             except Exception as exc:
                 s['stop_reason']='checkpoint_git_error';s['checkpoint_error']=repr(exc);self.save()

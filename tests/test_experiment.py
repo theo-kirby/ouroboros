@@ -253,8 +253,8 @@ else: raise AssertionError('outside write succeeded')
     assert not (tmp_path/'outside').exists()
 
 
-@pytest.mark.parametrize('topology', ['standard','planner','freeflow','peers','blind'])
-def test_confined_subprocess_end_to_end(repo,tmp_path,topology):
+@pytest.mark.parametrize('topology', ['standard','planner','freeflow','peers','blind','triage'])
+def test_confined_subprocess_end_to_end(repo,tmp_path,topology,monkeypatch):
     import shutil,sys
     from ouroboros.harness import backend_headless
     from ouroboros import experiment_sandbox
@@ -270,8 +270,12 @@ for file in sys.argv[1:]:
  except PermissionError: pass
  else: raise AssertionError('private source was readable')
 agent=os.environ['OUROBOROS_EXPERIMENT_AGENT']
+if agent.startswith('proposer_'):
+ try: Path(os.environ['WORKSPACE_GOAL']).read_text()
+ except PermissionError: pass
+ else: raise AssertionError('a proposer read the workspace')
 marker=Path('attempted-write')
-if agent in ('planner','critic'):
+if agent in ('planner','critic','merger','proposer_code','proposer_graph'):
  try: marker.write_text('forbidden')
  except PermissionError: pass
  else: raise AssertionError('read-only role wrote workspace')
@@ -297,6 +301,7 @@ print(json.dumps({'report':'real subprocess evidence','handoff':'next','done':Fa
     cfg=ExperimentConfig(topology=topology,model='test',harness='fixture',max_calls=6,max_cycles=1)
     r=ExperimentRunner(cfg,repo,tmp_path/'control',harness=ProcessHarness(),private_workspaces=private)
     secret.write_text('private evaluation answer')
+    monkeypatch.setenv('WORKSPACE_GOAL',str(repo/'.ouroboros/goal.md'))
     reason=r.run()
     assert reason=='max_cycles',r.state
     assert all(x['ok'] for x in r.state['receipts']),r.state['receipts']
@@ -435,3 +440,59 @@ def test_the_figure_ledger_reaches_the_dashboard(repo, tmp_path):
     (source / 'figures.json').write_text('[]')
     r.run()
     assert (tmp_path / 'control/view/figures.json').read_text() == '[]'
+
+
+def commit_all(repo):
+    import subprocess
+    subprocess.run(['git','add','-A'],cwd=repo,check=True)
+    subprocess.run(['git','commit','-qm','code'],cwd=repo,check=True)
+
+
+def proposal(text, stop=False):
+    return Result(text=json.dumps(dict(report=text, handoff='ignored', done=stop)),
+                  session_id='session', tokens={'input': 10, 'output': 2})
+
+
+def test_triage_cycle_passes_each_step_only_what_it_needs(repo, tmp_path):
+    (repo/'model.py').write_text('SPEED = 1\n'); commit_all(repo)
+    r, h = runner(repo, tmp_path, 'triage', max_cycles=1,
+                  results=[proposal('speed up the inner loop'), proposal('test the open claim'),
+                           answer(handoff='plan: do both'), answer()])
+    assert r.run() == 'max_cycles'
+    assert [x['agent'] for x in r.state['receipts']] == ['proposer_code','proposer_graph','merger','executor']
+    code, graph, merger, executor = h.calls
+    assert [c['tools'] for c in h.calls] == ['readonly']*3 + [None]
+    assert [c['principal'] for c in h.calls] == ['critic']*3 + ['scribe']
+    assert code['cwd'] == tmp_path/'control/views/proposer_code' and graph['cwd'] == tmp_path/'control/views/proposer_graph'
+    assert merger['cwd'] == executor['cwd'] == repo.resolve()
+    assert 'speed up the inner loop' not in graph['prompt']
+    assert 'speed up the inner loop' in merger['prompt'] and 'test the open claim' in merger['prompt']
+    assert 'plan: do both' in executor['prompt'] and 'speed up the inner loop' not in executor['prompt']
+    assert all(c['resume'] is None for c in h.calls)
+
+
+def test_triage_views_split_code_from_memory(repo, tmp_path):
+    (repo/'src').mkdir(); (repo/'src/model.py').write_text('SPEED = 1\n'); commit_all(repo)
+    r, h = runner(repo, tmp_path, 'triage', max_cycles=1)
+    seen = {}
+    def look(prompt, **kw):
+        cwd = kw['cwd']
+        seen[os.environ['OUROBOROS_EXPERIMENT_AGENT']] = sorted(str(p.relative_to(cwd)) for p in cwd.rglob('*')
+                                                             if p.is_file() and '.git' not in p.relative_to(cwd).parts)
+        return Script.run(h, prompt, **kw)
+    h.run = look
+    r.run()
+    assert 'src/model.py' in seen['proposer_code'] and not any('graph' in p.lower() for p in seen['proposer_code'])
+    assert 'GRAPH.md' in seen['proposer_graph'] and 'src/model.py' not in seen['proposer_graph']
+    assert '.ouroboros/goal.md' in seen['proposer_code'] and '.ouroboros/goal.md' in seen['proposer_graph']
+    assert '(none: you see only the code)' in h.calls[0]['prompt']
+
+
+def test_triage_stops_only_on_a_unanimous_vote_after_the_closing_executor(repo, tmp_path):
+    r, h = runner(repo, tmp_path, 'triage', max_cycles=5,
+                  results=[proposal('a', stop=True), proposal('b'), answer(), answer(),
+                           proposal('a', stop=True), proposal('b', stop=True), answer(), answer()])
+    assert r.run() == 'done_claimed'
+    assert [x['agent'] for x in r.state['receipts']] == ['proposer_code','proposer_graph','merger','executor'] * 2
+    assert r.state['done_source'] == 'proposers_unanimous' and r.state['cycle'] == 2
+    assert '"closing": true' in h.calls[-1]['prompt'] and '"closing": false' in h.calls[3]['prompt']

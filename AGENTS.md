@@ -58,7 +58,9 @@ say so in the commit message.
 ## Explicit experimental exception
 
 Theo authorized the separate topology evaluation adapter for planner-before-actor,
-single-agent freeflow, alternating role-free peers and blind first passes. Keep
+single-agent freeflow, alternating role-free peers, blind first passes, and (2026-11-01)
+recursive triage: independent proposers on host-built code-only and graph-only
+views, a read-only merger, and one executor that writes. Keep
 these opt-in in experiment.py, with docs/experimental-runner.md and a dedicated
 prompt skill. Production Engine semantics remain unchanged. Each store has one
 active memory writer; generalists use the existing scribe permission principal.

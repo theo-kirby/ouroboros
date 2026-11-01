@@ -1503,6 +1503,12 @@ failures and explicitly labeled completion claims. Scientific acceptance is exte
 
 Atomic pending/receipt/checkpoint state preserves counters, start time and cursor.
 Unknown in-flight work is never replayed; source/config/charter changes refuse resume.
+Recursive triage (Theo, 2026-11-01) adds a sixth opt-in topology: each cycle a
+proposer that sees only the code and one that sees only the memory graph propose the
+next unit independently, a read-only merger turns them into one plan, and a fresh
+executor carries it out and records memory. Only a unanimous vote stops the run. The
+views are host-built copies, so the split is enforced by confinement, not the prompt.
+
 Integrity failures stop the experimental adapter rather than inheriting infinite
 production retries. Landlock confines subprocess/tool filesystem access and defaults
 to empty identity homes without exposing host credentials. Whole-run aggregate

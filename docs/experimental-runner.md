@@ -16,6 +16,7 @@ batch, and do not pool its control with historical production runs.
 | freeflow | one persistent researcher | self-review, explicitly labeled | researcher |
 | peers | persistent peer_a ↔ peer_b, no specialized roles | whichever peer claims done | active peer only |
 | blind | N private solver_a turns, N private solver_b turns, then standard cycles | shared critic, then scribe | active solver in its private store; shared scribe |
+| triage | proposer_code and proposer_graph → merger → executor, every cycle | unanimous proposer vote to stop, then the closing executor turn | executor |
 
 Planner and critic use read-only tools and never resume a writable session. The
 planner recommends one next action before every actor turn, including the first;
@@ -25,6 +26,23 @@ Blind solvers start from separately prepared workspaces with the same charter an
 hash-pinned inputs; neither receives another solver's reports/handoffs. First-pass
 changed files and their hashes are preserved for shared synthesis. Sessions cannot
 silently disappear, change IDs or be reused by another persistent identity.
+
+Triage (Theo, 2026-11-01) runs in cycles of four calls. Each proposer is read-only
+and fresh every call, and works on a copy the host rebuilds before its call under
+`<control>/views/<identity>`: proposer_code gets the workspace without `.git`,
+`.ouroboros/` (memory, notebook, report), `.flywheel/`, `.governor/`, environments and,
+with governor memory, STATE.md; proposer_graph gets GRAPH.md (the orientation and
+every node of the graph) and, with files memory, a copy of the store so `ouroboros
+mem orient/show` works. Both get the charter. Under Landlock a proposer's only
+readable project path is its own copy; with `confinement: none` the split is a
+convention, not a boundary. A proposer receives no handoff, no reports and never the
+other proposal. The merger (read-only, critic principal) receives both proposals,
+which proposers voted to stop, and the last executor report; its handoff is the plan.
+The executor (scribe principal, fresh every call) receives only the plan, does the
+work and records memory. Done from a proposer is a vote: when both vote to stop, the
+merger writes a closing plan and the run stops after the executor's turn.
+`propose_timeout_seconds` (default: timeout_seconds) caps proposer calls, since the
+two proposals run one after the other.
 
 Every identity uses the same configured model/harness, without silent model
 fallback. Guidance strings may differ by declared treatment. A peer handoff is
