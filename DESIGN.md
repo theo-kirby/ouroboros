@@ -722,6 +722,7 @@ without touching code and so a harness can load them natively.
                              # (runs from before the merge have overseer.jsonl and an `oversee` step; readers accept both)
   status.json                # state, iteration, harness, usage windows, elapsed, last verdict, limit blocks
   transcripts/NNNN-<role>[-attempt].json   # raw harness output (+ .stderr); roles: actor, critic, scribe (older runs: housekeeping, maintainer, planner)
+  transcripts/NNNN-<role>[-attempt].prompt.txt   # the exact prompt that call was sent (the pool writes it before the call)
   reverted/NNNN.patch        # what a revert threw away
   view/index.html            # the run's live page; live.json, graph.html, summary.txt + story.html (the scribe's notebook) + paper.html (its report), assets/
   criteria.json              # the charter criteria met at the start and now (section 21)

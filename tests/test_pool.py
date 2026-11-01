@@ -386,3 +386,13 @@ def test_refresh_arriving_during_sleep_wakes_runner(repo):
         timer.join()
     assert time.monotonic() - started < 5
     assert not board.is_blocked("a")
+
+
+def test_every_prompt_is_saved_beside_its_transcript(tmp_path):
+    board = LimitBoard(cooldown=60, max_cooldown=600)
+    pool = PooledHarness([(named("claude", [limited()]), None), (named("codex", [works()]), None)], board)
+    log = tmp_path / "transcripts" / "0003-worker.json"
+    pool.run("the whole prompt", cwd=tmp_path, timeout=10, log_path=log)
+    assert (tmp_path / "transcripts" / "0003-worker.prompt.txt").read_text() == "the whole prompt"
+    pool.run("no transcript, no copy", cwd=tmp_path, timeout=10)   # no log_path: nothing to put it beside
+    assert sorted(p.name for p in (tmp_path / "transcripts").iterdir()) == ["0003-worker.prompt.txt"]

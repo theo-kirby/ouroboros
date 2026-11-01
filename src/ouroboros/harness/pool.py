@@ -146,6 +146,22 @@ class LimitBoard:
         }
 
 
+def prompt_path(log_path) -> Path | None:
+    """Where a call's prompt is kept: beside its transcript, `0007-actor.json` -> `0007-actor.prompt.txt`."""
+    return Path(log_path).with_suffix(".prompt.txt") if log_path else None
+
+
+def save_prompt(prompt: str, log_path) -> None:
+    """Keep every prompt sent to every role, so a run can be read back as it was asked. Never raises."""
+    try:
+        path = prompt_path(log_path)
+        if path is not None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(prompt or "", encoding="utf-8")
+    except Exception:   # a lost copy of the prompt must not cost the call
+        pass
+
+
 class PooledHarness:
     """A role's harness chain behind the plain Harness interface.
 
@@ -188,6 +204,7 @@ class PooledHarness:
         model: str | None = None,   # ignored: each entry carries its own model
         **kw,
     ) -> Result:
+        save_prompt(prompt, kw.get("log_path"))
         last: Result | None = None
         for harness, entry_model in self._candidates():
             own_session = resume if (resume and self._session_owner.get(resume) == harness.name) else None
