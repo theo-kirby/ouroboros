@@ -303,7 +303,7 @@ def test_preflight_reports_ready_without_starting_anything(repo, monkeypatch, ca
     out = capsys.readouterr().out
     assert "warning: claude 7d was 90% full" in out
     assert "ready: run 'ot5' on branch ouroboros/ot5" in out
-    assert "actor=claude" in out
+    assert "worker=claude:claude-opus-5-5" in out
     assert not (repo / ".ouroboros" / "runs" / "ot5").exists(), "preflight must start nothing"
 
 

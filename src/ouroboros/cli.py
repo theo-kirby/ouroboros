@@ -168,6 +168,25 @@ def load_config(args: argparse.Namespace, repo: Path) -> Config:
     return cfg
 
 
+def loop_switch_problem(cfg: Config, repo: Path) -> str | None:
+    """A run that already has iterations keeps the loop it started with.
+
+    worker-writer became the default (2026-11-01), so an older config without `loop.kind`
+    would otherwise continue a standard run as a worker-writer one."""
+    run_yml = run_dir_for(repo, cfg.run) / "run.yml"
+    if not run_yml.exists():
+        return None
+    try:
+        import yaml
+        before = (((yaml.safe_load(run_yml.read_text()) or {}).get("loop") or {}).get("kind")) or "standard"
+    except Exception:
+        return None
+    if before == cfg.loop.kind:
+        return None
+    return (f"run {cfg.run!r} started as loop: {before} and this config says loop: {cfg.loop.kind}; "
+            f"set `loop: {before}` in the config to continue it, or start a new run with --run-name")
+
+
 def preflight(cfg: Config, repo: Path) -> str | None:
     """Everything that can refuse a run, checked before we detach into tmux."""
     git = GitGuard(repo, cfg.branch)
@@ -180,6 +199,9 @@ def preflight(cfg: Config, repo: Path) -> str | None:
     if git.is_dirty() and not cfg.git.allow_dirty:
         return "working tree is dirty; commit, stash, or pass --allow-dirty"
     problem = cfg.problem()   # flags may have changed what the file said
+    if problem:
+        return problem
+    problem = loop_switch_problem(cfg, repo)
     if problem:
         return problem
     goal_path = repo / cfg.goal

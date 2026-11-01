@@ -1,6 +1,7 @@
 # The worker-writer loop (design, 2026-11-01)
 
-Status: **built** (2026-11-01, branch `feat/worker-writer-loop`). DESIGN.md
+Status: **built**, and the default loop since 2026-11-01 (Claude Code on Opus 5.5
+for both roles). DESIGN.md
 section 24 is now the description of the loop as built, including what was chosen
 for each open question below; section 7a has `ouroboros mem brief`, and section 16
 the config. This file keeps the structure, the decisions and why we made them.

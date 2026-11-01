@@ -92,6 +92,7 @@ fallback model.
 `.ouroboros/config.yml`, for example:
 
 ```yaml
+loop: standard
 roles:
   actor:  { harness: claude, timeout: 90m, fallback: [{ harness: codex }] }
   critic: { harness: codex,  timeout: 10m, fallback: [{ harness: claude }] }
@@ -100,7 +101,7 @@ stop: { after: 8h, max_usage: 0.8 }
 memory: auto
 ```
 
-**A second loop, `loop: worker-writer`**, is opt-in: a worker does each unit from a
+**The default loop, `loop: worker-writer`**: a worker does each unit from a
 fresh context, and a writer (also fresh every turn, and the only memory writer)
 reviews it against the charter, records it, and writes the next prompt. Nothing is
 reverted; a failed turn is recorded and fixed forward. `handoff: both | prompt |
@@ -108,11 +109,11 @@ graph` says whether the worker starts from the writer's prompt, the memory's bri
 or both:
 
 ```yaml
-loop: worker-writer
+loop: worker-writer        # the default; `loop: standard` is actor, critic, scribe
 handoff: both
 roles:
-  worker: { harness: codex, timeout: 45m }
-  writer: { harness: codex, timeout: 20m }
+  worker: { harness: claude, model: claude-opus-5-5, timeout: 45m, fallback: [{ harness: codex }] }
+  writer: { harness: claude, model: claude-opus-5-5, timeout: 20m, fallback: [{ harness: codex }] }
 ```
 
 A subscription rations by window, so a run meters windows, not dollars.

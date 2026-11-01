@@ -181,7 +181,7 @@ def test_preflight_reports_logins(tmp_path, monkeypatch, capsys):
 def test_preflight_refuses_a_critic_whose_sandbox_cannot_run(monkeypatch):
     from ouroboros.config import RoleConfig
     from ouroboros.harness.codex import CodexHarness
-    cfg = Config(run="t", roles={"critic": RoleConfig(harness="codex")})
+    cfg = Config(run="t", loop="standard", roles={"critic": RoleConfig(harness="codex")})
     monkeypatch.setattr(CodexHarness, "sandbox_problem", lambda self: "bwrap: loopback: Failed RTM_NEWADDR")
     problem = cli.readonly_sandbox_problem(cfg)
     assert problem.startswith("critic: codex") and "RTM_NEWADDR" in problem and "docs/sandbox.md" in problem

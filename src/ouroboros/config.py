@@ -125,8 +125,8 @@ HANDOFFS = ("both", "prompt", "graph")
 class LoopConfig(BaseModel):
     """Which loop runs, and its motion-without-progress detection (see loops.py).
 
-    `kind` picks the loop: `standard` (actor, critic, scribe; the default) or
-    `worker-writer` (DESIGN.md section 24). `loop: worker-writer` in a config is
+    `kind` picks the loop: `worker-writer` (the default, DESIGN.md section 24) or
+    `standard` (actor, critic, scribe). `loop: worker-writer` in a config is
     short for `loop: {kind: worker-writer}`; the detector's keys sit beside `kind`.
 
     Thresholds are counted in iterations and are deliberately generous: a real
@@ -136,7 +136,7 @@ class LoopConfig(BaseModel):
     of, not a thing to die of.
     """
 
-    kind: Literal["standard", "worker-writer"] = "standard"
+    kind: Literal["standard", "worker-writer"] = "worker-writer"
     product_after: int | None = 8     # iterations changing only bookkeeping
     frontier_after: int | None = 30   # iterations with the frontier unmoved
     escalate_every: int = 5           # iterations past the threshold per escalation step
@@ -235,7 +235,10 @@ class Config(BaseModel):
     handoff: Literal["both", "prompt", "graph"] = "both"
     roles: dict[str, RoleConfig] = Field(
         default_factory=lambda: {
-            # Codex carries the actor while Claude is limited (cadex nt2: 54 of 68 turns).
+            # The default loop's two roles (worker-writer): Claude Opus 5.5 for both.
+            "worker": ROLE_DEFAULTS["worker"](),
+            "writer": ROLE_DEFAULTS["writer"](),
+            # The standard loop's roles. Codex carries the actor while Claude is limited (cadex nt2: 54 of 68 turns).
             "actor": RoleConfig(fallback=[FallbackConfig(harness="codex")]),
             "critic": RoleConfig(timeout="10m"),
             # Book-keeping, not judgment: a lighter model does it well, and Codex covers a limit.
@@ -335,11 +338,12 @@ class Config(BaseModel):
         return yaml.safe_dump(self.model_dump(mode="json"), sort_keys=False)
 
 
-# The worker-writer loop's roles, when the config names none: the worker as the
-# actor (codex covers a limit), the writer as the scribe's time limit.
+# The worker-writer loop's roles, when the config names none: Claude Code with Opus 5.5
+# for both (Theo, 2026-11-01); codex covers a Claude limit, as it does for the actor.
+DEFAULT_MODEL = "claude-opus-5-5"
 ROLE_DEFAULTS = {
-    "worker": lambda: RoleConfig(fallback=[FallbackConfig(harness="codex")]),
-    "writer": lambda: RoleConfig(timeout="20m", fallback=[FallbackConfig(harness="codex")]),
+    "worker": lambda: RoleConfig(model=DEFAULT_MODEL, fallback=[FallbackConfig(harness="codex")]),
+    "writer": lambda: RoleConfig(model=DEFAULT_MODEL, timeout="20m", fallback=[FallbackConfig(harness="codex")]),
 }
 
 DEFAULT_CONFIG_PATH = Path(".ouroboros/config.yml")

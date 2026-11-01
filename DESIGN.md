@@ -1067,8 +1067,8 @@ roles:                      # each role: harness, model, timeout, resume_for, fa
   critic:     { harness: claude, timeout: 10m }
   scribe:     { harness: claude, timeout: 20m, fallback: [{ harness: codex }] }
   reporter:   { harness: claude, timeout: 10m }   # writes the digests; not in the pipeline
-  worker:     { harness: claude, timeout: 45m, fallback: [{ harness: codex }] }   # loop: worker-writer; resume_for must stay 1
-  writer:     { harness: claude, timeout: 20m, fallback: [{ harness: codex }] }   # loop: worker-writer; resume_for must stay 1
+  worker:     { harness: claude, model: claude-opus-5-5, timeout: 45m, fallback: [{ harness: codex }] }   # loop: worker-writer; resume_for must stay 1
+  writer:     { harness: claude, model: claude-opus-5-5, timeout: 20m, fallback: [{ harness: codex }] }   # loop: worker-writer; resume_for must stay 1
 git:
   branch: null              # -> ouroboros/<run>
   tag_on_accept: true
@@ -1092,7 +1092,7 @@ limits:
   transient_strikes: 3      # 429/overloaded errors in a row that count as a limit
   reserve: {}               # harness -> 0..1: stop using it at this much of a long window
 loop:                       # which loop, and motion-without-progress detection (section 6b)
-  kind: standard            # standard (actor, critic, scribe) | worker-writer (section 24); `loop: worker-writer` is short for this key
+  kind: worker-writer       # worker-writer (the default, section 24) | standard (actor, critic, scribe); `loop: worker-writer` is short for this key
   product_after: 8          # iterations changing only bookkeeping; null turns it off
   frontier_after: 30        # iterations with the frontier digest unmoved
   escalate_every: 5         # iterations past the threshold per rung of the ladder
@@ -1647,8 +1647,12 @@ start agents from a bare question.
 
 ## 24. The worker-writer loop (2026-11-01)
 
-A second production loop beside actor-critic-scribe, opt-in by `loop: worker-writer`
-(`worker_writer.py`). `loop: standard` stays the default and is unchanged. The why
+A second production loop beside actor-critic-scribe (`worker_writer.py`), and **the
+default since 2026-11-01** (Theo), with Claude Code on Opus 5.5 (`claude-opus-5-5`)
+for both roles and codex as their fallback. `loop: standard` selects
+actor-critic-scribe, unchanged. A run keeps the loop it started with: preflight
+refuses to continue a run whose `run.yml` names the other loop (an older config
+without `loop.kind` would otherwise switch a standard run mid-way). The why
 is `docs/worker-writer-loop.md`: Ouroboros exists to make long runs work across
 many fresh context windows, so the memory and the orientation of fresh agents are
 the core, and the role structure should be as small as it can be.
