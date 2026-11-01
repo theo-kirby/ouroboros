@@ -179,8 +179,8 @@ records cite commit IDs that a squash or rebase would change.
 
 The page opens on the live status (the dial, the gauges, what is happening now),
 then the **findings**: what the run knows, each as a title, a summary of at most
-three sentences, the part of the memory graph it rests on (which claims, which
-records, which iterations), its figures or screenshots, and folded notes. Then the
+three sentences, its figures or screenshots, the part of the memory graph it rests
+on (which claims, which records, which iterations), and folded notes. Then the
 **memory graph and timeline** as one picture: click an iteration, or a finding's
 "Show in the graph", and the graph brings those nodes forward; click a node and the
 timeline marks the iterations behind it. The writer keeps the findings and draws

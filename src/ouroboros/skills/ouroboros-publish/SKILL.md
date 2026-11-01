@@ -238,9 +238,9 @@ view is `{view_dir}/`.
 
 {problems}
 
-Then rewrite `{summary_path}`: plain text, two short paragraphs, 120 words at most,
-the first saying what the run set out to do, the second the answer or the product
-as it stands, with its number. Highlight the two or three phrases a skimmer must not
+Then rewrite `{summary_path}`: plain text, two paragraphs, the first (at most three
+sentences) saying what the run set out to do, the second (at most two sentences)
+the answer or the product as it stands, with its number. Highlight the two or three phrases a skimmer must not
 miss as `==like this==`.
 
 Your final message is one line: what you changed.

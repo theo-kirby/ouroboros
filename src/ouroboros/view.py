@@ -40,7 +40,7 @@ from urllib.parse import unquote, urlsplit
 from . import goal as charter
 from . import criteria as progress
 from . import findings as findings_mod
-from .memory.graph import FRONTIER_STATUSES, Graph, first_line, one_line, section
+from .memory.graph import FRONTIER_STATUSES, Graph, first_line, frontier_leaves, one_line, section
 
 VIEW = "view"
 TEMPLATE = "view_template.html"
@@ -366,16 +366,17 @@ def _header(status: dict, run_name: str, goal_text: str) -> str:
 
 
 def _summary(run_dir: Path, goal_text: str, ww: bool = False) -> str:
-    """The plain-language summary (view/summary.txt, the scribe's or the writer's), else the charter's mission."""
+    """The plain-language summary (view/summary.txt, the scribe's or the writer's), else the charter's mission:
+    what the run is for, then where it stands, cut to findings.SUMMARY_SHAPE's sentences."""
     text = _read_text(summary_path(run_dir), 8000).strip()
     source = ""
     if not text:
         text = charter.mission(goal_text or "").strip()
         source = (f'<p class="src">From the charter\'s mission. The {"writer" if ww else "scribe"} writes a summary '
                   'after its first iteration.</p>')
-    if not text:
+    paras = findings_mod.summary_paragraphs(text)
+    if not paras:
         return ""
-    paras = [one_line(p) for p in re.split(r"\n\s*\n", text) if p.strip()][:4]
     return '<div class="lede">' + "".join(f"<p>{_md(_clip(p, 900), mark=True)}</p>" for p in paras) + source + "</div>"
 
 
@@ -734,30 +735,41 @@ def _criteria(graph: Graph | None, goal_text: str) -> str:
     total, met = len(values), sum(r['met'] for r in values)
     source = "run criteria matched to memory identity; unknown means no reliable claim mapping"
     if not rows:
-        return '<p class="quiet">The charter declares no done criteria.</p>'
+        return _column('<p class="quiet">The charter declares no done criteria.</p>', "")
     pct = round(100 * met / total) if total else 0
-    return (f'<p class="meter"><span class="num">{met} of {total}</span> met <span class="quiet">· {source}</span></p>'
-            f'<div class="bar" role="img" aria-label="{met} of {total} criteria met"><span style="width:{pct}%"></span></div>'
-            + _rows(rows, "criteria"))
+    return _column(f'<p class="meter"><span class="num">{met} of {total}</span> met <span class="quiet">· {source}</span></p>'
+                   f'<div class="bar" role="img" aria-label="{met} of {total} criteria met"><span style="width:{pct}%"></span></div>',
+                   _rows(rows, "criteria"))
+
+
+def _column(head: str, body: str, foot: str = "") -> str:
+    """A column of the criteria / open problems pair: its head, its rows, its foot. The template lines the two
+    columns up part by part, so the rows start level whatever each head holds."""
+    return f'<div class="col-head">{head}</div><div class="col-body">{body}</div><div class="col-foot">{foot}</div>'
 
 
 def _frontier(graph: Graph | None) -> str:
+    """The open problems: the claim tree's frontier leaves (broken, then blocked, then open), less the done
+    criteria themselves, which the criteria column beside it shows. An open criterion with nothing open under
+    it yet is only there."""
     if graph is None or not graph.ok:
-        return '<p class="quiet">The memory could not be read.</p>'
+        return _column("", '<p class="quiet">The memory could not be read.</p>')
     rows = []
-    for status in FRONTIER_STATUSES:
-        for n in graph.claims("state"):
-            if n.get("status") != status:
-                continue
-            now = first_line(section(n.get("content", ""), "Current"), 240)
-            rows.append(f'<li class="row">{_chip(status, STATUS_CLASS.get(status, ""))}'
-                        f'<div class="what"><strong>{_md(n.get("title") or "")}</strong> <code>{_e(graph.label(n["id"]))}</code>'
-                        f'{f"<span class=\"sub\">{_md(now)}</span>" if now else ""}</div></li>')
+    for n in frontier_leaves(graph):
+        if progress.identity(n):
+            continue
+        status = n.get("status")
+        now = first_line(progress.MARKER.sub("", section(n.get("content", ""), "Current")), 240)
+        rows.append(f'<li class="row">{_chip(status, STATUS_CLASS.get(status, ""))}'
+                    f'<div class="what"><strong>{_md(n.get("title") or "")}</strong> <code>{_e(graph.label(n["id"]))}</code>'
+                    f'{f"<span class=\"sub\">{_md(now)}</span>" if now else ""}</div></li>')
     tail = len(graph.tail())
     note = f'<p class="quiet"><span class="num">{tail}</span> record(s) not folded into state yet.</p>' if tail else ""
+    head = (f'<p class="meter"><span class="num">{len(rows)}</span> open <span class="quiet">· what the work has opened '
+            'under the criteria: sub-problems, hypotheses, questions</span></p>')
     if not rows:
-        return '<p class="quiet">Nothing open, broken or blocked.</p>' + note
-    return _rows(rows, "frontier") + note
+        return _column(head, '<p class="quiet">Nothing open, broken or blocked under the criteria.</p>', note)
+    return _column(head, _rows(rows, "frontier"), note)
 
 
 def _decisions(decisions: list[dict]) -> str:
@@ -929,11 +941,10 @@ def _progress(its: list[dict], status: dict) -> str:
 # -- the memory graph: Governor's hub renderer, fed from either store ------------
 
 GRAPH_PAGE = "graph.html"
-# The memory graph's colours, as borris.dev's theme build makes them for its "dial" graph palette:
-# met claims yellow, open ones orange, broken red, blocked pink, records in the dial's blues, darkest
-# for the newest. The embed reads them from window.GRAPH_THEME before it draws; they win over the
-# preset's palette.
-GRAPH_COLOURS = {"light": {"citation": "#1f77b4", "status": {"open": "#fe933c", "broken": "#e05148", "blocked": "#e78dcc", "working": "#edc443", "done": "#919191"}, "tint": {"open": "#fce5d1", "broken": "#f6d8d3", "blocked": "#f7e4ee", "working": "#f8efd2", "done": "#ece8dd", "record": "#d3dee8"}, "records": ["#3170b0", "#437eb8", "#558cc0", "#679ac8", "#7aa8d0", "#8cb6d8", "#9ec4e0", "#b0d2e8"]}, "dark": {"citation": "#679fce", "status": {"open": "#fead66", "broken": "#f38168", "blocked": "#f6bedc", "working": "#fbd96d", "done": "#c7c7c7"}, "tint": {"open": "#513d2d", "broken": "#4e322e", "blocked": "#4f424b", "working": "#50482f", "done": "#26272a", "record": "#454a50"}, "records": ["#cddff1", "#b8d0e8", "#a2c2df", "#8db3d6", "#78a5cd", "#6396c4", "#4d88bb", "#3879b2"]}}
+# The memory graph's colours: Governor's default palette, "Warm & cool" (governor src/borris/colours.json),
+# taken whole: open claims mustard, met ones amber, broken brick red, blocked rose pink, records in five blues,
+# newest first. The embed reads them from window.GRAPH_THEME before it draws; they win over the preset's palette.
+GRAPH_COLOURS = {"light": {"citation": "#EE9F4F", "status": {"open": "#E0B04A", "broken": "#B5473A", "blocked": "#D46A8C", "working": "#EE9F4F", "done": "#EE9F4F", "superseded": "#B5473A"}, "tint": {"open": "#F6EBD4", "broken": "#EDD6D0", "blocked": "#F3DDE1", "working": "#F8E8D5", "done": "#F8E8D5", "record": "#DCDCDC", "superseded": "#EDD6D0"}, "records": ["#3D6FB0", "#5F7FA8", "#8C9FD1", "#6FA8C9", "#A3C4D9"]}, "dark": {"citation": "#EE9F4F", "status": {"open": "#E0B04A", "broken": "#B5473A", "blocked": "#D46A8C", "working": "#EE9F4F", "done": "#EE9F4F", "superseded": "#B5473A"}, "tint": {"open": "#493E26", "broken": "#3E2422", "blocked": "#462C36", "working": "#4D3A27", "done": "#4D3A27", "record": "#48494A", "superseded": "#3E2422"}, "records": ["#A3C4D9", "#6FA8C9", "#8C9FD1", "#5F7FA8", "#3D6FB0"]}}
 # The memory graph's layout and look: a preset exported from Governor's hub viewer (its graph
 # source fields left out). The page's light or dark wins over its theme, GRAPH_COLOURS over its palette.
 GRAPH_SETTINGS = {
@@ -1207,10 +1218,11 @@ def _impacts(graph: Graph) -> set[tuple[str, str]]:
     return out
 
 
-def _evidence_svg(graph: Graph, claims: list[dict], records: list[dict], rec_it: dict[str, int], key: str) -> str:
-    """One finding's part of the graph: its claims as rows (the tree indented), the records
-    that carry them as columns in the order they were written, a dot where a record changed
-    a claim (a ring where the claim only cites it), and the records' lineage on top."""
+def _evidence(graph: Graph, claims: list[dict], records: list[dict], rec_it: dict[str, int], last: int) -> str:
+    """One finding's part of the graph, as HTML: a row per claim (the tree indented, a superseded one
+    struck through), its title, then a track for the whole run, iteration 1 to `last`, with a mark
+    where a record changed the claim (a ring where the claim only cites it), in the claim's colour.
+    Iterations closer than a mark apart share one pill; each still answers a click on its own."""
     if not claims:
         return ""
     ids = {c["id"] for c in claims}
@@ -1230,51 +1242,46 @@ def _evidence_svg(graph: Graph, claims: list[dict], records: list[dict], rec_it:
             order.append((c, 0))
     impacts = _impacts(graph)
     cites = {(r["id"], c["id"]) for c in claims for r in graph.cites(c)}
-    LW, CW, RH, TOP = 300, 30, 26, 52
-    W, H = LW + CW * max(len(records), 1) + 16, TOP + RH * len(order) + 30
-    col = {r["id"]: LW + CW * i + CW / 2 for i, r in enumerate(records)}
-    g = [f'<svg class="ev" viewBox="0 0 {W} {H}" style="max-width:{W}px" role="img" '
-         'aria-label="The claims and records this finding rests on">']
-    for i, (c, depth) in enumerate(order):   # rows
-        y = TOP + RH * i + RH / 2
-        st = c.get("status") or "open"
+    first = min([1, *(rec_it.get(r["id"], 1) for r in records)])
+    last = max(last, first + 1)
+
+    def pct(n: int) -> float:
+        return 100 * (n - first) / (last - first)
+    rows = []
+    for c, depth in order:
+        st = _e(c.get("status") or "open")
         title = str(c.get("title") or c.get("slug") or "")
-        g.append(f'<g class="row" data-focus="n:{_e(c["id"])}"><title>{_e(title)} ({_e(st)}; {_e(graph.label(c["id"]))})</title>'
-                 f'<rect class="band" x="0" y="{y - RH / 2:.1f}" width="{W}" height="{RH}"/>'
-                 f'<line class="lane" x1="{LW - 6}" x2="{W - 8}" y1="{y:.1f}" y2="{y:.1f}"/>'
-                 f'<circle class="st st-{_e(st)}" cx="{12 + depth * 14}" cy="{y:.1f}" r="6"/>'
-                 f'<text class="cl{" gone" if st == "superseded" else ""}" x="{24 + depth * 14}" y="{y + 4:.1f}">'
-                 f'{_e(_clip(title, 44 - depth * 2))}</text></g>')
-    for r in records:   # columns: the record's mark on each row it touched
-        x = col[r["id"]]
-        n = rec_it.get(r["id"])
-        g.append(f'<g class="colm"' + (f' data-focus="it:{n}"' if n is not None else f' data-focus="n:{_e(r["id"])}"') + '>'
-                 f'<title>{_e(r.get("title") or "")} ({_e(graph.label(r["id"]))}'
-                 + (f", iteration {n}" if n is not None else "") + ')</title>'
-                 f'<rect class="hit" x="{x - CW / 2:.1f}" y="0" width="{CW}" height="{H}"/>'
-                 f'<circle class="rec" cx="{x:.1f}" cy="22" r="5"/>'
-                 f'<text class="it" x="{x:.1f}" y="{H - 10}" text-anchor="middle">{f"#{n}" if n is not None else "·"}</text>')
-        for i, (c, _) in enumerate(order):
-            y = TOP + RH * i + RH / 2
-            st = _e(c.get("status") or "open")
-            if (r["id"], c["id"]) in impacts:
-                g.append(f'<circle class="hitd st-{st}" cx="{x:.1f}" cy="{y:.1f}" r="6.5"/>')
-            elif (r["id"], c["id"]) in cites:
-                g.append(f'<circle class="cite" cx="{x:.1f}" cy="{y:.1f}" r="5"/>')
-        g.append("</g>")
-    for r in records:   # lineage: an arc from each parent record in view
-        for p in r.get("parents") or []:
-            if p in col and p != r["id"]:
-                x0, x1 = col[p], col[r["id"]]
-                h = min(18.0, 6 + abs(x1 - x0) / 10)
-                g.append(f'<path class="lin" d="M{x0:.1f},17 Q{(x0 + x1) / 2:.1f},{17 - h:.1f} {x1:.1f},17"/>')
-    g.append("</svg>")
-    return "".join(g)
+        marks = sorted(((rec_it[r["id"]], r, (r["id"], c["id"]) in impacts) for r in records
+                        if r["id"] in rec_it and ((r["id"], c["id"]) in impacts or (r["id"], c["id"]) in cites)),
+                       key=lambda m: m[0])
+        runs: list[list] = []
+        for m in marks:
+            if runs and runs[-1][-1][2] == m[2] and m[0] - runs[-1][-1][0] <= last / 40:
+                runs[-1].append(m)
+            else:
+                runs.append([m])
+        track = []
+        for run in runs:
+            a, z = pct(run[0][0]), pct(run[-1][0])
+            track.append(f'<b class="ev-mark st-{st}{"" if run[0][2] else " cite"}" '
+                         f'style="left:calc({a:.1f}% - 5.5px);width:calc({z - a:.1f}% + 11px)"></b>'
+                         + "".join(f'<i class="pick" data-focus="it:{n}" style="left:{pct(n):.1f}%" '
+                                   f'title="#{n} · {_e(r.get("title") or "")} ({_e(graph.label(r["id"]))})"></i>'
+                                   for n, r, _ in run))
+        rows.append(f'<div class="ev-row" data-focus="n:{_e(c["id"])}" style="--d:{depth}" '
+                    f'title="{_e(title)} ({_e(c.get("status") or "open")}; {_e(graph.label(c["id"]))})">'
+                    f'<span class="ev-name{" gone" if st == "superseded" else ""}"><i class="st st-{st}"></i>{_e(title)}</span>'
+                    f'<span class="ev-track">{"".join(track)}</span></div>')
+    ticks = sorted({first, *(round(first + (last - first) * q) for q in (0.25, 0.5, 0.75)), last})
+    rows.append('<div class="ev-row ev-axis"><span></span><span class="ev-track">'
+                + "".join(f'<span style="left:{pct(n):.1f}%">#{n}</span>' for n in ticks) + "</span></div>")
+    return ('<div class="ev" role="group" aria-label="The claims this finding rests on, and when in the run each was changed">'
+            + "".join(rows) + "</div>")
 
 
 def _findings_ledger(run_dir: Path, graph: Graph | None, its: list[dict]) -> str:
-    """The writer's findings (view/findings.json), each as title, summary, its part of the
-    graph, its visuals and folded notes; '' when there are none."""
+    """The writer's findings (view/findings.json), each as title, summary, its visuals, its
+    part of the graph and folded notes; '' when there are none."""
     items = findings_mod.load(run_dir)
     if not items:
         return ""
@@ -1285,13 +1292,13 @@ def _findings_ledger(run_dir: Path, graph: Graph | None, its: list[dict]) -> str
         fid = _SAFE_ID.sub("-", str(f.get("id") or f"finding-{k}"))[:60]
         word, cls = FINDING_STATUS.get(str(f.get("status") or "holds"), ("holds", "ok"))
         claims, records = findings_mod.related(graph, f) if graph is not None and graph.ok else ([], [])
-        ev = _evidence_svg(graph, claims, records, rec_it, fid) if claims else ""
+        ev = _evidence(graph, claims, records, rec_it, max((it["n"] for it in its), default=1)) if claims else ""
         n_it = sorted({rec_it[r["id"]] for r in records if r["id"] in rec_it})
         span = (f"iterations {n_it[0]}–{n_it[-1]}" if len(n_it) > 1 else f"iteration {n_it[0]}") if n_it else ""
         graph_part = (f'<div class="fnd-graph">{ev}<p class="cap"><b>In the memory graph.</b> '
                       f'{len(claims)} claim{"s" if len(claims) != 1 else ""} and {len(records)} record'
-                      f'{"s" if len(records) != 1 else ""}{f", {span}" if span else ""}. A dot is a record that changed '
-                      'the claim, a ring one it cites; a column is an iteration. '
+                      f'{"s" if len(records) != 1 else ""}{f", {span}" if span else ""}. Each row is a claim across the '
+                      'whole run; a dot is an iteration whose record changed it, a ring one it cites. '
                       f'<button type="button" class="focus-btn" data-focus="f:{_e(fid)}">Show in the graph</button></p></div>'
                       if ev else "")
         vis = []
@@ -1308,9 +1315,9 @@ def _findings_ledger(run_dir: Path, graph: Graph | None, its: list[dict]) -> str
             f'<article class="fnd{" gone" if cls == "bad" else ""}" id="finding-{_e(fid)}">'
             f'<h3><span class="fnd-n num">{k}</span>{_md(_clip(str(f.get("title") or ""), 160))} {_chip(word, cls)}</h3>'
             f'<p class="fnd-sum">{_md(_clip(str(f.get("summary") or ""), 900))}</p>'
-            + graph_part
             + (f'<div class="fnd-vis">{"".join(vis)}</div>' if vis else
                '<p class="quiet fnd-novis">No visual yet.</p>')
+            + graph_part
             + (f'<details class="fnd-notes" id="notes-{_e(fid)}"><summary>Notes</summary>{_md_block(notes)}</details>'
                if notes else "")
             + "</article>")

@@ -888,9 +888,10 @@ The delta is measured against the charter at the merge base.
   records that fit, and its caption says how many records were left out: the old
   ones live on in the claims they were folded into.
 - **The scribe's two files, which need judgment.** `view/summary.txt` is plain
-  text: what the run is for and where it stands, in words for someone who does
-  not know the code (before the scribe writes one, the charter's mission stands
-  in). `view/story.html` is an HTML fragment with what the run has found, each
+  text: what the run is for (at most three sentences), then where it stands (at
+  most two), in words for someone who does not know the code (before the scribe
+  writes one, the charter's mission stands in). The page cuts each paragraph to
+  its limit and the loop's findings check reports a longer one. `view/story.html` is an HTML fragment with what the run has found, each
   section a finding stated as a sentence, then its evidence (tables, figures,
   small inline SVG charts), curated rather than appended, images in
   `view/assets/`. On the page each top-level `<section>` that opens with an
@@ -1871,13 +1872,13 @@ look at the picture.
 **The page, in order**: the live status (summary, dial, gauges, right now), progress
 toward done and open problems, **Findings**, then **Memory graph and timeline**, then
 the paper behind its toggle. Each finding shows its title and status, its summary,
-its part of the graph, its visuals and its notes. Its part of the graph is an
-evidence diagram drawn in Python (`_evidence_svg`): the finding's claims as rows,
-the tree indented, everything under them included (a rejected hypothesis struck
-through), the records that changed or are cited by them as columns in order with
-the iteration under each, a dot where a record changed a claim and a ring where the
-claim only cites it, and the records' lineage as arcs on top, so a record that
-rests on two others shows it.
+its visuals, its part of the graph and its notes. Its part of the graph is an
+evidence strip, HTML drawn in Python (`_evidence`): the finding's claims as rows, the
+tree indented, everything under them included (a rejected hypothesis struck
+through), each with a track for the whole run, a dot at every iteration whose record
+changed the claim and a ring where the claim only cites one, in the claim's colour.
+Iterations closer than a dot apart share one pill. It says when in the run the
+evidence came, in a few lines, at any width.
 
 The graph and the timeline are one section and one picture. The page carries a map
 (`run-map`): per iteration its records and the claims they touched, per finding its
@@ -1886,7 +1887,7 @@ graph", a finding's diagram or its "Show in the graph" posts `governor:focus` wi
 those node ids to the embed, which fades the rest; a node clicked in the graph posts
 `governor:pick` back and the page marks the iterations that wrote or changed it.
 That channel is new in Governor's report embed (governor `feat/report-focus`,
-vendored at governor `10cb417`); the embed takes no
+vendored from governor `main` (now `2dd8fb6`, which also carries its hub styles)); the embed takes no
 other message. The graph keeps its own top-level section so a live refresh never
 reloads its frame; the timeline follows it as `#timeline`, unnumbered.
 

@@ -46,10 +46,13 @@ or sharpen one. Keep them in `{findings_path}`; you are the only one who edits i
 - **Notes**: the detail a curious reader wants: method, numbers, caveats, the
   commands that reproduce it.
 
-**The summary.** Keep `{summary_path}` too: two to four sentences of plain text at
-the top of the page, where the run stands now (what it set out to do, what it has
-found, what it is doing next), with the one phrase that matters most marked
-`==like this==`. Rewrite it whenever it is no longer true.
+**The summary.** Keep `{summary_path}` too: plain text at the top of the page, in
+two paragraphs. The first, at most three sentences, says what the run set out to
+do and why, in words anyone can follow. The second, at most two sentences, says
+where it stands now: the best result with its number, or the blocker, and what
+comes next. Mark the one or two phrases that matter most `==like this==`. The page
+cuts anything longer, and the loop's check says so. Rewrite it whenever it is no
+longer true.
 
 Every check of this file the loop made last turn: {problems}
 

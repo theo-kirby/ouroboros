@@ -26,6 +26,9 @@ IMAGE = (".png", ".svg", ".jpg", ".jpeg", ".webp", ".gif")
 KEBAB = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 TITLE_MAX, SUMMARY_MAX, SENTENCES_MAX, NOTES_MAX, VISUALS_MAX = 120, 700, 3, 6000, 4
 RECORDS_SHOWN = 24
+# view/summary.txt, the page's opening: what the run is for, then where it stands, in at most
+# this many sentences each
+SUMMARY_FILE, SUMMARY_SHAPE = "summary.txt", (3, 2)
 
 
 def path(run_dir: Path) -> Path:
@@ -47,23 +50,52 @@ def load(run_dir: Path) -> list[dict]:
     return out
 
 
+def sentences(text: str) -> list[str]:
+    return [s for s in re.split(r"(?<=[.!?])\s+(?=[A-Z0-9(\"'`=])", text.strip()) if s.strip()]
+
+
 def _sentences(text: str) -> int:
-    return len([s for s in re.split(r"(?<=[.!?])\s+(?=[A-Z0-9(\"'`])", text.strip()) if s.strip()])
+    return len(sentences(text))
+
+
+def summary_paragraphs(text: str) -> list[str]:
+    """The summary as the page shows it: its first two paragraphs, each cut to SUMMARY_SHAPE's sentences."""
+    paras = [" ".join(p.split()) for p in re.split(r"\n\s*\n", text or "") if p.strip()]
+    return [" ".join(sentences(p)[:n]) for p, n in zip(paras, SUMMARY_SHAPE)]
+
+
+def check_summary(run_dir: Path) -> list[str]:
+    """What is wrong with view/summary.txt's shape, one plain line each; [] when it is right or absent."""
+    try:
+        text = (path(run_dir).parent / SUMMARY_FILE).read_text(encoding="utf-8").strip()
+    except OSError:
+        return []
+    paras = [p for p in re.split(r"\n\s*\n", text) if p.strip()]
+    first, second = SUMMARY_SHAPE
+    problems = []
+    if len(paras) > 2:
+        problems.append(f"{SUMMARY_FILE} has {len(paras)} paragraphs; two at most (the page shows two)")
+    for i, (p, most) in enumerate(zip(paras, SUMMARY_SHAPE)):
+        n = _sentences(p)
+        if n > most:
+            problems.append(f"{SUMMARY_FILE}: paragraph {i + 1} is {n} sentences; at most {most} "
+                            f"(the page cuts it after {most})")
+    return problems
 
 
 def check(run_dir: Path, graph=None) -> list[str]:
-    """What is wrong with findings.json, one plain line each; [] when it is right or absent."""
+    """What is wrong with findings.json and summary.txt, one plain line each; [] when they are right or absent."""
     p = path(run_dir)
+    problems: list[str] = check_summary(run_dir)
     if not p.exists():
-        return []
+        return problems
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        return [f"{FILE} does not parse as JSON: {exc}"]
+        return problems + [f"{FILE} does not parse as JSON: {exc}"]
     items = data.get("findings") if isinstance(data, dict) else None
     if not isinstance(items, list):
-        return [f'{FILE} must be {{"findings": [ ... ]}}']
-    problems: list[str] = []
+        return problems + [f'{FILE} must be {{"findings": [ ... ]}}']
     seen: set[str] = set()
     known = None
     if graph is not None and getattr(graph, "ok", False):

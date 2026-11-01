@@ -68,10 +68,11 @@ detail second: say "the bot now looks two moves ahead", then give the name, the
 command and the record id in small print under it. Explain any term a newcomer
 would not know the first time you use it.
 
-**`{summary_path}`: the summary.** Plain text, no HTML, two short paragraphs, 120
-words at most. The first says what the run is trying to do and why it matters, in
-words anyone can follow. The second says where it stands now: the best result so
-far with its number, the main problem, and what comes next. Rewrite it whenever one
+**`{summary_path}`: the summary.** Plain text, no HTML, two paragraphs. The first,
+at most three sentences, says what the run is trying to do and why it matters, in
+words anyone can follow. The second, at most two sentences, says where it stands
+now: the best result so far with its number, or the main problem, and what comes
+next. The page cuts anything longer. Rewrite it whenever one
 of those changes, so it is always the current picture.
 Highlight the two or three phrases a skimmer must not miss, a few words each, as
 `==like this==`: the goal in the first paragraph, the best result or the blocker in

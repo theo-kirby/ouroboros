@@ -129,7 +129,7 @@ def test_the_graph_page_carries_the_preset_and_the_sites_colours(run_dir, repo, 
     raw = re.search(r'<script id="governor-settings" type="application/json">(.*?)</script>', gp).group(1)
     assert json.loads(raw) == view.GRAPH_SETTINGS and "data-layout" not in gp, "the preset sets the layout"
     theme = json.loads(re.search(r"window\.GRAPH_THEME=(\{.*?\})</script>", gp).group(1))
-    assert theme == view.GRAPH_COLOURS and theme["light"]["status"]["working"] == "#edc443"
+    assert theme == view.GRAPH_COLOURS and theme["light"]["status"]["working"] == "#EE9F4F", "Governor's Warm & cool: met claims amber"
 
 
 def test_the_model_is_a_key_figure(run_dir, repo):
@@ -447,20 +447,23 @@ def test_markdown_shows_on_the_page(run_dir, repo):
     assert "The bot is <em>fast</em> now." in html
 
 
-def _claims_graph(repo, n):
+def _claims_graph(repo, n, subs=0):
+    """n open criteria, the last with `subs` open sub-problems under it."""
     s = FilesStore(repo)
     s.prepare()
     s.record(title="Directive", body=body(), parent="root", impacts=[],
              news=[(f"gap-criterion-{i}", "open") for i in range(n)], none=None)
     ok, msg = s.fold({"claims": [{"new": f"gap-criterion-{i}", "parent": "root", "title": f"Criterion {i}", "status": "open",
-                                  "current": "- not yet [rec: r-0001]", "cites": ["r-0001"]} for i in range(n)],
+                                  "current": "- not yet [rec: r-0001]", "cites": ["r-0001"]} for i in range(n)]
+                      + [{"new": f"sub-{j}", "parent": f"gap-criterion-{n - 1}", "title": f"Sub-problem {j}", "status": "open",
+                          "current": "- a question [rec: r-0001]", "cites": ["r-0001"]} for j in range(subs)],
                       "folded": ["r-0001"]})
     assert ok, msg
     return s.snapshot()
 
 
 def test_long_lists_show_three_then_a_toggle(run_dir, repo):
-    view.render(run_dir, repo, goal_text="## Done criteria\n" + "".join(f"- [ ] Criterion {i}\n" for i in range(5)), graph=_claims_graph(repo, 5))
+    view.render(run_dir, repo, goal_text="## Done criteria\n" + "".join(f"- [ ] Criterion {i}\n" for i in range(5)), graph=_claims_graph(repo, 5, subs=5))
     html = page(run_dir)
     crit = html[html.index('id="h-criteria"'):html.index('id="h-frontier"')]
     assert crit.count('<li class="row') == 5
@@ -506,3 +509,26 @@ def test_the_dial_shows_a_command_and_the_background_shells(run_dir, repo):
     (run_dir / "status.json").write_text(json.dumps(st))
     html = view.render(run_dir, repo, goal_text=GOAL).read_text()
     assert 'data-activity=""' in html and dial(html)["kind"] == "" and dial(html)["shells"] == 0
+
+
+def test_open_problems_are_what_opened_under_the_criteria_not_the_criteria_again(run_dir, repo):
+    view.render(run_dir, repo, goal_text="## Done criteria\n" + "".join(f"- [ ] Criterion {i}\n" for i in range(3)),
+                graph=_claims_graph(repo, 3, subs=2))
+    html = page(run_dir)
+    crit = html[html.index('id="h-criteria"'):html.index('id="h-frontier"')]
+    front = html[html.index('id="h-frontier"'):html.index('id="findings"')]
+    assert crit.count('<li class="row') == 3
+    assert front.count('<li class="row') == 2 and "Sub-problem 0" in front and "Criterion" not in front
+    assert "ouroboros-criterion" not in front
+    for part in (crit, front):   # both columns line up part by part
+        assert part.index('class="col-head"') < part.index('class="col-body"') < part.index('class="col-foot"')
+
+
+def test_the_summary_is_three_sentences_then_two(run_dir, repo):
+    (run_dir / "view").mkdir(exist_ok=True)
+    (run_dir / "view" / "summary.txt").write_text(
+        "One. Two. Three. Four.\n\nFive is 1.5 s. Six. Seven.\n\nEight.")
+    view.render(run_dir, repo, goal_text=GOAL)
+    lede = page(run_dir).split('<div class="lede">')[1].split("</div>")[0]
+    assert "Three." in lede and "Four" not in lede
+    assert "Five is 1.5 s. Six." in lede and "Seven" not in lede and "Eight" not in lede
