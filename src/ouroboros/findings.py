@@ -24,7 +24,7 @@ FILE = "findings.json"
 STATUSES = ("holds", "revised", "retracted")
 IMAGE = (".png", ".svg", ".jpg", ".jpeg", ".webp", ".gif")
 KEBAB = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
-TITLE_MAX, SUMMARY_MAX, SENTENCES_MAX, NOTES_MAX, VISUALS_MAX = 120, 700, 3, 6000, 4
+TITLE_MAX, SUMMARY_MAX, SENTENCES_MAX, NOTES_MAX, VISUALS_MAX = 120, 700, 3, 6000, 1
 RECORDS_SHOWN = 24
 # view/summary.txt, the page's opening: what the run is for, then where it stands, in at most
 # this many sentences each
@@ -134,7 +134,7 @@ def check(run_dir: Path, graph=None) -> list[str]:
                     problems.append(f"{name}: `{x}` in `{key}` is not in the memory")
         visuals = f.get("visuals") if isinstance(f.get("visuals"), list) else []
         if len(visuals) > VISUALS_MAX:
-            problems.append(f"{name}: {len(visuals)} visuals; at most {VISUALS_MAX}, the ones that tell it")
+            problems.append(f"{name}: {len(visuals)} visuals; at most {VISUALS_MAX}, compose the panels on one canvas")
         for v in visuals:
             file = str((v or {}).get("file") or "") if isinstance(v, dict) else ""
             if not file:
@@ -146,6 +146,8 @@ def check(run_dir: Path, graph=None) -> list[str]:
                 problems.append(f"{name}: `{file}` does not exist (paths are relative to {vdir})")
             if not str(v.get("caption") or "").strip():
                 problems.append(f"{name}: `{file}` has no caption")
+            elif _sentences(str(v.get("caption"))) > 2:
+                problems.append(f"{name}: `{file}` caption must be at most two sentences")
         if len(str(f.get("notes") or "")) > NOTES_MAX:
             problems.append(f"{name}: `notes` is over {NOTES_MAX} characters")
     return problems[:20]

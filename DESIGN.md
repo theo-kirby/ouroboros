@@ -1849,14 +1849,20 @@ keeps `view/findings.json` in the run directory: per finding an `id`, a `title`
 `records` of the memory it rests on, `visuals` (`{file: assets/..., caption}`) and
 `notes` (markdown, shown folded). The writer adds one when a claim became `working`
 with evidence or a hypothesis was rejected with a number, and updates one when a
-turn changed it; the list's order is the page's. It also keeps `view/summary.txt`,
+turn changed it; the list is newest first (prepend new findings, preserve existing
+relative order on updates), and the page follows that order. It also keeps `view/summary.txt`,
 the page's opening paragraph. After every writer the loop checks the file
 (`findings.check`: it parses, ids are unique kebab-case, the summary is short, every
 claim and record is in the memory, every visual exists and is captioned) and the
 next writer gets what it found; nothing stops the loop.
 
 **Visuals for every run** (`figstyle.py`, `figures.py`). A finding without a visual
-is not finished. Ouroboros ships matplotlib, seaborn, pandas and numpy, so a run on
+is not finished. Each finding has exactly one image and one caption of at most two
+sentences. Multiple plots, screenshots or references must be composed on one
+canvas with a consistent grid. The checker flags multiple visual entries and
+long captions. Older multi-image entries display as one SVG canvas with equal
+cells, preserved aspect ratios and a shared caption while awaiting writer updates.
+Ouroboros ships matplotlib, seaborn, pandas and numpy, so a run on
 any project can plot: `ouroboros plot fig.py` runs a script with Ouroboros's own
 Python after `figstyle.apply()` (Theo's palette as the seaborn and matplotlib
 default, palette colormaps, seaborn's faded bar colours turned off), and
@@ -1872,7 +1878,12 @@ look at the picture.
 **The page, in order**: the live status (summary, dial, gauges, right now), progress
 toward done and open problems, **Findings**, then **Memory graph and timeline**, then
 the paper behind its toggle. Each finding shows its title and status, its summary,
-its visuals, its part of the graph and its notes. Its part of the graph is an
+its figure, its part of the graph and its notes. Findings are individually
+collapsible; only the first five start expanded, with Expand all and Collapse all
+controls. Graph details start collapsed behind a compact summary of claim and
+record counts, iteration range, decorative connected dots and Show in the graph.
+Expanding reveals the full existing evidence strip; live refresh preserves each
+fold state. Its part of the graph is an
 evidence strip, HTML drawn in Python (`_evidence`): the finding's claims as rows, the
 tree indented, everything under them included (a rejected hypothesis struck
 through), each with a track for the whole run, a dot at every iteration whose record

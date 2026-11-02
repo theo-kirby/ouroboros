@@ -70,7 +70,7 @@ def test_the_page_draws_each_finding_title_summary_visuals_graph_notes(repo, run
     view.render(run, repo, goal_text=GOAL, graph=g)
     html = page(run)
     sec = html.split('id="h-story"', 1)[1].split('id="graph-sec"', 1)[0]
-    f1 = sec.split('id="finding-grammar-rules"', 1)[1].split("</article>", 1)[0]
+    f1 = sec.split('id="finding-grammar-rules"', 1)[1].split('id="finding-old"', 1)[0]
     order = [f1.index(x) for x in ("Three grammar rules", "Rules 1-3 parse", 'src="assets/rules.png"', '<div class="ev"',
                                    'class="fnd-notes"')]
     assert order == sorted(order), "title, summary, the visuals, the graph, the notes"
@@ -134,3 +134,54 @@ def test_the_check_says_when_the_summary_is_too_long(repo, run):
     summary.write_text("One. Two. Three. Four.\n\nFive. Six. Seven.\n\nEight.")
     got = "\n".join(findings.check(run, None))
     assert "3 paragraphs" in got and "paragraph 1 is 4 sentences; at most 3" in got and "paragraph 2 is 3 sentences; at most 2" in got
+
+
+def test_findings_allow_only_one_figure_and_a_short_caption(run):
+    (run / 'view/assets/rules.png').write_bytes(PNG)
+    write(run, [dict(GOOD, visuals=GOOD['visuals'] * 2)])
+    assert any('at most 1' in p for p in findings.check(run))
+    write(run, [dict(GOOD, visuals=[dict(GOOD['visuals'][0], caption='One. Two. Three.')])])
+    assert any('caption' in p and 'two sentences' in p for p in findings.check(run))
+
+
+def test_five_findings_open_and_graph_details_closed(repo, run):
+    write(run, [dict(GOOD, id=f'finding-{i}') for i in range(8)])
+    html = view._findings_ledger(run, tree_store(repo).snapshot(), [])
+    tags = re.findall(r'<details class="fnd"[^>]*>', html)
+    assert len(tags) == 8
+    assert all(' open' in tag for tag in tags[:5])
+    assert all(' open' not in tag for tag in tags[5:])
+    graph_tags = re.findall(r'<details class="fnd-graph"[^>]*>', html)
+    assert len(graph_tags) == 8 and all(' open' not in tag for tag in graph_tags)
+    assert '4 claims and 2 records' in html
+    assert 'Expand all' in html and 'Collapse all' in html
+
+
+def test_legacy_visuals_render_as_one_image_and_caption(run):
+    (run / 'view/assets/rules.png').write_bytes(PNG)
+    write(run, [dict(GOOD, visuals=GOOD['visuals'] * 2)])
+    html = view._findings_ledger(run, None, [])
+    assert html.count('<figure>') == 1
+    assert html.count('<img ') == 1
+    assert html.count('<figcaption>') == 1
+    assert 'data:image/svg+xml;base64,' in html
+
+
+def test_composed_figure_keeps_all_panels_and_rejects_escaping_paths(run, tmp_path):
+    import base64
+    import xml.etree.ElementTree as ET
+
+    (run / 'view/assets/rules.png').write_bytes(PNG)
+    outside = tmp_path / 'outside.png'
+    outside.write_bytes(PNG)
+    visuals = GOOD['visuals'] * 4 + [{'file': str(outside), 'caption': 'Outside.'}]
+    write(run, [dict(GOOD, visuals=visuals)])
+    html = view._findings_ledger(run, None, [])
+    encoded = re.search(r'<img src="data:image/svg\+xml;base64,([^"]+)"', html).group(1)
+    svg = ET.fromstring(base64.b64decode(encoded))
+    panels = svg.findall('{http://www.w3.org/2000/svg}image')
+    assert len(panels) == 4
+    assert {(p.get('x'), p.get('y')) for p in panels} == {
+        ('16', '16'), ('816', '16'), ('16', '616'), ('816', '616')}
+    assert all(base64.b64decode(p.get('href').split(',', 1)[1]) == PNG for p in panels)
+    assert 'Outside.' not in html

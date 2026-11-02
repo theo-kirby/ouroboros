@@ -34,8 +34,9 @@ or sharpen one. Keep them in `{findings_path}`; you are the only one who edits i
   evidence, or a hypothesis was rejected with a number; update one when the turn
   changed what it says. Never delete one: a finding the evidence overturned becomes
   `"status": "retracted"` (or `"revised"`), with the reason in `notes`.
-- **Order.** The list's order is the page's: the finding that answers the charter
-  first, then the ones that carry it.
+- **Order.** Newest findings first: prepend new entries, and keep existing entries
+  in their relative order when updating them. Only the first five start expanded
+  on the page; older findings can be opened individually or with Expand all.
 - **Title**: under a sentence, the finding itself, not a topic ("Chunked reading is
   6.7 times faster", not "Performance").
 - **Summary**: at most three sentences in plain words, with the key number and how
@@ -60,7 +61,7 @@ The file now:
 
 {findings}
 
-### Visuals: every finding gets at least one
+### Visuals: every finding gets exactly one figure
 
 A finding is told with a picture: a plot of the measurement, a screenshot of the
 feature, a render of the output. A finding without a visual is not finished; make
@@ -75,7 +76,12 @@ one now, or put the data or the picture it needs into the next `Next:` line.
   script beside it in `{assets_dir}/src/`.
 - **Screenshots**: `ouroboros shot <url-or-file> <name>` writes `{assets_dir}/<name>.png`
   with a headless browser, when this host has one.
-- In `visuals`, a file is `assets/<name>.png`.
+- In `visuals`, include exactly one entry: `assets/<name>.png` and one caption
+  of one or two sentences explaining the whole figure. Never list separate panels
+  or put separate captions beneath individual charts. Compose plots, screenshots,
+  images and references into one continuous image with a deliberate grid and
+  consistent sizing; use subplots/gridspec or stitch images onto one canvas.
+  Consolidate existing multi-image findings when you next update them.
 
 The rules for a figure:
 

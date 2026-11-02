@@ -246,11 +246,20 @@ iframe.graph{display:block;width:100%;height:min(600px,72vh);border:0;background
 /* the findings: title, summary, the graph it rests on, its visuals, notes (view.py _findings_ledger) */
 .fnd{padding:14px 0 18px;border-bottom:1px solid var(--rule)}
 .fnd:last-child{border-bottom:0}
-.fnd>h3{font-size:1.3rem;line-height:1.3;font-weight:600;margin:.2em 0 .35em;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.fnd>summary{cursor:pointer;display:flex;align-items:baseline;gap:10px;list-style:none}
+.fnd>summary::-webkit-details-marker{display:none}
+.fnd>summary::before{content:"▸";color:var(--acc)}
+.fnd[open]>summary::before{content:"▾"}
+.fnd-graph>summary{cursor:pointer;font:.82rem/1.6 var(--sans);color:var(--mute)}
+.fnd-graph[open]>summary{margin-bottom:12px}
+.fnd-dots{color:#E0B04A;white-space:nowrap;margin-right:6px}
+.fnd-tools{display:flex;gap:8px;margin-bottom:8px}
+.fnd-tools button{cursor:pointer;background:transparent;color:var(--acc);border:1px solid var(--rule);border-radius:4px;padding:4px 9px;font:.8rem var(--sans)}
+.fnd>summary>h3{font-size:1.3rem;line-height:1.3;font-weight:600;margin:.2em 0 .35em;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
 .fnd-n{font:600 .8rem var(--sans);color:var(--acc);min-width:1.2em}
-.fnd>h3 .chip{font-size:.66rem}
+.fnd>summary>h3 .chip{font-size:.66rem}
 .fnd-sum{font-size:1.08rem;margin:0 0 12px;max-width:46em}
-.fnd.gone>h3,.fnd.gone .fnd-sum{color:var(--mute)}
+.fnd.gone>summary>h3,.fnd.gone .fnd-sum{color:var(--mute)}
 .fnd-graph{margin:0 0 12px;padding:8px 10px 6px;background:var(--faint);border-radius:6px}
 .fnd-graph .cap{margin-top:2px}
 /* a finding's part of the graph: a row per claim, a track for the whole run, a mark where a record changed it (view.py _evidence) */
@@ -272,7 +281,7 @@ iframe.graph{display:block;width:100%;height:min(600px,72vh);border:0;background
 .ev .st-working{background:var(--g-met)}.ev .st-open{background:var(--g-open)}.ev .st-broken{background:var(--g-broken)}
 .ev .st-blocked{background:var(--g-blocked)}.ev .st-superseded{background:var(--rule)}
 @media (max-width:640px){.ev-row{grid-template-columns:minmax(0,1fr);padding:3px 4px}.ev-axis>span:first-child{display:none}}
-.fnd-vis{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(360px,100%),1fr));gap:14px 24px;align-items:start;margin:0 0 8px}
+.fnd-vis{margin:0 0 12px}
 .fnd-vis figure{margin:0}.fnd-vis img{width:100%;height:auto;display:block;border:1px solid var(--faint);border-radius:4px;background:#fff}
 .fnd-novis{font:.82rem var(--sans);margin:0 0 8px}
 .fnd-notes>summary{cursor:pointer;color:var(--acc);font:600 .8rem var(--sans);letter-spacing:.04em;padding:4px 0}
@@ -345,6 +354,13 @@ footer{margin-top:40px;padding-top:8px;border-top:1px solid var(--rule);color:va
     try { sessionStorage.setItem("ouroboros-mode", chosen); } catch (e2) {}
     mode(chosen);
     window.scrollTo(0, 0);
+  });
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest && e.target.closest("button[data-findings]");
+    if (!b) return;
+    document.querySelectorAll("#findings details.fnd").forEach(function (d) {
+      d.open = b.dataset.findings === "expand";
+    });
   });
   function reveal() {
     var t = location.hash.length > 1 && document.getElementById(decodeURIComponent(location.hash.slice(1)));
@@ -458,7 +474,7 @@ footer{margin-top:40px;padding-top:8px;border-top:1px solid var(--rule);color:va
     if (!key) return "";
     if (key.indexOf("it:") === 0) return "Showing iteration " + key.slice(3) + ": its record and the claims it changed.";
     if (key.indexOf("f:") === 0) {
-      var h = document.querySelector("#finding-" + CSS.escape(key.slice(2)) + " > h3");
+      var h = document.querySelector("#finding-" + CSS.escape(key.slice(2)) + " > summary > h3");
       return "Showing the finding \u201c" + (h ? h.textContent.replace(/\s*(holds|revised|retracted)\s*$/i, "").replace(/^\d+/, "").trim() : key.slice(2)) + "\u201d.";
     }
     return "Showing one node and what it touches.";

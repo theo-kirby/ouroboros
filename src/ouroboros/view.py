@@ -21,6 +21,7 @@ for `view/` and nothing else.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import html
 import json
@@ -1279,6 +1280,51 @@ def _evidence(graph: Graph, claims: list[dict], records: list[dict], rec_it: dic
             + "".join(rows) + "</div>")
 
 
+def _finding_figure(vdir: Path, finding: dict) -> str:
+    """One image and caption, including a single canvas for legacy multi-image entries."""
+    panels, captions, missing = [], [], []
+    visuals = finding.get("visuals")
+    for v in visuals if isinstance(visuals, list) else []:
+        if not isinstance(v, dict):
+            continue
+        file = str(v.get("file") or "")
+        if not file or not file.lower().endswith(findings_mod.IMAGE) or ".." in file or file.startswith("/"):
+            continue
+        path = (vdir / file).resolve()
+        if not path.is_relative_to(vdir.resolve()):
+            continue
+        try:
+            data = path.read_bytes()
+        except OSError:
+            missing.append(file)
+            continue
+        panels.append((file, data))
+        caption = str(v.get("caption") or "").strip()
+        if caption and caption not in captions:
+            captions.append(caption)
+    if not panels:
+        return (f'<p class="quiet">Missing: {_e(", ".join(missing))}</p>' if missing else "")
+    src = panels[0][0]
+    if len(panels) > 1:
+        # Equal cells preserve each source's aspect ratio on one white canvas.
+        cols = 2
+        rows = (len(panels) + cols - 1) // cols
+        images = []
+        for i, (file, data) in enumerate(panels):
+            mime = mimetypes.guess_type(file)[0] or "image/png"
+            uri = f"data:{mime};base64," + base64.b64encode(data).decode("ascii")
+            images.append(f'<image x="{i % cols * 800 + 16}" y="{i // cols * 600 + 16}" '
+                          f'width="768" height="568" preserveAspectRatio="xMidYMid meet" href="{uri}"/>')
+        svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="{rows * 600}" '
+               f'viewBox="0 0 1600 {rows * 600}"><rect width="100%" height="100%" fill="white"/>'
+               + "".join(images) + '</svg>')
+        src = "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode("ascii")
+    caption = " ".join(findings_mod.sentences(" ".join(captions))[:2])
+    return (f'<figure><a href="{_e(src)}"><img src="{_e(src)}" '
+            f'alt="{_e(_plain(caption))}" loading="lazy"></a>'
+            f'<figcaption>{_md(_clip(caption, 400))}</figcaption></figure>')
+
+
 def _findings_ledger(run_dir: Path, graph: Graph | None, its: list[dict]) -> str:
     """The writer's findings (view/findings.json), each as title, summary, its visuals, its
     part of the graph and folded notes; '' when there are none."""
@@ -1295,33 +1341,28 @@ def _findings_ledger(run_dir: Path, graph: Graph | None, its: list[dict]) -> str
         ev = _evidence(graph, claims, records, rec_it, max((it["n"] for it in its), default=1)) if claims else ""
         n_it = sorted({rec_it[r["id"]] for r in records if r["id"] in rec_it})
         span = (f"iterations {n_it[0]}–{n_it[-1]}" if len(n_it) > 1 else f"iteration {n_it[0]}") if n_it else ""
-        graph_part = (f'<div class="fnd-graph">{ev}<p class="cap"><b>In the memory graph.</b> '
+        graph_part = (f'<details class="fnd-graph" id="evidence-{_e(fid)}"><summary>'
+                      '<span class="fnd-dots" aria-hidden="true">●—●—●</span> '
                       f'{len(claims)} claim{"s" if len(claims) != 1 else ""} and {len(records)} record'
-                      f'{"s" if len(records) != 1 else ""}{f", {span}" if span else ""}. Each row is a claim across the '
-                      'whole run; a dot is an iteration whose record changed it, a ring one it cites. '
-                      f'<button type="button" class="focus-btn" data-focus="f:{_e(fid)}">Show in the graph</button></p></div>'
+                      f'{"s" if len(records) != 1 else ""}{f", {span}" if span else ""}'
+                      f' <button type="button" class="focus-btn" data-focus="f:{_e(fid)}">Show in the graph</button>'
+                      '</summary>' + ev + '<p class="cap">Each row is a claim across the whole run; '
+                      'a dot is an iteration whose record changed it, a ring one it cites.</p></details>'
                       if ev else "")
-        vis = []
-        for v in (f.get("visuals") or [])[:findings_mod.VISUALS_MAX]:
-            file = str((v or {}).get("file") or "") if isinstance(v, dict) else ""
-            if not file or not file.lower().endswith(findings_mod.IMAGE) or ".." in file or file.startswith("/"):
-                continue
-            exists = (vdir / file).is_file()
-            vis.append(f'<figure>' + (f'<a href="{_e(file)}"><img src="{_e(file)}" alt="{_e(_plain(v.get("caption") or ""))}" loading="lazy"></a>'
-                                      if exists else f'<p class="quiet">Missing: <code>{_e(file)}</code></p>')
-                       + f'<figcaption>{_md(_clip(str(v.get("caption") or ""), 400))}</figcaption></figure>')
+        vis = _finding_figure(vdir, f)
         notes = str(f.get("notes") or "").strip()
         out.append(
-            f'<article class="fnd{" gone" if cls == "bad" else ""}" id="finding-{_e(fid)}">'
-            f'<h3><span class="fnd-n num">{k}</span>{_md(_clip(str(f.get("title") or ""), 160))} {_chip(word, cls)}</h3>'
+            f'<details class="fnd{" gone" if cls == "bad" else ""}" id="finding-{_e(fid)}"{" open" if k <= 5 else ""}>'
+            f'<summary><h3><span class="fnd-n num">{k}</span>{_md(_clip(str(f.get("title") or ""), 160))} {_chip(word, cls)}</h3></summary>'
             f'<p class="fnd-sum">{_md(_clip(str(f.get("summary") or ""), 900))}</p>'
-            + (f'<div class="fnd-vis">{"".join(vis)}</div>' if vis else
+            + (f'<div class="fnd-vis">{vis}</div>' if vis else
                '<p class="quiet fnd-novis">No visual yet.</p>')
             + graph_part
             + (f'<details class="fnd-notes" id="notes-{_e(fid)}"><summary>Notes</summary>{_md_block(notes)}</details>'
                if notes else "")
-            + "</article>")
-    return "".join(out)
+            + "</details>")
+    return ('<div class="fnd-tools"><button type="button" data-findings="expand">Expand all</button> '
+            '<button type="button" data-findings="collapse">Collapse all</button></div>' + "".join(out))
 
 
 def _run_map(graph: Graph | None, its: list[dict], run_dir: Path) -> str:
