@@ -1,6 +1,6 @@
 ---
 name: ouroboros-findings
-description: How the Ouroboros writer keeps the run's findings - view/findings.json, one entry per thing the run now knows, each with a title, a summary of at most three sentences, the claims and records of the memory graph it rests on, visuals made with `ouroboros plot` or `ouroboros shot`, and folded notes - and the rules for those visuals. Inlined into the writer's review prompt by roles/writer.py.
+description: How the Ouroboros writer keeps the run's findings - view/findings.json, one entry per thing the run now knows, each with a title, a summary of at most three sentences, the claims and records of the memory graph it rests on, a visual made with `ouroboros plot` or `ouroboros shot` when a picture tells it better than words, and folded notes - and the rules for those visuals. Inlined into the writer's review prompt by roles/writer.py.
 ---
 
 `roles/writer.py` puts `writer` into every review prompt of the worker-writer loop,
@@ -61,11 +61,23 @@ The file now:
 
 {findings}
 
-### Visuals: every finding gets exactly one figure
+### Visuals: one figure, and only when it earns its place
 
-A finding is told with a picture: a plot of the measurement, a screenshot of the
-feature, a render of the output. A finding without a visual is not finished; make
-one now, or put the data or the picture it needs into the next `Next:` line.
+A visual is optional. Give a finding a figure only when the picture says something
+the summary cannot: the shape of a motion (paths, phases, a multi-view render of
+the same instant), a distribution or a spread across runs, a before and after that
+the eye reads at once, a mechanism drawn. Leave it out when the finding is one or
+two numbers, a pass or fail, a list, or a table: say those in the summary. A plot
+that restates the summary's number, a bar chart of two values, a chart of a table,
+or a decorative figure is worse than none; it buries the ones that matter. A run
+with a handful of excellent figures beats one with a figure per finding.
+
+When a finding does get a figure, make it a good one: several coordinated views on
+one canvas where that is how the thing is best understood (a top, side and front
+view of the same stride; the policy beside the baseline on the same axes), panels
+that share axes and colours, the case that carries the finding in colour and the
+rest in grey. If a figure you made earlier does not meet this bar, remove it from
+`visuals` (set `visuals` to `[]`) when you next update that finding.
 
 - **Plots**: `ouroboros plot fig.py` runs your script with matplotlib, seaborn,
   pandas and numpy in the house style, whatever this repo is written in. In the
@@ -76,7 +88,7 @@ one now, or put the data or the picture it needs into the next `Next:` line.
   script beside it in `{assets_dir}/src/`.
 - **Screenshots**: `ouroboros shot <url-or-file> <name>` writes `{assets_dir}/<name>.png`
   with a headless browser, when this host has one.
-- In `visuals`, include exactly one entry: `assets/<name>.png` and one caption
+- In `visuals`, include at most one entry (or none): `assets/<name>.png` and one caption
   of one or two sentences explaining the whole figure. Never list separate panels
   or put separate captions beneath individual charts. Compose plots, screenshots,
   images and references into one continuous image with a deliberate grid and

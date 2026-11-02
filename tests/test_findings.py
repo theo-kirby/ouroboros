@@ -77,7 +77,7 @@ def test_the_page_draws_each_finding_title_summary_visuals_graph_notes(repo, run
     assert "<li>ran <code>pytest</code></li>" in f1 and "<pre><code>python -m x</code></pre>" in f1
     assert 'data-focus="f:grammar-rules"' in f1 and 'data-focus="n:grammar"' in f1
     assert "fast-path-helps" in f1 or "A fast path halves the time" in f1
-    assert 'class="fnd gone"' in sec and "No visual yet." in sec
+    assert 'class="fnd gone"' in sec and "No visual yet." not in sec, "a finding may go without a visual"
     m = json.loads(re.search(r'<script id="run-map" type="application/json">(.*?)</script>', html, re.S).group(1))
     assert set(m["keys"]["f:grammar-rules"]) >= {"gap-parse", "grammar", "r-0002"}
 

@@ -1856,9 +1856,11 @@ the page's opening paragraph. After every writer the loop checks the file
 claim and record is in the memory, every visual exists and is captioned) and the
 next writer gets what it found; nothing stops the loop.
 
-**Visuals for every run** (`figstyle.py`, `figures.py`). A finding without a visual
-is not finished. Each finding has exactly one image and one caption of at most two
-sentences. Multiple plots, screenshots or references must be composed on one
+**Visuals for every run** (`figstyle.py`, `figures.py`). A visual is optional: a
+finding gets one only when a picture says what the summary cannot (a motion, a
+spread, a before and after, a mechanism), and a finding that is a number or a
+pass/fail goes without. When it has one, it has exactly one image and one caption
+of at most two sentences. Multiple plots, screenshots or references must be composed on one
 canvas with a consistent grid. The checker flags multiple visual entries and
 long captions. Older multi-image entries display as one SVG canvas with equal
 cells, preserved aspect ratios and a shared caption while awaiting writer updates.
