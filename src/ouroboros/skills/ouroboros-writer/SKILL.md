@@ -153,7 +153,7 @@ next prompt.
 6. **Check.** `ouroboros mem check` must exit 0. Fix a violation with another record
    or fold.
 7. **Update the findings and their visuals** (the section below) when the turn
-   changed what the run knows.
+   changed what the run knows. A figure only where a picture tells it better.
 8. **Write the prose step the handoff asks for**, if any, then reply.
 
 {fix_first}

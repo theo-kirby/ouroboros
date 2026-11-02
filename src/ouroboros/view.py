@@ -1355,8 +1355,7 @@ def _findings_ledger(run_dir: Path, graph: Graph | None, its: list[dict]) -> str
             f'<details class="fnd{" gone" if cls == "bad" else ""}" id="finding-{_e(fid)}"{" open" if k <= 5 else ""}>'
             f'<summary><h3><span class="fnd-n num">{k}</span>{_md(_clip(str(f.get("title") or ""), 160))} {_chip(word, cls)}</h3></summary>'
             f'<p class="fnd-sum">{_md(_clip(str(f.get("summary") or ""), 900))}</p>'
-            + (f'<div class="fnd-vis">{vis}</div>' if vis else
-               '<p class="quiet fnd-novis">No visual yet.</p>')
+            + (f'<div class="fnd-vis">{vis}</div>' if vis else "")
             + graph_part
             + (f'<details class="fnd-notes" id="notes-{_e(fid)}"><summary>Notes</summary>{_md_block(notes)}</details>'
                if notes else "")
