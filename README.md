@@ -132,13 +132,18 @@ loop as a dial, the key figures, gauges for time, usage and progress toward
 done, the criteria, open problems, the memory graph, the scribe's findings and
 a timeline of every iteration.
 
-`profile: research` makes the findings a paper: an answer up front, at most five
-numbered figures of lettered panels, negative results, limitations and methods.
-`profile: development` makes them a product report: what it does, with
-screenshots, status against the criteria, known bugs and how to run it. The
-scribe rewrites either one every five worked iterations and once more when the
-run stops; `publication:` in the config tunes the template, the figures and the
-cadence (DESIGN.md section 23). `ouroboros view --host 0.0.0.0` serves the page to a
+When the run stops, `profile: research` makes its findings a poster: one designed
+sheet (1800 x 2400 px, rendered to PNG and PDF) with the finding as its title, a
+dominant picture and a few supporting ones, and what is next (DESIGN.md section
+26). `publication: {style: swiss}` or `dark` changes its look from the default
+`infographic`; `publication: {template: paper}` asks for a paper instead: an
+answer up front, at most five numbered figures of lettered panels, negative
+results, limitations and methods. `profile: development` makes a product report:
+what it does, with screenshots, status against the criteria, known bugs and how to
+run it. `publication:` in the config tunes the template, the figures and the
+cadence (DESIGN.md section 23), and `ouroboros publish --template poster` writes a
+stopped run's report again, in any template and style.
+`ouroboros view --host 0.0.0.0` serves the page to a
 phone, for example over Tailscale. A repo can bring its own template at
 `.ouroboros/view/template.html`. [borris.dev](https://borris.dev) is a page in
 this style.

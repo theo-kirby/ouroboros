@@ -177,7 +177,8 @@ class ReportConfig(BaseModel):
 
 
 class FiguresConfig(BaseModel):
-    """The figure contract of a paper or product publication (DESIGN.md section 23)."""
+    """The figure contract of a paper or product publication (DESIGN.md section 23). A poster
+    has its own, fixed: three or four figures, a panel each allowed (section 26)."""
     enabled: bool = True       # false: no numbered figures; the evidence is tables and inline charts
     main_max: int = 5          # numbered main figures at most; everything else is supplementary
     panels: bool = True        # each main figure gathers lettered panels (A, B, C...) behind one claim
@@ -185,17 +186,20 @@ class FiguresConfig(BaseModel):
 
 
 # What each profile publishes when `publication.template` is auto.
-PROFILE_TEMPLATE = {"research": "paper", "development": "product", "freeform": "notebook"}
+# A poster is research's default since 2026-11-04 (DESIGN.md section 26): most runs are
+# increments, and three or four figures with a few lines each say what one run did.
+PROFILE_TEMPLATE = {"research": "poster", "development": "product", "freeform": "notebook"}
 
 
 class PublicationConfig(BaseModel):
     """The run's report. The scribe keeps the notebook (story.html, the run book) every
-    iteration whatever the template. `paper` and `product` add a written report
-    (paper.html) shown behind the run page's Paper toggle: one pass when the run stops
-    (`final`), and a mid-run draft every `consolidate_every` worked iterations when set.
-    `notebook` writes no report.
+    iteration whatever the template. `poster`, `paper` and `product` add a written report
+    (poster.html, or paper.html for the other two) shown behind the run page's toggle: one
+    pass when the run stops (`final`), and a mid-run draft every `consolidate_every` worked
+    iterations when set. `notebook` writes no report.
     """
-    template: Literal["auto", "notebook", "paper", "product"] = "auto"
+    template: Literal["auto", "notebook", "poster", "paper", "product"] = "auto"
+    style: Literal["infographic", "swiss", "dark"] = "infographic"  # a poster's look (DESIGN.md section 26)
     figures: FiguresConfig = Field(default_factory=FiguresConfig)
     consolidate_every: int | None = None  # worked iterations between mid-run drafts of the report; null: none
     final: bool = True                     # write the report when the run stops (not on an interrupt or a spend cap)

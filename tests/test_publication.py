@@ -28,6 +28,14 @@ def leftovers(text: str) -> list[str]:
 
 
 def cfg(**kw) -> Config:
+    """A config; a research one keeps the paper unless it names a template (the paper's tests).
+    The poster, research's default since section 26, has its own tests below."""
+    if kw.get("profile") == "research":
+        kw["publication"] = {"template": "paper", **kw.get("publication", {})}
+    return Config.model_validate({"run": "t", **kw})
+
+
+def default(**kw) -> Config:
     return Config.model_validate({"run": "t", **kw})
 
 
@@ -35,9 +43,10 @@ def cfg(**kw) -> Config:
 
 def test_the_profile_picks_the_template_unless_the_config_names_one():
     assert cfg().profile == "freeform" and cfg().template == "notebook"
+    assert default(profile="research").template == "poster"
     assert cfg(profile="research").template == "paper"
     assert cfg(profile="development").template == "product"
-    assert cfg(profile="research", publication={"template": "notebook"}).template == "notebook"
+    assert default(profile="research", publication={"template": "notebook"}).template == "notebook"
     c = cfg(publication={"figures": {"enabled": False}, "consolidate_every": None})
     assert c.publication.figures.enabled is False and c.publication.consolidate_every is None
     with pytest.raises(ValueError):
@@ -287,3 +296,88 @@ def test_a_broken_check_or_final_pass_never_stops_the_loop(repo: Path, monkeypat
     assert eng.iteration == 2 and all(o.recorded for o in eng.outcomes)
     log = (eng.recorder.run_dir / "loop.log").read_text()
     assert "publication check raised" in log and "final publication raised" in log
+
+
+# -- the poster (DESIGN.md section 26) -------------------------------------------
+
+def poster_cfg(**kw) -> Config:
+    return default(profile="research", **kw)
+
+
+def sheet(**over) -> dict:
+    """What poster.measure finds on a good sheet, with `over` changed."""
+    m = {"scroll": [1800, 2400], "bottom": 2330, "outside": [], "clipped": [], "small": [], "cards": [],
+         "figures": [{"name": "figure.hero", "area": 1700 * 900}, {"name": "figure", "area": 800 * 500},
+                     {"name": "figure", "area": 800 * 520}],
+         "images": 3, "broken": [], "words": 180, "title": "The jump clears its hips on stock motors"}
+    m.update(over)
+    return m
+
+
+@pytest.fixture
+def drawn(view):
+    from ouroboros import poster
+    (view / poster.HTML).write_text("<!doctype html><html><body><h1>t</h1></body></html>")
+    w, h = poster.CANVAS
+    (view / poster.PNG).write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + w.to_bytes(4, "big") + h.to_bytes(4, "big"))
+    return view
+
+
+def test_research_defaults_to_the_poster_and_its_pass_asks_for_one_designed_sheet():
+    c = poster_cfg()
+    assert c.template == "poster" and publication.report_file("poster") == "poster.html"
+    assert publication.report_file("paper") == publication.report_file("product") == "paper.html"
+    text = scribe_prompt(c, due=True)
+    assert "make the poster" in text and "`v/poster.html`" in text and "paper.html" not in text
+    assert "1800 by 2400 px" in text and "ouroboros poster render v" in text and "No stat cards" in text
+    assert "The hero" in text and "`#D46A8C`" in text and "{palette}" not in text
+    assert "**4 main figures**" not in text and not leftovers(text), leftovers(text)
+    paper_text = scribe_prompt(cfg(profile="research"), due=True)
+    assert "`#D46A8C`" in paper_text and "{palette}" not in paper_text and "make the poster" not in paper_text
+
+
+def test_the_final_prompt_for_a_poster_is_complete():
+    text = publication.final_prompt(poster_cfg(), reason="wall clock: 12h elapsed", where="governor",
+                                    goal_text="# Goal: x", problems=None, view_dir="v", story_path="v/story.html",
+                                    assets_dir="v/assets", summary_path="v/summary.txt")
+    assert "v/poster.html" in text and "make the poster" in text and not leftovers(text)
+
+
+def test_a_good_sheet_passes(drawn):
+    assert publication.check(poster_cfg(), drawn, measured=sheet()) == []
+    assert "poster.html is empty" in publication.check(poster_cfg(), drawn.parent / "nowhere", measured=sheet())[0]
+
+
+def test_the_poster_check_reads_the_rendered_sheet(drawn):
+    def found(**over):
+        return " | ".join(publication.check(poster_cfg(), drawn, measured=sheet(**over)))
+    assert "the page is 1800x2900 px; it must fit the 1800x2400 canvas" in found(scroll=[1800, 2900])
+    assert "1 element(s) runs off the canvas: p" in found(outside=["p"])
+    assert "1 element(s) is cut off by its box: div.box" in found(clipped=["div.box"])
+    assert "the lower 900 px are empty" in found(bottom=1500)
+    assert "1 piece(s) of text under 18 px: p 12px" in found(small=["p 12px"])
+    assert "300 words on the sheet; at most 250" in found(words=300)
+    assert "no <h1>" in found(title="")
+    assert "the title is 17 words; at most 16" in found(title="word " * 17)
+    assert "2 <figure>(s); a poster has at least 3" in found(figures=sheet()["figures"][:2])
+    equal = [{"name": "figure", "area": 800 * 600}] * 4
+    assert found(figures=equal) == ""                                     # the layout is the writer's
+    assert "text in colour" in found(colored=['h2 "Results" rgb(181, 71, 58)'])
+    assert "stat cards, tiles or KPI boxes are not allowed" in found(cards=['div.kpi "1.25"'])
+    assert "images that did not load: assets/x.png" in found(broken=["assets/x.png"])
+    from ouroboros import poster
+    (drawn / poster.PNG).unlink()
+    assert "poster.png is missing; it should be 1800x2400" in found()
+
+
+def test_a_poster_has_a_style_infographic_by_default_and_a_direction_on_top():
+    text = publication.pass_rules(poster_cfg())
+    assert "**The style: infographic** (the default)" in text and "Barlow Condensed" in text
+    assert "{direction}" not in text and "The style: Swiss" not in text
+    for style, words in (("swiss", "The style: Swiss"), ("dark", "The style: dark")):
+        text = publication.pass_rules(poster_cfg(publication={"style": style}))
+        assert words in text and "The style: infographic" not in text
+    text = publication.pass_rules(poster_cfg(), direction="Landscape, please.")
+    assert "The style: infographic" in text and "overrides the style where they differ). Landscape, please." in text
+    with pytest.raises(ValueError):
+        poster_cfg(publication={"style": "editorial"})

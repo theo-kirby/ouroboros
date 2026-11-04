@@ -65,11 +65,15 @@ the user to correct it. Never accept a vague answer; ask for the concrete versio
 7. **Quality bar.** What the critic grades against: gates, commit shape, record
    node rules, doc-with-code rules.
 8. **Profile and report.** Ask what the run is: `research` (a question to
-   answer: the report is a paper with an answer, numbered multi-panel figures,
-   negative results and methods), `development` (a product to build: the report
-   shows what it does, with screenshots, status against the criteria, known bugs
-   and how to run it), or `freeform` (neither: the live findings notebook). Ask
-   whether they want numbered figures, and how many main figures at most. A research
+   answer: the report is a poster, one designed sheet with the finding as its
+   title and a few figures, in the `infographic` style unless they pick `swiss`
+   or `dark`; `publication: {template:
+   paper}` makes it a paper with numbered multi-panel figures, negative results
+   and methods, for a run that answers a whole question), `development` (a product
+   to build: the report shows what it does, with screenshots, status against the
+   criteria, known bugs and how to run it), or `freeform` (neither: the live
+   findings notebook). For a paper, ask whether they want numbered figures, and
+   how many main figures at most. A research
    charter's done criteria name the question's answer and its check; a development
    charter's name what a user can do.
 9. **Run shape.** Duration (`stop.after`), harness chain and fallbacks for the

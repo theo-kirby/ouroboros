@@ -3,7 +3,7 @@
 The scribe keeps two things (DESIGN.md section 23). Every iteration it curates the
 notebook, `view/story.html`: the run book of findings and failed approaches. Under
 `paper` and `product` it also keeps a figure ledger, and writes the report,
-`view/paper.html`, once when the run stops (and as a mid-run draft every
+`view/paper.html` (`view/poster.html` for a poster), once when the run stops (and as a mid-run draft every
 `publication.consolidate_every` worked iterations when that is set). The run page
 shows both, behind a Run / Paper toggle. `check` is deterministic: it reads
 paper.html back against the contract, and what it finds reaches the next pass.
@@ -21,12 +21,24 @@ from .memory.graph import section, skill
 
 LEDGER = "figures.json"
 PAPER = "paper.html"
+POSTER = "poster.html"
 
 # The top-level <section id> each template must have, in order; the skill names them.
 REQUIRED = {
     "paper": ("answer", "findings", "results", "negative", "limitations", "methods"),
     "product": ("what", "demo", "status", "negative", "known", "run"),
 }
+
+# The poster's form (DESIGN.md section 26): one composed sheet, read whole in two minutes.
+POSTER_WORDS = 250           # words to read on the sheet, its footer and source lines aside
+POSTER_TITLE_WORDS = 16      # the <h1>: the run's finding
+POSTER_FIGURES = 3           # <figure>s at least: a hero and the pictures that support it
+POSTER_FILL = 0.9            # the lowest text or picture reaches this share of the canvas height
+
+
+def report_file(template: str) -> str:
+    """The report's file name in the view for a template: poster.html, else paper.html."""
+    return POSTER if template == "poster" else PAPER
 
 # "Fig. 1A", "Figure 2", "Fig. 1A–C", "Fig. 3B, D": a figure number and the panels it cites.
 _REF = re.compile(r"\bFig(?:ure|\.)?\s*(\d+)\s*([A-Z](?:\s*(?:[–—-]|,|and)\s*[A-Z])*)?(?![A-Za-z])")
@@ -54,10 +66,18 @@ def story_rules(config: Config) -> str:
     return section(s, "notebook") + "\n\n" + section(s, "notebook ledger").replace("{ledger_rules}", section(s, "ledger"))
 
 
-def pass_rules(config: Config) -> str:
-    """The report pass: write paper.html under its template and figure contract."""
+def pass_rules(config: Config, direction: str | None = None) -> str:
+    """The report pass: write the report (paper.html, or poster.html) under its template and figure contract."""
     s = skill("ouroboros-publish")
     f = config.publication.figures
+    path = "{view_dir}/" + report_file(config.template)
+    if config.template == "poster":
+        brief = section(s, f"poster style {config.publication.style}")
+        if direction:
+            brief += f"\n\n**The design direction for this poster** (it overrides the style where they differ). {direction.strip()}"
+        return (section(s, "poster pass").replace("{template}", section(s, "poster"))
+                .replace("{palette}", section(s, "palette")).replace("{direction}", brief)
+                .replace("{paper_path}", path))
     if f.enabled:
         figures = (section(s, "figures")
                    .replace("{main_max}", str(f.main_max))
@@ -70,7 +90,8 @@ def pass_rules(config: Config) -> str:
                             else "Plots that are not in a main figure stay out of the publication; the ledger keeps them."))
     else:
         figures = section(s, "no figures")
-    return section(s, "pass").replace("{template}", section(s, config.template)).replace("{figures}", figures)
+    return (section(s, "pass").replace("{template}", section(s, config.template)).replace("{figures}", figures)
+            .replace("{palette}", section(s, "palette")).replace("{paper_path}", path))
 
 
 def publish_due(config: Config, worked_since: int) -> bool:
@@ -95,9 +116,10 @@ def fill(text: str, *, view_dir: str, story_path: str, assets_dir: str, summary_
 
 
 def final_prompt(config: Config, *, reason: str, where: str, goal_text: str, problems: str | None,
-                 view_dir: str, story_path: str, assets_dir: str, summary_path: str) -> str:
+                 view_dir: str, story_path: str, assets_dir: str, summary_path: str,
+                 direction: str | None = None) -> str:
     text = (section(skill("ouroboros-publish"), "final")
-            .replace("{pass}", pass_rules(config))
+            .replace("{pass}", pass_rules(config, direction))
             .replace("{problems}", f"The last check of the publication found these; fix them too:\n\n{problems}"
                      if problems else ""))
     text = fill(text, view_dir=view_dir, story_path=story_path, assets_dir=assets_dir, summary_path=summary_path)
@@ -172,20 +194,24 @@ def _cited(text: str) -> dict[int, set[str]]:
     return out
 
 
-def check(config: Config, view_dir: Path, story_html: str | None = None) -> list[str]:
-    """What the report (paper.html) gets wrong against its template and figure contract. [] is clean.
+def check(config: Config, view_dir: Path, story_html: str | None = None, measured: dict | None = None) -> list[str]:
+    """What the report (paper.html, or poster.html) gets wrong against its template and figure
+    contract. [] is clean.
 
-    Only `paper` and `product` have a contract; a notebook is never checked.
+    Only `poster`, `paper` and `product` have a contract; a notebook is never checked.
     """
     template = config.template
     if template == "notebook":
         return []
     view_dir = Path(view_dir)
+    name = report_file(template)
+    if template == "poster":
+        return _poster(view_dir, measured)
     if story_html is None:
-        p = view_dir / PAPER
+        p = view_dir / name
         story_html = p.read_text(encoding="utf-8", errors="replace") if p.exists() else ""
     if not story_html.strip():
-        return [f"{PAPER} is empty: the report has not been written."]
+        return [f"{name} is empty: the report has not been written."]
     r = _Reader()
     r.feed(story_html)
     r.close()
@@ -243,6 +269,63 @@ def check(config: Config, view_dir: Path, story_html: str | None = None) -> list
                     problems.append(f"ledger entries whose file is missing: {', '.join(gone[:8])}")
             except ValueError as exc:
                 problems.append(f"{LEDGER} is not a valid ledger ({exc})")
+    return problems
+
+
+def _poster(view_dir: Path, measured: dict | None = None) -> list[str]:
+    """The poster's contract, read off the rendered sheet (poster.render): it fits the canvas
+    and fills it, its type is large, neutral in colour and its words few, and no stat cards.
+    Only what breaks a poster is checked; the layout is the writer's (DESIGN.md section 26)."""
+    from . import poster
+    if not (view_dir / poster.HTML).exists():
+        return [f"{poster.HTML} is empty: the poster has not been written."]
+    errors: list[str] = []
+    if measured is None:
+        measured, errors = poster.render(view_dir)
+    if measured is None:
+        return errors or ["the poster could not be measured"]
+    w, h = poster.CANVAS
+    problems = list(errors)
+    sw, sh = (measured.get("scroll") or [0, 0])[:2]
+    if sw > w + 2 or sh > h + 2:
+        problems.append(f"the page is {sw}x{sh} px; it must fit the {w}x{h} canvas exactly: cut words or shrink figures")
+    for key, what in (("outside", "runs off the canvas"), ("clipped", "is cut off by its box")):
+        found = measured.get(key) or []
+        if found:
+            problems.append(f"{len(found)} element(s) {what}: " + "; ".join(found[:5]))
+    bottom = measured.get("bottom") or 0
+    if bottom < POSTER_FILL * h:
+        problems.append(f"the content ends at {bottom} px of {h}: the lower {h - bottom} px are empty; "
+                        f"make the figures larger or the layout taller")
+    small = measured.get("small") or []
+    if small:
+        problems.append(f"{len(small)} piece(s) of text under 18 px: " + "; ".join(small[:5]))
+    words = measured.get("words") or 0
+    if words > POSTER_WORDS:
+        problems.append(f"{words} words on the sheet; at most {POSTER_WORDS} outside the footer and source lines. "
+                        f"Let the figures speak and cut the rest")
+    title = (measured.get("title") or "").split()
+    if not title:
+        problems.append("no <h1>: the title is the run's finding, in a few words")
+    elif len(title) > POSTER_TITLE_WORDS:
+        problems.append(f"the title is {len(title)} words; at most {POSTER_TITLE_WORDS}")
+    figs = measured.get("figures") or []
+    if len(figs) < POSTER_FIGURES:
+        problems.append(f"{len(figs)} <figure>(s); a poster has at least {POSTER_FIGURES}")
+    colored = measured.get("colored") or []
+    if colored:
+        problems.append("text in colour: keep text black, grey, or white on a dark band; colour belongs to the "
+                        "marks in figures and to rules and fills: " + "; ".join(colored[:5]))
+    cards = measured.get("cards") or []
+    if cards:
+        problems.append("stat cards, tiles or KPI boxes are not allowed on a poster (put the number on its figure): "
+                        + "; ".join(cards[:5]))
+    broken = measured.get("broken") or []
+    if broken:
+        problems.append(f"images that did not load: {', '.join(broken[:6])}")
+    size = poster.png_size(view_dir / poster.PNG)
+    if size != (w, h):
+        problems.append(f"{poster.PNG} is {size or 'missing'}; it should be {w}x{h}")
     return problems
 
 

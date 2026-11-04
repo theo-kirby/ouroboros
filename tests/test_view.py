@@ -340,6 +340,29 @@ def test_the_paper_sits_behind_a_toggle_and_opens_once_the_run_stops(run_dir, re
     assert 'data-mode="paper"' in page(run_dir)                                  # stopped: the paper first
 
 
+def test_the_poster_sits_beside_the_paper_as_one_picture_and_opens_first_once_the_run_stops(run_dir, repo, graph):
+    view.render(run_dir, repo, goal_text=GOAL, graph=graph)
+    view.poster_path(run_dir).write_text("<!doctype html><h1>Higher on the stock motors</h1>")
+    view.render(run_dir, repo, goal_text=GOAL, graph=graph)
+    assert 'data-mode="poster">Poster' not in page(run_dir)                  # not rendered yet: no Poster
+    (view.view_dir(run_dir) / "poster.png").write_bytes(b"png")
+    (view.view_dir(run_dir) / "poster.pdf").write_bytes(b"pdf")
+    view.render(run_dir, repo, goal_text=GOAL, graph=graph)
+    html = page(run_dir)
+    assert 'data-mode="poster">Poster</button>' in html and 'data-mode="paper">Paper' not in html
+    assert re.search(r'<article class="poster" aria-label="Poster"><figure class="sheet"><a href="poster.pdf\?v=\d+">'
+                     r'<img src="poster.png\?v=\d+"', html)
+    assert "Higher on the stock motors" not in html                          # the sheet, not its HTML
+    assert 'data-mode="run"' in html                                          # live: the run page first
+    view.paper_path(run_dir).write_text('<section id="answer"><h2>Yes</h2></section>')
+    status = json.loads((run_dir / "status.json").read_text())
+    (run_dir / "status.json").write_text(json.dumps({**status, "state": "stopped"}))
+    view.render(run_dir, repo, goal_text=GOAL, graph=graph)
+    html = page(run_dir)
+    assert 'data-mode="poster">Poster</button><button type="button" data-mode="paper">Paper</button>' in html
+    assert re.search(r'<main id="view" data-version="[^"]*" data-mode="poster">', html)   # stopped: the poster first
+
+
 def test_a_repo_template_overrides_the_default(run_dir, repo):
     t = repo / ".ouroboros" / "view" / "template.html"
     t.parent.mkdir(parents=True)

@@ -46,6 +46,11 @@ class ExperimentPublication(PublicationConfig):
     figures: ExperimentFigures = Field(default_factory=ExperimentFigures)
 
 
+# What each profile publishes here when the template is auto. Production's research default
+# became the poster (DESIGN.md section 26); the evaluation keeps the paper so arms stay comparable.
+EXPERIMENT_TEMPLATE={**PROFILE_TEMPLATE,'research':'paper'}
+
+
 # Who keeps the publication, and whose profile guidance each identity gets.
 GENERALISTS = ('researcher','peer_a','peer_b','solver_a','solver_b')
 WRITERS = ('scribe','executor')+GENERALISTS
@@ -87,7 +92,7 @@ class ExperimentConfig(BaseModel):
     @property
     def template(self) -> str:
         t=self.publication.template
-        return PROFILE_TEMPLATE[self.profile] if t=='auto' else t
+        return EXPERIMENT_TEMPLATE[self.profile] if t=='auto' else t
 
     @model_validator(mode='after')
     def known_guidance(self):
@@ -663,7 +668,7 @@ class ExperimentRunner:
                 self.recorder.log('publication symlink refused');continue
             if not file.is_file():continue
             relative=file.relative_to(source)
-            if str(relative) not in ('story.html',publication.PAPER,'summary.txt',publication.LEDGER) and relative.parts[0]!='assets':continue
+            if str(relative) not in ('story.html',publication.PAPER,publication.POSTER,'poster.png','poster.pdf','summary.txt',publication.LEDGER) and relative.parts[0]!='assets':continue
             target=view.view_dir(self.control)/relative
             target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(file,target)
 
