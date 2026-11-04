@@ -876,6 +876,97 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_publish(args: argparse.Namespace) -> int:
+    """Write a stopped run's report again, or in another template: the final pass, by hand.
+
+    One call to the role that writes the report (the writer, or the scribe), with the
+    same prompt the loop gives it when a run stops. It writes only into the run's view
+    (poster.html or paper.html, its assets and the summary) and commits nothing. A
+    report that already exists reaches the pass with what the check finds in it."""
+    from . import publication
+    from .engine import role_env
+    repo = repo_root()
+    cfg = load_config(args, repo)
+    pub = {k: v for k, v in (("template", args.template), ("style", args.style)) if v}
+    if pub:
+        cfg = cfg.model_copy(update={"publication": cfg.publication.model_copy(update=pub)})
+    if cfg.template == "notebook":
+        print("ouroboros: a notebook run writes no report; pass --template poster (or paper)", file=sys.stderr)
+        return 2
+    rd = run_dir_for(repo, cfg.run)
+    rec = Recorder(rd)
+    st = rec.read_status() or {}
+    if not st:
+        print(f"ouroboros: no run {cfg.run!r} here", file=sys.stderr)
+        return 2
+    if str(st.get("state")) in runview.LIVE_STATES and _pid_alive(rd)[1]:
+        print(f"ouroboros: run {cfg.run} is still going; its report comes when it stops", file=sys.stderr)
+        return 2
+    goal_path = repo / cfg.goal
+    goal_text = goal_path.read_text() if goal_path.exists() else ""
+    memory = make_memory(cfg.memory, repo, **cfg.graph.model_dump())
+    os.environ[MEMORY_ENV] = memory.name
+    from .figstyle import ASSETS_ENV
+    os.environ[ASSETS_ENV] = str(runview.assets_dir(rd))
+    vd = runview.view_dir(rd)
+    vd.mkdir(parents=True, exist_ok=True)
+    name = publication.report_file(cfg.template)
+    problems = publication.describe(publication.check(cfg, vd)) if (vd / name).exists() else None
+
+    def rel(p: Path) -> str:
+        try:
+            return str(p.relative_to(repo))
+        except ValueError:
+            return str(p)
+    prompt = publication.final_prompt(
+        cfg, reason=str(st.get("stop_reason") or st.get("state") or "stopped"), goal_text=goal_text,
+        where=getattr(getattr(memory, "store", None), "where", memory.name), problems=problems,
+        view_dir=rel(vd), story_path=rel(runview.story_path(rd)), assets_dir=rel(runview.assets_dir(rd)),
+        summary_path=rel(runview.summary_path(rd)), direction=args.direction)
+    if args.print_prompt:
+        print(prompt)
+        return 0
+    role = "writer" if cfg.worker_writer else "scribe"
+    pools = _pools(cfg, rec.log)
+    r = cfg.role(role)
+    cls = Writer if role == "writer" else Scribe
+    runner = cls(pools[role], cwd=repo, timeout=r.timeout_seconds, model=r.model,
+                 transcript_path=lambda n, a: rec.transcript_path(n, role, a), log=rec.log)
+    n = int(st.get("iteration") or 0)
+    print(f"ouroboros: writing {name} for {cfg.run} ({cfg.template}) with the {role}; "
+          f"up to {cfg.publication.final_timeout}")
+    with role_env(role):
+        res = runner.run(prompt, n, f"publish-{cfg.template}", timeout=cfg.publication.final_timeout_seconds)
+    rec.step(iteration=n, step="publish_manual", template=cfg.template, exit=res.exit_code,
+             error=(res.error or None) and res.error[:200], cost=res.cost_usd)
+    found = publication.check(cfg, vd)
+    _finalize_view(repo, cfg, rd)
+    print(f"ouroboros: {vd / name} ({'ok' if res.ok else 'the call failed: ' + str(res.error)[:200]})")
+    print("check: clean" if not found else "check:\n" + "\n".join(f"- {p}" for p in found))
+    return 0 if res.ok else 1
+
+
+def cmd_poster(args: argparse.Namespace) -> int:
+    """Render a poster page to poster.png and poster.pdf, and print what the check finds."""
+    from . import poster as posters, publication
+    if args.view_dir:
+        vd = Path(args.view_dir)
+    else:
+        repo = repo_root()
+        vd = runview.view_dir(run_dir_for(repo, load_config(args, repo).run))
+    measured, errors = posters.render(vd)
+    for e in errors:
+        print(f"render: {e}", file=sys.stderr)
+    if measured is None:
+        return 1
+    print(f"rendered {vd / posters.PNG} and {vd / posters.PDF}: {measured.get('words')} words, "
+          f"{len(measured.get('figures') or [])} figures, content to {measured.get('bottom')} px of {posters.CANVAS[1]}")
+    problems = publication._poster(vd, measured)
+    print("check: clean" if not problems else "check:\n" + "\n".join(f"- {p}" for p in problems))
+    print(f"now look at {vd / posters.PNG} with your image viewer")
+    return 0
+
+
 def cmd_view(args: argparse.Namespace) -> int:
     """Serve the run's live page (written by the loop) to a browser: desktop, or a phone over a tailnet."""
     repo = repo_root()
@@ -1115,6 +1206,20 @@ def build_parser() -> argparse.ArgumentParser:
     sk.add_argument("--user", action="store_true", help="install to ~/.claude, ~/.codex, ~/.pi/agent, ~/.agents skill dirs")
     sk.add_argument("--target")
     sk.set_defaults(fn=cmd_skills)
+
+    pb = sub.add_parser("publish", parents=[common],
+                        help="write a stopped run's report again (the final pass), e.g. --template poster")
+    pb.add_argument("--template", choices=["poster", "paper", "product"],
+                    help="the report to write; default: the config's")
+    pb.add_argument("--print-prompt", action="store_true", help="print the pass's prompt and exit")
+    pb.add_argument("--style", choices=["infographic", "swiss", "dark"], help="a poster's look; default: the config's")
+    pb.add_argument("--direction", help="a poster's design brief, added to the pass (e.g. a font, a palette, a layout)")
+    pb.set_defaults(fn=cmd_publish)
+
+    po = sub.add_parser("poster", parents=[common], help="render a run's poster page to poster.png and poster.pdf, and check it")
+    po.add_argument("action", choices=["render"])
+    po.add_argument("view_dir", nargs="?", help="the folder holding poster.html; default: this config's run view")
+    po.set_defaults(fn=cmd_poster)
 
     v = sub.add_parser("view", parents=[common], help="serve the run's live page (--host 0.0.0.0 for a phone)")
     v.add_argument("--host", default="127.0.0.1", help="the address to listen on; 0.0.0.0 reaches other devices")

@@ -1907,3 +1907,58 @@ reloads its frame; the timeline follows it as `#timeline`, unnumbered.
 The standard loop is unchanged: without a findings file, the Findings section shows
 the scribe's notebook as before.
 
+
+## 26. The poster (2026-11-04)
+
+Theo's runs are mostly increments of a longer project: twelve hours on one
+robot's screen, a day on one gait. The paper (section 23) suits a question
+answered; for an increment it is the wrong size. cf3's paper ran to 4,000 words
+in seven sections, most of it methods and history a reader of the next run
+already knows. What that reader wants is what a conference poster gives: one
+designed sheet, a few pictures that show what this run did, a few lines on each,
+and what comes next.
+
+**`publication.template: poster`** is research's default (`PROFILE_TEMPLATE`);
+`paper` stays available by name, and the experiment adapter (section 22) keeps
+`paper` as its research default so its arms stay comparable. The final pass is
+the same bounded call as the paper's (`final`, `final_timeout`), with its own skill
+sections, `poster pass` and `poster`, and the palette shared with the paper's
+figure contract (`palette`).
+
+**One sheet, rendered.** The writer composes `view/poster.html` as a standalone
+page on a fixed 1800 x 2400 px canvas (36 x 48 in, portrait) and draws its
+figures for their place on it (`assets/poster-<n>.png`, by scripts in
+`assets/src/`). `poster.py` renders it with headless Chromium to `poster.png` and
+`poster.pdf` and measures it with an injected script; the run page's Poster tab
+shows the PNG, linked to the PDF, beside Run and Paper, and opens on it once the
+run stops. The writer renders and looks at it itself (`ouroboros poster render`)
+at least twice before it finishes. Fonts ship with Ouroboros (`fonts/`, SIL OFL:
+Inter, IBM Plex Sans, Source Serif 4, Space Grotesk, Barlow Condensed), copied
+beside each poster with `assets/fonts/fonts.css`, so a sheet looks the same on any
+machine.
+
+**The layout is the writer's.** The first versions gave the poster fixed
+sections, key-number cards and a two-by-two grid of figures, and every poster
+came out the same: Theo found them too wordy and too rigid, with stat cards and
+red headings he did not want and three dot plots in a row. The skill now states
+principles instead (an entry point, one dominant picture, visible sections, dense
+but not cramped, figures that differ in kind, neutral text, no stat cards), and
+`publication.style` sets the look: `infographic` (the default: Barlow Condensed and
+IBM Plex Sans, a grey ground with white panels, a numbered flow with arrows and
+callouts), `swiss` (Inter, white, black rules, an uneven 12-column grid) or `dark`
+(Space Grotesk on near-black). They were chosen from twelve trial posters, four
+directions on three research runs (bell-price, birds-findings,
+chromatin-nucleosomes), compared side by side.
+
+`publication.check` reads the rendered sheet back and holds it only to what breaks
+a poster: it fits the canvas and fills it (content to 90% of its height), nothing
+is cut off, no text under 18 px, text in black, greys or white (colour is for
+marks), at most 250 words outside the footer, a title of at most 16 words, at
+least three figures, no stat cards, and every image loads. As for the paper, what
+it finds reaches the next pass and never blocks the loop.
+
+`ouroboros publish [--template poster|paper|product] [--style ...] [--direction
+"..."]` runs the final pass by hand on a stopped run: the same prompt, the role
+that writes the report (writer or scribe), no commit. It is how a finished run
+gets a poster after the fact, and `--direction` adds a design brief on top of the
+style, which is how the trials were made.

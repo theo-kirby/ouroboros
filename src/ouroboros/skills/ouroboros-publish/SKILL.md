@@ -1,12 +1,12 @@
 ---
 name: ouroboros-publish
-description: How an Ouroboros scribe keeps the run's notebook (the run book of findings, every iteration) and writes the paper or product report at the end, with numbered multi-panel figures. Included in the scribe's prompt by `publication.py`; the template comes from config.yml.
+description: How an Ouroboros scribe keeps the run's notebook (the run book of findings, every iteration) and writes the report at the end - a poster of three or four figures, or a paper or product report with numbered multi-panel figures. Included in the scribe's prompt by `publication.py`; the template comes from config.yml.
 ---
 
 `publication.py` inlines these sections into the scribe's prompt. `notebook`
-every iteration, with `notebook ledger` when the run will end in a paper or
-product report; `pass` with `paper` or `product` and `figures` or `no figures`
-when the report is written (once when the run stops, and as a mid-run draft every
+every iteration, with `notebook ledger` when the run will end in a report;
+`poster pass` with `poster`, a `poster style` and `palette` for a poster, or `pass`
+with `paper` or `product` and `figures` or `no figures`, when the report is written (once when the run stops, and as a mid-run draft every
 `consolidate_every` worked iterations when that is set); `final` when the run has
 stopped. Placeholders are filled by the loop.
 
@@ -213,6 +213,151 @@ at the picture itself with your image viewer, not at pixel statistics: is the cl
 visible in five seconds, where does the eye go first, is anything crowded, clipped
 or ambiguous, does every panel earn its place? Revise at least once after the first
 look, and stop when another round would not change what the reader takes away.
+
+## palette
+
+**Colours: only this palette**, plus black, white and greys for text, axes and
+  rules, and the same group in the same colour everywhere. Warm: rose pink
+  `#D46A8C`, brick red `#B5473A`, mustard `#E0B04A`, amber orange `#EE9F4F`. Cool:
+  sky blue `#6FA8C9`, teal `#4E9A8F`, periwinkle `#8C9FD1`, sage green `#88B98A`,
+  pale blue `#A3C4D9`, slate blue `#5F7FA8`, medium blue `#3D6FB0`. Other and
+  background: light grey `#DCDCDC`. No built-in colormaps unless built from these.
+
+## poster pass
+
+### The report is due: make the poster
+
+Make a poster of this run: one designed sheet, like the ones pinned up at a
+conference, that a reader takes in standing in front of it for two minutes. You
+write it as one standalone HTML page, `{paper_path}`, laid out on a fixed canvas
+of **1800 by 2400 px** (36 by 48 in, portrait). The loop renders it to
+`poster.png` and `poster.pdf`, and the run page shows that picture, so it is the
+sheet that matters, not the HTML.
+
+Build it from what the run found (its findings, `{view_dir}/findings.json`, or
+its notebook, `{story_path}`, whichever it kept), the memory and the evidence in
+the repo. What the project knew when the run started is in the charter and in
+the earlier runs' digests under `.ouroboros/history/`; the run's own commits are
+on its branch. Leave the findings and the notebook as they are.
+
+The poster is about **this run's step** of a longer project: what it set out to
+do, what it found, and what that changes. It is not a short paper and not a
+dashboard. No abstract, no methods, no literature, no list of everything the run
+did, no numbers in boxes.
+
+**Choose the story first.** Before you draw or write anything, decide and write
+down for yourself:
+
+1. The finding, in a few words. It is the poster's title.
+2. The hero: the one picture that shows it best. When the project has pictures of
+   what it built or measured (renders, screenshots, photos, frames of a motion; look
+   in the run's assets, `docs/media/`, `review/` and the evidence), the hero shows
+   the thing itself, with the number that matters drawn on it.
+3. Two to four supporting pictures, each answering one question a reader will ask
+   after the hero ("compared with what?", "why?", "what fails?").
+4. Three to five sentences that carry the reader between them, and what is next.
+
+{template}
+
+**The figures.** Draw each one for its place on the sheet, at the size it will be
+shown, with a script `{assets_dir}/src/poster_<n>.py` that reads the run's data
+files, saving `{assets_dir}/poster-<n>.png` (or `.svg`). Do not paste the run's
+study plots as they are: they have too many panels and labels for a poster. A
+poster figure has one message, the two to four things it compares, labels on the
+marks instead of legends, the quoted number drawn on it, and text at least 22 px
+where it is shown.
+
+**Vary the figures.** Each figure takes the form its question needs, and no two
+look alike: an annotated render or photo of the thing, a trace over time, a
+before-and-after, a ranked bar, a map, a mechanism drawn from the real data, a
+small table set in type. At most one strip or dot plot on a sheet; three charts of
+dots on bare axes side by side is the failure to avoid. Design each chart, too: a
+quiet background, few gridlines, direct labels, the comparison that matters
+emphasised and the rest in grey.
+
+{palette}
+
+**Render, look, revise.** Run `ouroboros poster render {view_dir}`: it renders the
+page to `{view_dir}/poster.png` and prints what it measures (anything off the
+canvas or cut off, empty space at the bottom, text under 18 px or in colour, the
+word count, stat cards). Then open `poster.png` with your image viewer and look at
+the whole sheet, then at each quarter. Ask: where does the eye go first, and is
+that the finding? Can every label be read? Does anything overlap, crowd, or float
+in empty space? Does it look designed, like a poster someone would be proud to
+pin up, not like a web page or a grid of equal boxes? Fix what you find and render
+again. Do this at least twice, and stop when another round would not change what a
+reader takes away.
+
+**Never invent.** Every number, picture and claim comes from the repo or the
+memory. Name the scripts, data files, record ids and commits behind each figure in
+the footer.
+
+When you finish, the loop renders the page itself and checks only what breaks a
+poster: it fits the canvas and fills it (the content reaches 90% of its height),
+no text under 18 px, text in black, greys or white, at most 250 words outside the
+footer and source lines, a title of at most 16 words in the `<h1>`, at least
+three `<figure>`s, no stat cards, tiles or KPI boxes, and every image loads. A
+later pass gets what it finds as a problem to fix first.
+
+## poster
+
+**The sheet.** A complete HTML document with its own `<style>` and no scripts.
+`body` is exactly 1800 by 2400 px with no margin and does not scroll; lay it out
+with CSS grid or absolute positions, and let nothing run past the canvas. Images
+are `assets/<name>`. Fonts: link `assets/fonts/fonts.css` (the render puts it
+there) and use its families, `Inter`, `IBM Plex Sans`, `Space Grotesk`,
+`Barlow Condensed` (400, 600) and `Source Serif 4`, or the system's `Charter` and
+`Nimbus Sans`. Use one or two families: a display face for the title and headings
+and a text face for the rest.
+
+**The layout is yours.** Choose it for this run's story, the way a designer
+would; the shapes below are what good posters share, not a template:
+
+- A clear entry point: the finding as the `<h1>` (at most 16 words, set large),
+  with the project, the run's name and dates in small type nearby.
+- One dominant picture, usually the thing itself, given far more room than
+  anything else; supporting pictures sized by how much they matter.
+- Structure you can see: sections as panels, bands or columns, separated by tinted
+  backgrounds, rules or gutters, read in an obvious order (numbered when it helps).
+  Uneven columns, a full-width band, a picture that breaks the grid: all good.
+- Dense, not cramped: margins about 50 to 60 px, gutters 30 to 40 px, panels
+  that fill their space. No large empty areas, and no wall of text either.
+- Text in black or dark grey on light grounds and white on dark bands; colour is
+  for marks, fills, rules and accents, never for words. Body text 24 to 30 px,
+  headings that are short claims.
+- A short "what's next", and a footer with the sources (commits, record ids,
+  scripts, data files) in small type (14 to 16 px is fine there).
+- No stat cards: no boxes, tiles or badges holding a number and a label. A number
+  belongs on the figure that shows it, or in the sentence that explains it.
+
+Each picture is a `<figure>`; a caption, when it is needed, is one line.
+
+{direction}
+
+## poster style infographic
+
+**The style: infographic** (the default). Title and headings in `Barlow Condensed`
+600 (uppercase is fine for section labels), body in `IBM Plex Sans`. A light grey
+ground (`#EEF0F2`) with white panels. Tell the story as a visible flow: numbered
+steps joined by arrows or a path across the sheet, callout lines from labels to
+parts of the hero picture, small diagrams or icons made from the real data where
+they help.
+
+## poster style swiss
+
+**The style: Swiss.** `Inter` only: a very large, heavy (800) title set flush left
+on white with no band, tight leading. A strict 12-column grid with uneven spans
+(8 + 4, 5 + 7), sections divided by solid black 3 px rules, section numbers set
+large in black. One accent colour from the palette, for marks only. Precise,
+spare, confident.
+
+## poster style dark
+
+**The style: dark.** `Space Grotesk` throughout. A near-black ground (`#121417`)
+with white and light-grey (`#B8BDC4`) type, and one bright accent from the palette
+for marks and rules only: big numbers and labels drawn into figures stay white or
+grey too. A single large hero picture, centred or full width, with every figure
+drawn on the same dark ground, and supporting panels framed by thin light rules.
 
 ## no figures
 

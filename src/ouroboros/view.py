@@ -6,9 +6,9 @@ when a repo gives its own) filled with two kinds of content:
 - facts that need no model: status.json, critic.jsonl, iterations.jsonl, the
   charter and the memory graph. `render` writes these, every time, the same way.
 - the story: `view/story.html`, the notebook the scribe keeps with its own images
-  under `view/assets/`, and the paper: `view/paper.html`, the report it writes at
-  the end, behind a Run / Paper toggle. Both go into the page raw (the run's own
-  agent wrote them).
+  under `view/assets/`, and the report it writes at the end: `view/poster.html`
+  and/or `view/paper.html`, behind a Run / Poster / Paper toggle. They go into the
+  page raw (the run's own agent wrote them).
 
 Everything else that goes into the page is HTML-escaped.
 
@@ -108,6 +108,10 @@ def story_path(run_dir: Path) -> Path:
 
 def paper_path(run_dir: Path) -> Path:
     return view_dir(run_dir) / "paper.html"
+
+
+def poster_path(run_dir: Path) -> Path:
+    return view_dir(run_dir) / "poster.html"
 
 
 def summary_path(run_dir: Path) -> Path:
@@ -1411,15 +1415,32 @@ def _paper(run_dir: Path) -> str:
     return text if text.strip() else ""
 
 
-def _modes(has_paper: bool, live: bool) -> tuple[str, str]:
-    """The Run / Paper toggle and the mode the page opens in: the paper once the run has
-    stopped and written one, else the run. No paper, no toggle."""
-    if not has_paper:
+def _poster(run_dir: Path) -> str:
+    """The poster (publication.py, DESIGN.md section 26) as the one picture it is, behind the page's
+    Poster toggle, linked to its PDF and its page; '' until it has been rendered."""
+    png = view_dir(run_dir) / "poster.png"
+    if not png.exists():
+        return ""
+    v = int(png.stat().st_mtime)
+    pdf = (view_dir(run_dir) / "poster.pdf").exists()
+    big = "poster.pdf" if pdf else "poster.png"
+    links = " · ".join(x for x in (f'<a href="poster.pdf?v={v}">PDF</a>' if pdf else "",
+                                   f'<a href="poster.png?v={v}">PNG</a>', f'<a href="poster.html?v={v}">page</a>') if x)
+    return (f'<figure class="sheet"><a href="{big}?v={v}"><img src="poster.png?v={v}" alt="The run\'s poster"></a>'
+            f'<figcaption>Open the poster: {links}</figcaption></figure>')
+
+
+def _modes(has_paper: bool, live: bool, has_poster: bool = False) -> tuple[str, str]:
+    """The Run / Poster / Paper toggle and the mode the page opens in: once the run has
+    stopped, its poster, else its paper; while it is live, the run. No report, no toggle."""
+    if not (has_paper or has_poster):
         return "", "run"
     toggle = ('<nav class="modes" aria-label="View">'
               '<button type="button" data-mode="run">Run</button>'
-              '<button type="button" data-mode="paper">Paper</button></nav>')
-    return toggle, "run" if live else "paper"
+              + ('<button type="button" data-mode="poster">Poster</button>' if has_poster else "")
+              + ('<button type="button" data-mode="paper">Paper</button>' if has_paper else "")
+              + '</nav>')
+    return toggle, "run" if live else ("poster" if has_poster else "paper")
 
 
 def _template(repo: Path | None) -> str:
@@ -1520,13 +1541,14 @@ def render(run_dir: Path, repo: Path, *, goal_text: str, graph=None, now: float 
             "story": part(_story, run_dir, graph, its, _ww(status)),
             "run_map": part(_run_map, graph, its, run_dir),
             "paper": part(_paper, run_dir),
+            "poster": part(_poster, run_dir),
             "decisions": part(_decisions, decisions),
             "timeline": part(_timeline, graph),
             "generated": "",
             "version": "",
         }
         live = str(status.get("state")) in LIVE_STATES
-        parts["modes"], parts["mode"] = _modes(bool(parts["paper"].strip()), live)
+        parts["modes"], parts["mode"] = _modes(bool(parts["paper"].strip()), live, bool(parts["poster"].strip()))
         template = _template(repo)
         version = hashlib.sha256(_fill(template, parts).encode()).hexdigest()[:16]
         epoch = now if alive else _float(status.get("epoch"))
@@ -1547,8 +1569,8 @@ def render(run_dir: Path, repo: Path, *, goal_text: str, graph=None, now: float 
 
 # -- the server ----------------------------------------------------------------
 
-NO_STORE = {"index.html", "live.json", "story.html", "paper.html", "summary.txt", GRAPH_PAGE}
-_TYPES = {".svg": "image/svg+xml", ".json": "application/json", ".html": "text/html; charset=utf-8",
+NO_STORE = {"index.html", "live.json", "story.html", "paper.html", "poster.html", "summary.txt", GRAPH_PAGE}
+_TYPES = {".pdf": "application/pdf", ".svg": "image/svg+xml", ".json": "application/json", ".html": "text/html; charset=utf-8",
           ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".webp": "image/webp",
           ".txt": "text/plain; charset=utf-8", ".csv": "text/plain; charset=utf-8", ".md": "text/plain; charset=utf-8"}
 _EMPTY = (b'<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
